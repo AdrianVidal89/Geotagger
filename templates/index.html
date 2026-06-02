@@ -2,109 +2,190 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>GeoTagger</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #eee; height: 100vh; display: flex; flex-direction: column; }
-  header { background: #16213e; padding: 16px 24px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid #0f3460; }
-  header h1 { font-size: 1.2rem; font-weight: 600; color: #e94560; }
-  header span { font-size: 0.85rem; color: #888; }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #eee; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* HEADER */
+  header { background: #16213e; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #0f3460; flex-shrink: 0; z-index: 100; }
+  header .left { display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 1.1rem; font-weight: 600; color: #e94560; }
+  header span { font-size: 0.75rem; color: #888; }
+  .header-btn { background: none; border: 1px solid #0f3460; border-radius: 8px; color: #aaa; padding: 6px 12px; font-size: 0.8rem; cursor: pointer; }
+  .header-btn:hover { background: #0f3460; color: #eee; }
+
+  /* DESKTOP LAYOUT */
   .main { display: flex; flex: 1; overflow: hidden; }
-  .sidebar { width: 240px; background: #16213e; border-right: 1px solid #0f3460; overflow-y: auto; padding: 12px; }
-  .sidebar h2 { font-size: 0.75rem; text-transform: uppercase; color: #888; margin-bottom: 10px; letter-spacing: 1px; }
-  .tree-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; }
+  .sidebar { width: 220px; background: #16213e; border-right: 1px solid #0f3460; overflow-y: auto; padding: 10px; flex-shrink: 0; }
+  .sidebar h2 { font-size: 0.7rem; text-transform: uppercase; color: #888; margin-bottom: 8px; letter-spacing: 1px; }
+  .tree-item { display: flex; align-items: center; gap: 8px; padding: 10px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; min-height: 44px; transition: background 0.15s; }
   .tree-item:hover { background: #0f3460; }
   .tree-item.active { background: #e94560; color: white; }
-  .breadcrumb { padding: 10px 16px; font-size: 0.8rem; color: #888; border-bottom: 1px solid #0f3460; background: #16213e; }
+  .center { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+  .top-bar { display: flex; align-items: center; justify-content: space-between; background: #16213e; border-bottom: 1px solid #0f3460; padding: 8px 12px; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
+  .breadcrumb { font-size: 0.8rem; color: #888; }
   .breadcrumb span { cursor: pointer; color: #e94560; }
-  .content { flex: 1; overflow-y: auto; padding: 16px; }
-  .files-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
-  .file-card { background: #16213e; border-radius: 10px; overflow: hidden; cursor: pointer; border: 2px solid transparent; transition: all 0.15s; }
+  .top-controls { display: flex; align-items: center; gap: 10px; }
+  .chk-label { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: #aaa; cursor: pointer; white-space: nowrap; }
+  .chk-label input { width: 18px; height: 18px; accent-color: #e94560; cursor: pointer; }
+  .content { flex: 1; overflow-y: auto; padding: 12px; -webkit-overflow-scrolling: touch; }
+  .files-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+  .file-card { background: #16213e; border-radius: 10px; overflow: hidden; cursor: pointer; border: 2px solid transparent; transition: all 0.15s; -webkit-touch-callout: none; }
   .file-card:hover { border-color: #0f3460; }
   .file-card.selected { border-color: #e94560; background: #1f1040; }
   .file-card .thumb-wrap { width: 100%; aspect-ratio: 1; background: #0f3460; display: flex; align-items: center; justify-content: center; overflow: hidden; }
   .file-card .thumb-wrap img { width: 100%; height: 100%; object-fit: cover; }
-  .file-card .thumb-wrap .icon { font-size: 2.5rem; }
-  .file-card .name { font-size: 0.7rem; color: #aaa; padding: 6px 8px; word-break: break-all; }
-  .panel { width: 300px; background: #16213e; border-left: 1px solid #0f3460; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
-  .panel h2 { font-size: 0.75rem; text-transform: uppercase; color: #888; letter-spacing: 1px; }
+  .file-card .thumb-wrap .icon { font-size: 2rem; }
+  .file-card .name { font-size: 0.65rem; color: #aaa; padding: 5px 6px; word-break: break-all; line-height: 1.3; }
+
+  /* PANEL - desktop */
+  .panel { width: 280px; background: #16213e; border-left: 1px solid #0f3460; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; flex-shrink: 0; }
+  .panel h2 { font-size: 0.7rem; text-transform: uppercase; color: #888; letter-spacing: 1px; }
   .search-box { position: relative; }
   .search-box input { width: 100%; background: #0f3460; border: 1px solid #1a4a8a; border-radius: 8px; padding: 10px 12px; color: #eee; font-size: 0.9rem; outline: none; }
   .search-box input:focus { border-color: #e94560; }
-  .suggestions { position: absolute; top: 100%; left: 0; right: 0; background: #0f3460; border: 1px solid #1a4a8a; border-radius: 8px; margin-top: 4px; z-index: 10; max-height: 200px; overflow-y: auto; }
-  .suggestion { padding: 10px 12px; font-size: 0.8rem; cursor: pointer; border-bottom: 1px solid #1a4a8a; }
-  .suggestion:hover { background: #e94560; }
+  .suggestions { position: absolute; top: 100%; left: 0; right: 0; background: #0f3460; border: 1px solid #1a4a8a; border-radius: 8px; margin-top: 4px; z-index: 50; max-height: 180px; overflow-y: auto; }
+  .suggestion { padding: 10px 12px; font-size: 0.8rem; cursor: pointer; border-bottom: 1px solid #1a4a8a; min-height: 44px; display: flex; align-items: center; }
+  .suggestion:hover, .suggestion:active { background: #e94560; }
   .suggestion:last-child { border-bottom: none; }
-  .coords { background: #0f3460; border-radius: 8px; padding: 12px; font-size: 0.85rem; }
-  .coords div { margin-bottom: 4px; color: #aaa; }
+  .coords { background: #0f3460; border-radius: 8px; padding: 10px; font-size: 0.8rem; }
+  .coords div { margin-bottom: 3px; color: #aaa; }
   .coords span { color: #eee; font-weight: 600; }
-  .selected-count { background: #0f3460; border-radius: 8px; padding: 12px; font-size: 0.85rem; text-align: center; }
-  .selected-count strong { color: #e94560; font-size: 1.3rem; }
-  .btn { width: 100%; padding: 13px; border-radius: 10px; border: none; font-size: 1rem; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+  .selected-count { background: #0f3460; border-radius: 8px; padding: 10px; font-size: 0.85rem; text-align: center; }
+  .selected-count strong { color: #e94560; font-size: 1.2rem; }
+  .btn { width: 100%; padding: 14px; border-radius: 10px; border: none; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: all 0.2s; min-height: 48px; }
   .btn-primary { background: #e94560; color: white; }
   .btn-primary:hover { background: #c73652; }
-  .btn-primary:disabled { background: #555; cursor: not-allowed; }
-  .btn-secondary { background: #0f3460; color: #aaa; font-size: 0.85rem; padding: 10px; }
+  .btn-primary:disabled { background: #444; color: #777; cursor: not-allowed; }
+  .btn-secondary { background: #0f3460; color: #aaa; }
   .btn-secondary:hover { background: #1a4a8a; color: #eee; }
-  .btn-warning { background: #7a4f00; color: #ffd966; font-size: 0.85rem; padding: 10px; }
+  .btn-warning { background: #7a4f00; color: #ffd966; }
   .btn-warning:hover { background: #a06800; }
-  .btn-photoprism { background: #1a3a2a; color: #4caf82; font-size: 0.85rem; padding: 10px; }
-  .btn-photoprism:hover { background: #0d3320; }
-  .btn-photoprism:disabled { background: #333; color: #555; cursor: not-allowed; }
-  .result-box { border-radius: 8px; padding: 12px; font-size: 0.8rem; }
+  .btn-warning:disabled { background: #444; color: #777; cursor: not-allowed; }
+  .result-box { border-radius: 8px; padding: 10px; font-size: 0.8rem; }
   .result-ok { background: #0d3320; border: 1px solid #1a6640; color: #4caf82; }
   .result-err { background: #330d0d; border: 1px solid #662020; color: #e94560; }
-  .loading { text-align: center; padding: 40px; color: #888; }
+  .loading { text-align: center; padding: 40px; color: #888; font-size: 0.9rem; }
+  .input-field { width: 100%; background: #0f3460; border: 1px solid #1a4a8a; border-radius: 8px; padding: 10px 12px; color: #eee; font-size: 0.85rem; outline: none; }
+  .input-field:focus { border-color: #e94560; }
+
+  /* GPS STATUS */
+  .gps-box { background: #0f3460; border-radius: 8px; padding: 10px; font-size: 0.8rem; color: #888; text-align: center; }
+
+  /* SETTINGS MODAL */
+  .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 200; align-items: center; justify-content: center; }
+  .modal-overlay.active { display: flex; }
+  .modal { background: #16213e; border-radius: 16px; padding: 24px; width: 90%; max-width: 400px; }
+  .modal h2 { color: #e94560; font-size: 1rem; margin-bottom: 16px; }
+  .modal label { font-size: 0.8rem; color: #aaa; display: block; margin-bottom: 6px; }
+  .modal .btn { margin-top: 12px; }
+
+  /* MOBILE BOTTOM SHEET */
+  .mobile-toggle { display: none; }
+
+  /* RESPONSIVE */
+  @media (max-width: 768px) {
+    .sidebar { display: none; }
+    .sidebar.mobile-open { display: flex; flex-direction: column; position: fixed; top: 0; left: 0; bottom: 0; width: 260px; z-index: 150; padding-top: 60px; }
+    .sidebar-backdrop { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 140; }
+    .sidebar-backdrop.active { display: block; }
+    .mobile-toggle { display: flex; align-items: center; justify-content: center; background: none; border: 1px solid #0f3460; border-radius: 8px; color: #aaa; width: 36px; height: 36px; font-size: 1.2rem; cursor: pointer; }
+    .panel { display: none; position: fixed; bottom: 0; left: 0; right: 0; width: 100%; max-height: 55vh; border-radius: 16px 16px 0 0; border-left: none; border-top: 1px solid #0f3460; z-index: 130; padding: 16px 16px 24px; overflow-y: auto; flex-direction: column; gap: 10px; }
+    .panel.mobile-open { display: flex; }
+    .panel-backdrop { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); z-index: 120; }
+    .panel-backdrop.active { display: block; }
+    .panel-handle { width: 40px; height: 4px; background: #444; border-radius: 2px; margin: 0 auto 8px; flex-shrink: 0; }
+    .files-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .file-card .name { font-size: 0.6rem; padding: 4px; }
+    .top-bar { padding: 6px 10px; }
+    .content { padding: 8px; }
+    .fab { position: fixed; bottom: 20px; right: 20px; width: 56px; height: 56px; border-radius: 50%; background: #e94560; color: white; border: none; font-size: 1.5rem; cursor: pointer; z-index: 110; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(233,69,96,0.4); }
+  }
+
+  @media (min-width: 769px) {
+    .fab { display: none; }
+    .panel-handle { display: none; }
+    .sidebar-backdrop { display: none !important; }
+    .panel-backdrop { display: none !important; }
+  }
+
+  @media (max-width: 480px) {
+    .files-grid { grid-template-columns: repeat(3, 1fr); gap: 5px; }
+    header h1 { font-size: 1rem; }
+  }
 </style>
 </head>
 <body>
+
 <header>
-  <h1>📍 GeoTagger</h1>
-  <span>QNAP · vCloudDocuments</span>
+  <div class="left">
+    <button class="mobile-toggle" id="btn-sidebar">☰</button>
+    <h1>📍 GeoTagger</h1>
+  </div>
+  <button class="header-btn" id="btn-settings">⚙ Ajustes</button>
 </header>
+
+<div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+<div class="panel-backdrop" id="panel-backdrop"></div>
+
 <div class="main">
-  <div class="sidebar">
+  <div class="sidebar" id="sidebar">
     <h2>Carpetas</h2>
     <div id="tree"></div>
   </div>
-  <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
-    <div style="display:flex;align-items:center;justify-content:space-between;background:#16213e;border-bottom:1px solid #0f3460;padding:0 16px;">
-      <div class="breadcrumb" id="breadcrumb" style="border:none;padding:10px 0;flex:1;">Raíz</div>
-      <label style="display:flex;align-items:center;gap:8px;font-size:0.8rem;color:#aaa;cursor:pointer;white-space:nowrap;">
-        <input type="checkbox" id="chk-missing" style="width:16px;height:16px;accent-color:#e94560;cursor:pointer;">
-        Solo sin ubicación (recursivo)
-      </label>
+  <div class="center">
+    <div class="top-bar">
+      <div class="breadcrumb" id="breadcrumb">Fotos</div>
+      <div class="top-controls">
+        <label class="chk-label">
+          <input type="checkbox" id="chk-missing">
+          Sin GPS
+        </label>
+      </div>
     </div>
     <div class="content">
       <div id="files-container" class="loading">Selecciona una carpeta</div>
     </div>
   </div>
-  <div class="panel">
-    <h2>Ubicación</h2>
+  <div class="panel" id="panel">
+    <div class="panel-handle"></div>
+    <h2>Ubicacion</h2>
     <div class="search-box">
       <input type="text" id="location-search" placeholder="Buscar lugar..." autocomplete="off">
       <div class="suggestions" id="suggestions" style="display:none"></div>
     </div>
     <div class="coords">
-      <div>Latitud: <span id="lat-val">—</span></div>
-      <div>Longitud: <span id="lon-val">—</span></div>
-      <div>Altitud: <span id="alt-val">—</span></div>
+      <div>Lat: <span id="lat-val">—</span></div>
+      <div>Lon: <span id="lon-val">—</span></div>
     </div>
-    <input type="number" id="alt-input" placeholder="Altitud (metros, opcional)" style="width:100%;background:#0f3460;border:1px solid #1a4a8a;border-radius:8px;padding:10px 12px;color:#eee;font-size:0.85rem;outline:none;">
+    <input type="number" class="input-field" id="alt-input" placeholder="Altitud (metros, opcional)">
     <h2>Estado GPS</h2>
-    <div id="gps-status" style="background:#0f3460;border-radius:8px;padding:12px;font-size:0.8rem;color:#888;text-align:center;">Selecciona una foto para ver su ubicación actual</div>
-    <h2>Archivos seleccionados</h2>
+    <div class="gps-box" id="gps-status">Selecciona una foto</div>
+    <h2>Seleccion</h2>
     <div class="selected-count"><strong id="sel-count">0</strong> archivos</div>
     <button class="btn btn-secondary" id="btn-select-all">Seleccionar todos</button>
     <button class="btn btn-primary" id="btn-apply" disabled>Aplicar GPS</button>
-    <button class="btn btn-warning" id="btn-rename" disabled>✏️ Renombrar por EXIF + ubicación</button>
-    <button class="btn btn-photoprism" id="btn-photoprism" disabled>🔄 Sincronizar con PhotoPrism</button>
+    <button class="btn btn-warning" id="btn-rename" disabled>✏️ Renombrar por EXIF</button>
     <div id="result-box" style="display:none"></div>
     <div id="rename-box" style="display:none"></div>
-    <div id="photoprism-box" style="display:none"></div>
   </div>
 </div>
+
+<button class="fab" id="fab">▲</button>
+
+<!-- SETTINGS MODAL -->
+<div class="modal-overlay" id="modal-settings">
+  <div class="modal">
+    <h2>⚙ Ajustes</h2>
+    <label>Email para reportes:</label>
+    <input type="email" class="input-field" id="setting-email" placeholder="tu@email.com">
+    <button class="btn btn-primary" id="btn-save-settings">Guardar</button>
+    <button class="btn btn-secondary" id="btn-close-settings" style="margin-top:8px;">Cerrar</button>
+  </div>
+</div>
+
 <script>
 let currentPath = "";
 let selectedFiles = new Set();
@@ -112,16 +193,19 @@ let currentLat = null, currentLon = null, currentLocationName = "";
 let searchTimer = null;
 let currentFiles = [];
 
+/* NAV */
 async function navigate(path) {
   currentPath = path;
   selectedFiles.clear();
   currentFiles = [];
   updateSelCount();
+  document.getElementById("chk-missing").checked = false;
   const res = await fetch("/api/browse?path=" + encodeURIComponent(path));
   const data = await res.json();
   renderBreadcrumb(path);
   renderSidebar(data.dirs, path);
   renderFiles(data.files);
+  closeMobilePanels();
 }
 
 function renderBreadcrumb(path) {
@@ -139,7 +223,7 @@ function renderBreadcrumb(path) {
 function renderSidebar(dirs, activePath) {
   const tree = document.getElementById("tree");
   if (dirs.length === 0) {
-    tree.innerHTML = '<div style="color:#888;font-size:0.8rem;padding:8px">Sin subcarpetas</div>';
+    tree.innerHTML = '<div style="color:#888;font-size:0.8rem;padding:10px">Sin subcarpetas</div>';
     return;
   }
   tree.innerHTML = dirs.map(function(d) {
@@ -170,7 +254,7 @@ function renderFiles(files) {
       '<div class="thumb-wrap">' +
       '<img src="' + thumbUrl + '" loading="lazy" onerror="this.style.display=\'none\';this.parentNode.innerHTML=\'<span class=icon>' + extIcon(f.ext) + '</span>\'">' +
       '</div>' +
-      '<div class="name">' + f.name + '</div>' +
+      '<div class="name">' + f.name + (f.folder ? '<br><span style="color:#555;font-size:0.55rem;">' + f.folder + '</span>' : '') + '</div>' +
       '</div>';
   }).join("");
   c.querySelectorAll(".file-card").forEach(function(card) {
@@ -195,40 +279,45 @@ function toggleFile(index) {
 async function checkGps(path) {
   const box = document.getElementById("gps-status");
   box.style.color = "#888";
-  box.innerHTML = "Comprobando...";
+  box.innerHTML = "...";
   try {
     const res = await fetch("/api/gpsinfo?path=" + encodeURIComponent(path));
     const data = await res.json();
     if (data.has_gps) {
       box.style.color = "#4caf82";
-      box.innerHTML = "\u2705 Ya tiene ubicaci\u00f3n<br><span style='color:#aaa'>" + parseFloat(data.lat).toFixed(5) + ", " + parseFloat(data.lon).toFixed(5) + "</span>";
+      box.innerHTML = "\u2705 " + parseFloat(data.lat).toFixed(4) + ", " + parseFloat(data.lon).toFixed(4);
     } else {
       box.style.color = "#e94560";
-      box.innerHTML = "\u274c Sin ubicaci\u00f3n GPS";
+      box.innerHTML = "\u274c Sin GPS";
     }
   } catch (e) {
-    box.style.color = "#888";
-    box.innerHTML = "No se pudo comprobar";
+    box.innerHTML = "Error";
   }
 }
 
 function updateSelCount() {
-  const count = selectedFiles.size;
-  document.getElementById("sel-count").textContent = count;
-  document.getElementById("btn-apply").disabled = count === 0 || currentLat === null;
-  document.getElementById("btn-rename").disabled = count === 0;
-  document.getElementById("btn-photoprism").disabled = currentPath === "";
+  const n = selectedFiles.size;
+  document.getElementById("sel-count").textContent = n;
+  document.getElementById("btn-apply").disabled = n === 0 || currentLat === null;
+  document.getElementById("btn-rename").disabled = n === 0;
 }
 
+/* SELECT ALL */
 document.getElementById("btn-select-all").addEventListener("click", function() {
-  currentFiles.forEach(function(f, i) {
-    selectedFiles.add(f.path);
-    const card = document.querySelector('.file-card[data-index="' + i + '"]');
-    card && card.classList.add("selected");
-  });
+  if (selectedFiles.size === currentFiles.length) {
+    selectedFiles.clear();
+    document.querySelectorAll(".file-card.selected").forEach(function(c) { c.classList.remove("selected"); });
+  } else {
+    currentFiles.forEach(function(f, i) {
+      selectedFiles.add(f.path);
+      var card = document.querySelector('.file-card[data-index="' + i + '"]');
+      card && card.classList.add("selected");
+    });
+  }
   updateSelCount();
 });
 
+/* SEARCH */
 const searchInput = document.getElementById("location-search");
 searchInput.addEventListener("input", function() {
   clearTimeout(searchTimer);
@@ -247,18 +336,18 @@ searchInput.addEventListener("input", function() {
         currentLat = parseFloat(el.dataset.lat);
         currentLon = parseFloat(el.dataset.lon);
         currentLocationName = el.dataset.name;
-        document.getElementById("lat-val").textContent = currentLat.toFixed(6);
-        document.getElementById("lon-val").textContent = currentLon.toFixed(6);
-        document.getElementById("alt-val").textContent = "—";
+        document.getElementById("lat-val").textContent = currentLat.toFixed(5);
+        document.getElementById("lon-val").textContent = currentLon.toFixed(5);
         searchInput.value = el.dataset.name;
         sug.style.display = "none";
         updateSelCount();
       });
     });
     sug.style.display = "block";
-  }, 400);
+  }, 500);
 });
 
+/* APPLY GPS */
 document.getElementById("btn-apply").addEventListener("click", async function() {
   const alt = document.getElementById("alt-input").value || null;
   const btn = document.getElementById("btn-apply");
@@ -270,160 +359,135 @@ document.getElementById("btn-apply").addEventListener("click", async function() 
   btn.disabled = true;
   box.style.display = "block";
   box.className = "result-box";
-  box.style.background = "#0f3460";
-  box.style.border = "1px solid #1a4a8a";
-  box.style.color = "#eee";
+  box.style.background = "#0f3460"; box.style.border = "1px solid #1a4a8a"; box.style.color = "#eee";
   for (const f of files) {
-    box.innerHTML = "\u23f3 " + done + " de " + total + " completadas...";
-    btn.textContent = done + " / " + total;
+    box.innerHTML = "\u23f3 " + done + "/" + total;
+    btn.textContent = done + "/" + total;
     try {
       const res = await fetch("/api/write", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
+        method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({ lat: currentLat, lon: currentLon, alt: alt, files: [f] })
       });
       const data = await res.json();
-      if (data.errors.length === 0) { okCount++; }
-      else { errCount++; errFiles.push(data.errors[0].file); }
-    } catch (e) {
-      errCount++;
-      errFiles.push(f.split("/").pop());
-    }
+      if (data.errors.length === 0) { okCount++; } else { errCount++; errFiles.push(data.errors[0].file); }
+    } catch (e) { errCount++; errFiles.push(f.split("/").pop()); }
     done++;
   }
   if (errCount === 0) {
-    box.className = "result-box result-ok";
-    box.style.background = ""; box.style.border = ""; box.style.color = "";
-    box.innerHTML = "\u2705 " + okCount + " de " + total + " actualizadas correctamente";
+    box.className = "result-box result-ok"; box.style.background = ""; box.style.border = ""; box.style.color = "";
+    box.innerHTML = "\u2705 " + okCount + "/" + total + " OK";
   } else {
-    box.className = "result-box result-err";
-    box.style.background = ""; box.style.border = ""; box.style.color = "";
-    box.innerHTML = "\u26a0\ufe0f " + okCount + " OK \u00b7 " + errCount + " errores<br>" + errFiles.slice(0,5).join(", ") + (errFiles.length > 5 ? "..." : "");
+    box.className = "result-box result-err"; box.style.background = ""; box.style.border = ""; box.style.color = "";
+    box.innerHTML = "\u26a0\ufe0f " + okCount + " OK, " + errCount + " err";
   }
-  btn.disabled = false;
-  btn.textContent = "Aplicar GPS";
+  btn.disabled = false; btn.textContent = "Aplicar GPS";
+  sendReport("Aplicar GPS", total, okCount, errCount, errFiles);
   selectedFiles.clear();
-  document.querySelectorAll(".file-card.selected").forEach(function(c){ c.classList.remove("selected"); });
+  document.querySelectorAll(".file-card.selected").forEach(function(c) { c.classList.remove("selected"); });
   updateSelCount();
 });
 
+/* RENAME */
 document.getElementById("btn-rename").addEventListener("click", async function() {
   if (selectedFiles.size === 0) return;
-  const locName = currentLocationName || searchInput.value.trim() || "sin-ubicacion";
-  if (!confirm("¿Renombrar " + selectedFiles.size + " foto(s) con formato FECHA_" + locName + "?")) return;
+  const locName = currentLocationName || searchInput.value.trim() || "";
+  if (!confirm("Renombrar " + selectedFiles.size + " foto(s)?")) return;
   const btn = document.getElementById("btn-rename");
   const box = document.getElementById("rename-box");
-  btn.disabled = true;
-  btn.textContent = "Renombrando...";
-  box.style.display = "block";
-  box.className = "result-box";
-  box.style.background = "#0f3460";
-  box.style.color = "#eee";
+  btn.disabled = true; btn.textContent = "Renombrando...";
+  box.style.display = "block"; box.className = "result-box";
+  box.style.background = "#0f3460"; box.style.color = "#eee";
   box.innerHTML = "\u23f3 Renombrando...";
   try {
     const res = await fetch("/api/rename", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
+      method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ location_name: locName, files: Array.from(selectedFiles) })
     });
     const data = await res.json();
+    const errFiles = data.errors.map(function(e) { return e.file; });
     if (data.errors.length === 0) {
-      box.className = "result-box result-ok";
-      box.style.background = ""; box.style.color = "";
-      box.innerHTML = "\u2705 " + data.ok.length + " archivos renombrados";
+      box.className = "result-box result-ok"; box.style.background = ""; box.style.color = "";
+      box.innerHTML = "\u2705 " + data.ok.length + " renombrados";
     } else {
-      box.className = "result-box result-err";
-      box.style.background = ""; box.style.color = "";
-      box.innerHTML = "\u26a0\ufe0f " + data.ok.length + " OK \u00b7 " + data.errors.length + " errores";
+      box.className = "result-box result-err"; box.style.background = ""; box.style.color = "";
+      box.innerHTML = "\u26a0\ufe0f " + data.ok.length + " OK, " + data.errors.length + " err";
     }
-    selectedFiles.clear();
-    navigate(currentPath);
+    sendReport("Renombrar", data.ok.length + data.errors.length, data.ok.length, data.errors.length, errFiles);
+    selectedFiles.clear(); navigate(currentPath);
   } catch (e) {
-    box.className = "result-box result-err";
-    box.innerHTML = "Error al renombrar";
+    box.className = "result-box result-err"; box.innerHTML = "Error";
   }
-  btn.disabled = false;
-  btn.textContent = "\u270f\ufe0f Renombrar por EXIF + ubicaci\u00f3n";
+  btn.disabled = false; btn.textContent = "\u270f\ufe0f Renombrar por EXIF";
   updateSelCount();
 });
 
-document.getElementById("btn-photoprism").addEventListener("click", async function() {
-  const btn = document.getElementById("btn-photoprism");
-  const box = document.getElementById("photoprism-box");
-  btn.disabled = true;
-  btn.textContent = "Indexando...";
-  box.style.display = "block";
-  box.className = "result-box";
-  box.style.background = "#0f3460";
-  box.style.color = "#eee";
-  box.innerHTML = "\u23f3 Lanzando reindexado en PhotoPrism...";
+/* EMAIL REPORT */
+async function sendReport(action, total, okCount, errCount, errFiles) {
   try {
-    const res = await fetch("/api/photoprism_index", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ folder: currentPath })
+    await fetch("/api/send_report", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ action: action, folder: currentPath, total: total, ok_count: okCount, err_count: errCount, err_files: errFiles || [] })
     });
-    const data = await res.json();
-    if (data.ok) {
-      box.className = "result-box result-ok";
-      box.style.background = ""; box.style.color = "";
-      box.innerHTML = "\u2705 PhotoPrism reindexado correctamente";
-    } else {
-      box.className = "result-box result-err";
-      box.style.background = ""; box.style.color = "";
-      box.innerHTML = "\u26a0\ufe0f Error: " + (data.error || "desconocido");
-    }
-  } catch (e) {
-    box.className = "result-box result-err";
-    box.innerHTML = "Error de conexi\u00f3n";
-  }
-  btn.disabled = false;
-  btn.textContent = "\ud83d\udd04 Sincronizar con PhotoPrism";
-  updateSelCount();
-});
+  } catch (e) {}
+}
 
-const chkMissing = document.getElementById("chk-missing");
-chkMissing.addEventListener("change", function() {
-  if (chkMissing.checked) {
-    loadMissing(currentPath);
-  } else {
-    navigate(currentPath);
-  }
+/* MISSING GPS */
+document.getElementById("chk-missing").addEventListener("change", function() {
+  if (this.checked) { loadMissing(currentPath); } else { navigate(currentPath); }
 });
 
 async function loadMissing(path) {
   const c = document.getElementById("files-container");
   c.className = "loading";
-  c.innerHTML = "\ud83d\udd0d Buscando fotos sin ubicaci\u00f3n en toda la jerarqu\u00eda...";
-  selectedFiles.clear();
-  updateSelCount();
+  c.innerHTML = "\ud83d\udd0d Buscando fotos sin GPS...";
+  selectedFiles.clear(); updateSelCount();
   try {
     const res = await fetch("/api/missing_gps?path=" + encodeURIComponent(path));
     const data = await res.json();
     currentFiles = data.files;
-    if (data.files.length === 0) {
-      c.className = "loading";
-      c.innerHTML = "\u2705 Todas las fotos de esta jerarqu\u00eda ya tienen ubicaci\u00f3n";
-      return;
-    }
-    c.className = "files-grid";
-    c.innerHTML = data.files.map(function(f, i) {
-      const thumbUrl = "/api/thumb?path=" + encodeURIComponent(f.path);
-      return '<div class="file-card" data-index="' + i + '">' +
-        '<div class="thumb-wrap">' +
-        '<img src="' + thumbUrl + '" loading="lazy" onerror="this.style.display=\'none\';this.parentNode.innerHTML=\'<span class=icon>' + extIcon(f.ext) + '</span>\'">' +
-        '</div>' +
-        '<div class="name">' + f.name + '<br><span style="color:#666;font-size:0.6rem;">' + f.folder + '</span></div>' +
-        '</div>';
-    }).join("");
-    c.querySelectorAll(".file-card").forEach(function(card) {
-      card.addEventListener("click", function() { toggleFile(parseInt(card.dataset.index)); });
-    });
-  } catch (e) {
-    c.className = "loading";
-    c.innerHTML = "Error al buscar";
-  }
+    if (data.files.length === 0) { c.className = "loading"; c.innerHTML = "\u2705 Todas tienen GPS"; return; }
+    renderFiles(data.files);
+  } catch (e) { c.className = "loading"; c.innerHTML = "Error"; }
 }
+
+/* MOBILE */
+function closeMobilePanels() {
+  document.getElementById("sidebar").classList.remove("mobile-open");
+  document.getElementById("sidebar-backdrop").classList.remove("active");
+  document.getElementById("panel").classList.remove("mobile-open");
+  document.getElementById("panel-backdrop").classList.remove("active");
+}
+document.getElementById("btn-sidebar").addEventListener("click", function() {
+  document.getElementById("sidebar").classList.toggle("mobile-open");
+  document.getElementById("sidebar-backdrop").classList.toggle("active");
+});
+document.getElementById("sidebar-backdrop").addEventListener("click", closeMobilePanels);
+document.getElementById("fab").addEventListener("click", function() {
+  document.getElementById("panel").classList.toggle("mobile-open");
+  document.getElementById("panel-backdrop").classList.toggle("active");
+});
+document.getElementById("panel-backdrop").addEventListener("click", closeMobilePanels);
+
+/* SETTINGS */
+document.getElementById("btn-settings").addEventListener("click", async function() {
+  document.getElementById("modal-settings").classList.add("active");
+  try {
+    const res = await fetch("/api/settings");
+    const data = await res.json();
+    document.getElementById("setting-email").value = data.recipient_email || "";
+  } catch (e) {}
+});
+document.getElementById("btn-close-settings").addEventListener("click", function() {
+  document.getElementById("modal-settings").classList.remove("active");
+});
+document.getElementById("btn-save-settings").addEventListener("click", async function() {
+  const email = document.getElementById("setting-email").value.trim();
+  await fetch("/api/settings", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ recipient_email: email })
+  });
+  document.getElementById("modal-settings").classList.remove("active");
+});
 
 navigate("");
 </script>

@@ -1,8 +1,13 @@
 import os
 import subprocess
+import piexif
 import re
 import io
 import time
+import json
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from flask import Flask, jsonify, request, render_template, send_file
 from PIL import Image
@@ -12,13 +17,45 @@ from datetime import datetime
 app = Flask(__name__)
 
 PHOTOS_BASE = "/photos"
+SETTINGS_DIR = "/app/data"
+SETTINGS_FILE = SETTINGS_DIR + "/settings.json"
+os.makedirs(SETTINGS_DIR, exist_ok=True)
 JPG_EXTS = {".jpg", ".jpeg", ".tiff", ".tif"}
 RAW_EXTS = {".cr3", ".jpr", ".cr2", ".nef", ".arw", ".raf", ".dng"}
 
-# Config PhotoPrism (via API HTTP, no docker)
-PHOTOPRISM_URL = os.environ.get("PHOTOPRISM_URL", "http://172.29.20.2:2342")
-PHOTOPRISM_USER = os.environ.get("PHOTOPRISM_USER", "admin")
-PHOTOPRISM_PASS = os.environ.get("PHOTOPRISM_PASS", "cambiame123")
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 587
+SMTP_USER = os.environ.get("SMTP_USER", "ecostruxureatlas@gmail.com")
+SMTP_PASS = os.environ.get("SMTP_PASS", "ezpv lhfx qjer fxkm")
+
+def _load_settings():
+    try:
+        with open(SETTINGS_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {"recipient_email": ""}
+
+def _save_settings(data):
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(data, f)
+
+def _send_report(subject, body_html):
+    settings = _load_settings()
+    recipient = settings.get("recipient_email", "").strip()
+    if not recipient:
+        return
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = SMTP_USER
+        msg["To"] = recipient
+        msg.attach(MIMEText(body_html, "html"))
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASS)
+            s.sendmail(SMTP_USER, recipient, msg.as_string())
+    except Exception as e:
+        print("Email error:", str(e))
 
 def sanitize_path(path):
     p = Path(path)
@@ -42,11 +79,35 @@ def _trigger_reindex(path):
             except Exception:
                 pass
 
-def write_gps_exiftool(path, lat, lon, alt=None):
-    """
-    Escribe GPS usando SOLO exiftool — no recomprime la imagen.
-    Funciona para JPG, TIFF y todos los RAW.
-    """
+def decimal_to_dms(decimal):
+    decimal = abs(decimal)
+    degrees = int(decimal)
+    minutes = int((decimal - degrees) * 60)
+    seconds = round(((decimal - degrees) * 60 - minutes) * 60 * 10000)
+    return ((degrees, 1), (minutes, 1), (seconds, 10000))
+
+def build_gps_ifd(lat, lon, alt=None):
+    gps = {
+        piexif.GPSIFD.GPSLatitudeRef:  b"N" if lat >= 0 else b"S",
+        piexif.GPSIFD.GPSLatitude:     decimal_to_dms(lat),
+        piexif.GPSIFD.GPSLongitudeRef: b"E" if lon >= 0 else b"W",
+        piexif.GPSIFD.GPSLongitude:    decimal_to_dms(lon),
+    }
+    if alt is not None:
+        gps[piexif.GPSIFD.GPSAltitudeRef] = 0 if alt >= 0 else 1
+        gps[piexif.GPSIFD.GPSAltitude]    = (int(abs(alt) * 100), 100)
+    return gps
+
+def write_jpg_gps(path, lat, lon, alt=None):
+    path = sanitize_path(path)
+    img = Image.open(str(path))
+    exif_bytes = img.info.get("exif", b"")
+    exif_dict = piexif.load(exif_bytes) if exif_bytes else {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}}
+    exif_dict["GPS"] = build_gps_ifd(lat, lon, alt)
+    img.save(str(path), exif=piexif.dump(exif_dict))
+    _trigger_reindex(path)
+
+def write_raw_gps(path, lat, lon, alt=None):
     path = sanitize_path(path)
     lat_ref = "N" if lat >= 0 else "S"
     lon_ref = "E" if lon >= 0 else "W"
@@ -68,18 +129,27 @@ def write_gps_exiftool(path, lat, lon, alt=None):
     _trigger_reindex(path)
 
 def _has_gps_fast(path):
+    ext = path.suffix.lower()
     try:
-        result = subprocess.run(
-            ["exiftool", "-n", "-GPSLatitude", "-GPSLongitude", "-s", "-s", "-s", str(path)],
-            capture_output=True, text=True, timeout=10
-        )
-        out = result.stdout.strip()
-        return bool(out) and len(out.split("\n")) >= 2
+        if ext in JPG_EXTS:
+            img = Image.open(str(path))
+            exif_bytes = img.info.get("exif", b"")
+            if not exif_bytes:
+                return False
+            exif_dict = piexif.load(exif_bytes)
+            gps = exif_dict.get("GPS", {})
+            return piexif.GPSIFD.GPSLatitude in gps and piexif.GPSIFD.GPSLongitude in gps
+        else:
+            result = subprocess.run(
+                ["exiftool", "-n", "-GPSLatitude", "-GPSLongitude", "-s", "-s", "-s", str(path)],
+                capture_output=True, text=True, timeout=10
+            )
+            out = result.stdout.strip()
+            return bool(out) and len(out.split("\n")) >= 2
     except Exception:
         return False
 
 def _get_coords(path):
-    """Lee las coordenadas GPS del archivo. Devuelve (lat, lon) o None."""
     try:
         result = subprocess.run(
             ["exiftool", "-n", "-GPSLatitude", "-GPSLongitude", "-s", "-s", "-s", str(path)],
@@ -94,7 +164,6 @@ def _get_coords(path):
     return None
 
 def _reverse_geocode(lat, lon):
-    """Obtiene un nombre de lugar corto a partir de coordenadas."""
     try:
         r = requests.get(
             "https://nominatim.openstreetmap.org/reverse",
@@ -123,6 +192,14 @@ def _reverse_geocode(lat, lon):
 @app.route("/")
 def index():
     return render_template("index.html")
+
+@app.route("/api/settings", methods=["GET", "POST"])
+def settings():
+    if request.method == "GET":
+        return jsonify(_load_settings())
+    data = request.json
+    _save_settings(data)
+    return jsonify({"ok": True})
 
 @app.route("/api/browse")
 def browse():
@@ -212,8 +289,10 @@ def write_gps():
     for rel in files:
         path = Path(PHOTOS_BASE) / rel
         try:
-            # exiftool para todo — JPG y RAW — sin recomprimir nunca
-            write_gps_exiftool(path, lat, lon, alt)
+            if path.suffix.lower() in JPG_EXTS:
+                write_jpg_gps(path, lat, lon, alt)
+            elif path.suffix.lower() in RAW_EXTS:
+                write_raw_gps(path, lat, lon, alt)
             ok.append(path.name)
         except Exception as e:
             errors.append({"file": path.name, "error": str(e)})
@@ -293,7 +372,6 @@ def rename_files():
                 location_name = "sin-ubicacion"
             location_name = re.sub(r'[^\w\s-]', '', location_name).strip()
             location_name = re.sub(r'\s+', '_', location_name)
-
             result = subprocess.run(
                 ["exiftool", "-DateTimeOriginal", "-s", "-s", "-s", str(path)],
                 capture_output=True, text=True, timeout=10
@@ -303,7 +381,6 @@ def rename_files():
                 dt = dt_raw.replace(":", "-", 2).replace(" ", "_").replace(":", "-")
             else:
                 dt = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
             base_name = dt + "_" + location_name
             ext = path.suffix
             candidate = path.parent / (base_name + ext)
@@ -318,30 +395,42 @@ def rename_files():
             errors.append({"file": path.name, "error": str(e)})
     return jsonify({"ok": ok, "errors": errors})
 
-@app.route("/api/photoprism_index", methods=["POST"])
-def photoprism_index():
-    """Lanza reindexado en PhotoPrism via su API HTTP."""
+@app.route("/api/send_report", methods=["POST"])
+def send_report():
+    data = request.json
+    action = data.get("action", "Operacion")
+    folder = data.get("folder", "")
+    ok_count = data.get("ok_count", 0)
+    err_count = data.get("err_count", 0)
+    total = data.get("total", 0)
+    err_files = data.get("err_files", [])
+    ts = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    status = "OK" if err_count == 0 else "CON ERRORES"
+    subject = "GeoTagger: " + action + " " + status + " (" + str(total) + " archivos)"
+
+    body = "<div style='font-family:system-ui;max-width:500px;margin:0 auto;'>"
+    body += "<h2 style='color:#e94560;'>GeoTagger — Reporte</h2>"
+    body += "<table style='width:100%;border-collapse:collapse;'>"
+    body += "<tr><td style='padding:8px;color:#888;'>Accion</td><td style='padding:8px;font-weight:600;'>" + action + "</td></tr>"
+    body += "<tr><td style='padding:8px;color:#888;'>Carpeta</td><td style='padding:8px;'>" + (folder or "Raiz") + "</td></tr>"
+    body += "<tr><td style='padding:8px;color:#888;'>Fecha</td><td style='padding:8px;'>" + ts + "</td></tr>"
+    body += "<tr><td style='padding:8px;color:#888;'>Total</td><td style='padding:8px;'>" + str(total) + " archivos</td></tr>"
+    body += "<tr><td style='padding:8px;color:#888;'>Exitosos</td><td style='padding:8px;color:#4caf82;font-weight:600;'>" + str(ok_count) + "</td></tr>"
+    body += "<tr><td style='padding:8px;color:#888;'>Errores</td><td style='padding:8px;color:" + ("#e94560" if err_count > 0 else "#4caf82") + ";font-weight:600;'>" + str(err_count) + "</td></tr>"
+    body += "</table>"
+    if err_files:
+        body += "<h3 style='color:#e94560;margin-top:16px;'>Archivos con error:</h3><ul>"
+        for ef in err_files[:20]:
+            body += "<li style='font-size:0.9em;'>" + ef + "</li>"
+        if len(err_files) > 20:
+            body += "<li>... y " + str(len(err_files) - 20) + " mas</li>"
+        body += "</ul>"
+    body += "</div>"
+
     try:
-        login = requests.post(
-            PHOTOPRISM_URL + "/api/v1/session",
-            json={"username": PHOTOPRISM_USER, "password": PHOTOPRISM_PASS},
-            timeout=15
-        )
-        if login.status_code != 200:
-            return jsonify({"ok": False, "error": "Login PhotoPrism fallo (" + str(login.status_code) + ")"})
-        token = login.headers.get("X-Session-ID") or login.json().get("id")
-        if not token:
-            return jsonify({"ok": False, "error": "No se obtuvo token de sesion"})
-        idx = requests.post(
-            PHOTOPRISM_URL + "/api/v1/index",
-            json={"path": "/", "rescan": False, "cleanup": True},
-            headers={"X-Session-ID": token},
-            timeout=30
-        )
-        if idx.status_code in (200, 201):
-            return jsonify({"ok": True, "output": "Indexado lanzado en PhotoPrism"})
-        else:
-            return jsonify({"ok": False, "error": "Index fallo (" + str(idx.status_code) + ")"})
+        _send_report(subject, body)
+        return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
