@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GeoTagger</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #eee; height: 100vh; display: flex; flex-direction: column; }
+  header { background: #16213e; padding: 16px 24px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid #0f3460; }
+  header h1 { font-size: 1.2rem; font-weight: 600; color: #e94560; }
+  header span { font-size: 0.85rem; color: #888; }
+  .main { display: flex; flex: 1; overflow: hidden; }
+  .sidebar { width: 240px; background: #16213e; border-right: 1px solid #0f3460; overflow-y: auto; padding: 12px; }
+  .sidebar h2 { font-size: 0.75rem; text-transform: uppercase; color: #888; margin-bottom: 10px; letter-spacing: 1px; }
+  .tree-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; }
+  .tree-item:hover { background: #0f3460; }
+  .tree-item.active { background: #e94560; color: white; }
+  .breadcrumb { padding: 10px 16px; font-size: 0.8rem; color: #888; border-bottom: 1px solid #0f3460; background: #16213e; }
+  .breadcrumb span { cursor: pointer; color: #e94560; }
+  .content { flex: 1; overflow-y: auto; padding: 16px; }
+  .files-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+  .file-card { background: #16213e; border-radius: 10px; overflow: hidden; cursor: pointer; border: 2px solid transparent; transition: all 0.15s; }
+  .file-card:hover { border-color: #0f3460; }
+  .file-card.selected { border-color: #e94560; background: #1f1040; }
+  .file-card .thumb-wrap { width: 100%; aspect-ratio: 1; background: #0f3460; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .file-card .thumb-wrap img { width: 100%; height: 100%; object-fit: cover; }
+  .file-card .thumb-wrap .icon { font-size: 2.5rem; }
+  .file-card .name { font-size: 0.7rem; color: #aaa; padding: 6px 8px; word-break: break-all; }
+  .panel { width: 300px; background: #16213e; border-left: 1px solid #0f3460; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+  .panel h2 { font-size: 0.75rem; text-transform: uppercase; color: #888; letter-spacing: 1px; }
+  .search-box { position: relative; }
+  .search-box input { width: 100%; background: #0f3460; border: 1px solid #1a4a8a; border-radius: 8px; padding: 10px 12px; color: #eee; font-size: 0.9rem; outline: none; }
+  .search-box input:focus { border-color: #e94560; }
+  .suggestions { position: absolute; top: 100%; left: 0; right: 0; background: #0f3460; border: 1px solid #1a4a8a; border-radius: 8px; margin-top: 4px; z-index: 10; max-height: 200px; overflow-y: auto; }
+  .suggestion { padding: 10px 12px; font-size: 0.8rem; cursor: pointer; border-bottom: 1px solid #1a4a8a; }
+  .suggestion:hover { background: #e94560; }
+  .suggestion:last-child { border-bottom: none; }
+  .coords { background: #0f3460; border-radius: 8px; padding: 12px; font-size: 0.85rem; }
+  .coords div { margin-bottom: 4px; color: #aaa; }
+  .coords span { color: #eee; font-weight: 600; }
+  .selected-count { background: #0f3460; border-radius: 8px; padding: 12px; font-size: 0.85rem; text-align: center; }
+  .selected-count strong { color: #e94560; font-size: 1.3rem; }
+  .btn { width: 100%; padding: 13px; border-radius: 10px; border: none; font-size: 1rem; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+  .btn-primary { background: #e94560; color: white; }
+  .btn-primary:hover { background: #c73652; }
+  .btn-primary:disabled { background: #555; cursor: not-allowed; }
+  .btn-secondary { background: #0f3460; color: #aaa; font-size: 0.85rem; padding: 10px; }
+  .btn-secondary:hover { background: #1a4a8a; color: #eee; }
+  .result-box { border-radius: 8px; padding: 12px; font-size: 0.8rem; }
+  .result-ok { background: #0d3320; border: 1px solid #1a6640; color: #4caf82; }
+  .result-err { background: #330d0d; border: 1px solid #662020; color: #e94560; }
+  .loading { text-align: center; padding: 40px; color: #888; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📍 GeoTagger</h1>
+  <span>QNAP · vCloudDocuments</span>
+</header>
+<div class="main">
+  <div class="sidebar">
+    <h2>Carpetas</h2>
+    <div id="tree"></div>
+  </div>
+  <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+    <div style="display:flex;align-items:center;justify-content:space-between;background:#16213e;border-bottom:1px solid #0f3460;padding:0 16px;">
+      <div class="breadcrumb" id="breadcrumb" style="border:none;padding:10px 0;flex:1;">Raíz</div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:0.8rem;color:#aaa;cursor:pointer;white-space:nowrap;">
+        <input type="checkbox" id="chk-missing" style="width:16px;height:16px;accent-color:#e94560;cursor:pointer;">
+        Solo sin ubicación (recursivo)
+      </label>
+    </div>
+    <div class="content">
+      <div id="files-container" class="loading">Selecciona una carpeta</div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Ubicación</h2>
+    <div class="search-box">
+      <input type="text" id="location-search" placeholder="Buscar lugar..." autocomplete="off">
+      <div class="suggestions" id="suggestions" style="display:none"></div>
+    </div>
+    <div class="coords">
+      <div>Latitud: <span id="lat-val">—</span></div>
+      <div>Longitud: <span id="lon-val">—</span></div>
+      <div>Altitud: <span id="alt-val">—</span></div>
+    </div>
+    <input type="number" id="alt-input" placeholder="Altitud (metros, opcional)" style="width:100%;background:#0f3460;border:1px solid #1a4a8a;border-radius:8px;padding:10px 12px;color:#eee;font-size:0.85rem;outline:none;">
+    <h2>Estado GPS</h2>
+    <div id="gps-status" style="background:#0f3460;border-radius:8px;padding:12px;font-size:0.8rem;color:#888;text-align:center;">Selecciona una foto para ver su ubicación actual</div>
+    <h2>Archivos seleccionados</h2>
+    <div class="selected-count"><strong id="sel-count">0</strong> archivos</div>
+    <button class="btn btn-secondary" id="btn-select-all">Seleccionar todos</button>
+    <button class="btn btn-primary" id="btn-apply" disabled>Aplicar GPS</button>
+    <div id="result-box" style="display:none"></div>
+  </div>
+</div>
+<script>
+let currentPath = "";
+let selectedFiles = new Set();
+let currentLat = null, currentLon = null;
+let searchTimer = null;
+let currentFiles = [];
+
+async function navigate(path) {
+  currentPath = path;
+  selectedFiles.clear();
+  currentFiles = [];
+  updateSelCount();
+  const res = await fetch("/api/browse?path=" + encodeURIComponent(path));
+  const data = await res.json();
+  renderBreadcrumb(path);
+  renderSidebar(data.dirs, path);
+  renderFiles(data.files);
+}
+
+function renderBreadcrumb(path) {
+  const parts = path ? path.split("/") : [];
+  let html = '<span onclick="navigate(\'\')">Fotos</span>';
+  let acc = "";
+  parts.forEach(function(p) {
+    acc += (acc ? "/" : "") + p;
+    const a = acc;
+    html += ' / <span onclick="navigate(\'' + a + '\')">' + p + '</span>';
+  });
+  document.getElementById("breadcrumb").innerHTML = html;
+}
+
+function renderSidebar(dirs, activePath) {
+  const tree = document.getElementById("tree");
+  if (dirs.length === 0) {
+    tree.innerHTML = '<div style="color:#888;font-size:0.8rem;padding:8px">Sin subcarpetas</div>';
+    return;
+  }
+  tree.innerHTML = dirs.map(function(d) {
+    return '<div class="tree-item' + (d.path === activePath ? ' active' : '') + '" data-path="' + d.path + '"><span>📁</span> ' + d.name + '</div>';
+  }).join("");
+  tree.querySelectorAll(".tree-item").forEach(function(el) {
+    el.addEventListener("click", function() { navigate(el.dataset.path); });
+  });
+}
+
+function extIcon(ext) {
+  if ([".cr3",".cr2",".nef",".arw",".raf",".dng",".jpr"].includes(ext)) return "🟠";
+  return "🖼️";
+}
+
+function renderFiles(files) {
+  currentFiles = files;
+  const c = document.getElementById("files-container");
+  if (files.length === 0) {
+    c.className = "loading";
+    c.innerHTML = "Sin fotos en esta carpeta";
+    return;
+  }
+  c.className = "files-grid";
+  c.innerHTML = files.map(function(f, i) {
+    const thumbUrl = "/api/thumb?path=" + encodeURIComponent(f.path);
+    return '<div class="file-card" data-index="' + i + '">' +
+      '<div class="thumb-wrap">' +
+      '<img src="' + thumbUrl + '" loading="lazy" onerror="this.style.display=\'none\';this.parentNode.innerHTML=\'<span class=icon>' + extIcon(f.ext) + '</span>\'">' +
+      '</div>' +
+      '<div class="name">' + f.name + '</div>' +
+      '</div>';
+  }).join("");
+  c.querySelectorAll(".file-card").forEach(function(card) {
+    card.addEventListener("click", function() { toggleFile(parseInt(card.dataset.index)); });
+  });
+}
+
+function toggleFile(index) {
+  const path = currentFiles[index].path;
+  const card = document.querySelector('.file-card[data-index="' + index + '"]');
+  if (selectedFiles.has(path)) {
+    selectedFiles.delete(path);
+    card && card.classList.remove("selected");
+  } else {
+    selectedFiles.add(path);
+    card && card.classList.add("selected");
+    checkGps(path);
+  }
+  updateSelCount();
+}
+
+async function checkGps(path) {
+  const box = document.getElementById("gps-status");
+  box.style.color = "#888";
+  box.innerHTML = "Comprobando...";
+  try {
+    const res = await fetch("/api/gpsinfo?path=" + encodeURIComponent(path));
+    const data = await res.json();
+    if (data.has_gps) {
+      box.style.color = "#4caf82";
+      box.innerHTML = "\u2705 Ya tiene ubicaci\u00f3n<br><span style='color:#aaa'>" + parseFloat(data.lat).toFixed(5) + ", " + parseFloat(data.lon).toFixed(5) + "</span>";
+    } else {
+      box.style.color = "#e94560";
+      box.innerHTML = "\u274c Sin ubicaci\u00f3n GPS";
+    }
+  } catch (e) {
+    box.style.color = "#888";
+    box.innerHTML = "No se pudo comprobar";
+  }
+}
+
+function updateSelCount() {
+  document.getElementById("sel-count").textContent = selectedFiles.size;
+  document.getElementById("btn-apply").disabled = selectedFiles.size === 0 || currentLat === null;
+}
+
+document.getElementById("btn-select-all").addEventListener("click", function() {
+  currentFiles.forEach(function(f, i) {
+    selectedFiles.add(f.path);
+    const card = document.querySelector('.file-card[data-index="' + i + '"]');
+    card && card.classList.add("selected");
+  });
+  updateSelCount();
+});
+
+const searchInput = document.getElementById("location-search");
+searchInput.addEventListener("input", function() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(async function() {
+    const q = searchInput.value.trim();
+    if (q.length < 3) { document.getElementById("suggestions").style.display = "none"; return; }
+    const res = await fetch("/api/geocode?q=" + encodeURIComponent(q));
+    const data = await res.json();
+    const sug = document.getElementById("suggestions");
+    if (data.length === 0) { sug.style.display = "none"; return; }
+    sug.innerHTML = data.map(function(r) {
+      return '<div class="suggestion" data-lat="' + r.lat + '" data-lon="' + r.lon + '" data-name="' + r.name.split(",")[0].replace(/"/g,"") + '">📍 ' + r.name + '</div>';
+    }).join("");
+    sug.querySelectorAll(".suggestion").forEach(function(el) {
+      el.addEventListener("click", function() {
+        currentLat = parseFloat(el.dataset.lat);
+        currentLon = parseFloat(el.dataset.lon);
+        document.getElementById("lat-val").textContent = currentLat.toFixed(6);
+        document.getElementById("lon-val").textContent = currentLon.toFixed(6);
+        document.getElementById("alt-val").textContent = "—";
+        searchInput.value = el.dataset.name;
+        sug.style.display = "none";
+        updateSelCount();
+      });
+    });
+    sug.style.display = "block";
+  }, 400);
+});
+
+document.getElementById("btn-apply").addEventListener("click", async function() {
+  const alt = document.getElementById("alt-input").value || null;
+  const btn = document.getElementById("btn-apply");
+  const box = document.getElementById("result-box");
+  const files = Array.from(selectedFiles);
+  const total = files.length;
+  let done = 0, okCount = 0, errCount = 0;
+  const errFiles = [];
+
+  btn.disabled = true;
+  box.style.display = "block";
+  box.className = "result-box";
+  box.style.background = "#0f3460";
+  box.style.border = "1px solid #1a4a8a";
+  box.style.color = "#eee";
+
+  for (const f of files) {
+    box.innerHTML = "\u23f3 " + done + " de " + total + " completadas...";
+    btn.textContent = done + " / " + total;
+    try {
+      const res = await fetch("/api/write", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ lat: currentLat, lon: currentLon, alt: alt, files: [f] })
+      });
+      const data = await res.json();
+      if (data.errors.length === 0) { okCount++; }
+      else { errCount++; errFiles.push(data.errors[0].file); }
+    } catch (e) {
+      errCount++;
+      errFiles.push(f.split("/").pop());
+    }
+    done++;
+    box.innerHTML = "\u23f3 " + done + " de " + total + " completadas...";
+    btn.textContent = done + " / " + total;
+  }
+
+  if (errCount === 0) {
+    box.className = "result-box result-ok";
+    box.style.background = ""; box.style.border = ""; box.style.color = "";
+    box.innerHTML = "\u2705 " + okCount + " de " + total + " actualizadas correctamente";
+  } else {
+    box.className = "result-box result-err";
+    box.style.background = ""; box.style.border = ""; box.style.color = "";
+    box.innerHTML = "\u26a0\ufe0f " + okCount + " OK \u00b7 " + errCount + " errores<br>" + errFiles.slice(0,5).join(", ") + (errFiles.length > 5 ? "..." : "");
+  }
+  btn.disabled = false;
+  btn.textContent = "Aplicar GPS";
+  selectedFiles.clear();
+  document.querySelectorAll(".file-card.selected").forEach(function(c){ c.classList.remove("selected"); });
+  updateSelCount();
+});
+
+
+const chkMissing = document.getElementById("chk-missing");
+chkMissing.addEventListener("change", function() {
+  if (chkMissing.checked) {
+    loadMissing(currentPath);
+  } else {
+    navigate(currentPath);
+  }
+});
+
+async function loadMissing(path) {
+  const c = document.getElementById("files-container");
+  c.className = "loading";
+  c.innerHTML = "\ud83d\udd0d Buscando fotos sin ubicaci\u00f3n en toda la jerarqu\u00eda...";
+  selectedFiles.clear();
+  updateSelCount();
+  try {
+    const res = await fetch("/api/missing_gps?path=" + encodeURIComponent(path));
+    const data = await res.json();
+    currentFiles = data.files;
+    if (data.files.length === 0) {
+      c.className = "loading";
+      c.innerHTML = "\u2705 Todas las fotos de esta jerarqu\u00eda ya tienen ubicaci\u00f3n";
+      return;
+    }
+    c.className = "files-grid";
+    c.innerHTML = data.files.map(function(f, i) {
+      const thumbUrl = "/api/thumb?path=" + encodeURIComponent(f.path);
+      return '<div class="file-card" data-index="' + i + '">' +
+        '<div class="thumb-wrap">' +
+        '<img src="' + thumbUrl + '" loading="lazy" onerror="this.style.display=\'none\';this.parentNode.innerHTML=\'<span class=icon>' + extIcon(f.ext) + '</span>\'">' +
+        '</div>' +
+        '<div class="name">' + f.name + '<br><span style="color:#666;font-size:0.6rem;">' + f.folder + '</span></div>' +
+        '</div>';
+    }).join("");
+    c.querySelectorAll(".file-card").forEach(function(card) {
+      card.addEventListener("click", function() { toggleFile(parseInt(card.dataset.index)); });
+    });
+  } catch (e) {
+    c.className = "loading";
+    c.innerHTML = "Error al buscar";
+  }
+}
+
+navigate("");
+</script>
+</body>
+</html>
