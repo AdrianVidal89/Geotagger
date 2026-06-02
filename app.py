@@ -1,6 +1,5 @@
 import os
 import subprocess
-import piexif
 import re
 import io
 import time
@@ -43,35 +42,11 @@ def _trigger_reindex(path):
             except Exception:
                 pass
 
-def decimal_to_dms(decimal):
-    decimal = abs(decimal)
-    degrees = int(decimal)
-    minutes = int((decimal - degrees) * 60)
-    seconds = round(((decimal - degrees) * 60 - minutes) * 60 * 10000)
-    return ((degrees, 1), (minutes, 1), (seconds, 10000))
-
-def build_gps_ifd(lat, lon, alt=None):
-    gps = {
-        piexif.GPSIFD.GPSLatitudeRef:  b"N" if lat >= 0 else b"S",
-        piexif.GPSIFD.GPSLatitude:     decimal_to_dms(lat),
-        piexif.GPSIFD.GPSLongitudeRef: b"E" if lon >= 0 else b"W",
-        piexif.GPSIFD.GPSLongitude:    decimal_to_dms(lon),
-    }
-    if alt is not None:
-        gps[piexif.GPSIFD.GPSAltitudeRef] = 0 if alt >= 0 else 1
-        gps[piexif.GPSIFD.GPSAltitude]    = (int(abs(alt) * 100), 100)
-    return gps
-
-def write_jpg_gps(path, lat, lon, alt=None):
-    path = sanitize_path(path)
-    img = Image.open(str(path))
-    exif_bytes = img.info.get("exif", b"")
-    exif_dict = piexif.load(exif_bytes) if exif_bytes else {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}}
-    exif_dict["GPS"] = build_gps_ifd(lat, lon, alt)
-    img.save(str(path), exif=piexif.dump(exif_dict))
-    _trigger_reindex(path)
-
-def write_raw_gps(path, lat, lon, alt=None):
+def write_gps_exiftool(path, lat, lon, alt=None):
+    """
+    Escribe GPS usando SOLO exiftool — no recomprime la imagen.
+    Funciona para JPG, TIFF y todos los RAW.
+    """
     path = sanitize_path(path)
     lat_ref = "N" if lat >= 0 else "S"
     lon_ref = "E" if lon >= 0 else "W"
@@ -93,23 +68,13 @@ def write_raw_gps(path, lat, lon, alt=None):
     _trigger_reindex(path)
 
 def _has_gps_fast(path):
-    ext = path.suffix.lower()
     try:
-        if ext in JPG_EXTS:
-            img = Image.open(str(path))
-            exif_bytes = img.info.get("exif", b"")
-            if not exif_bytes:
-                return False
-            exif_dict = piexif.load(exif_bytes)
-            gps = exif_dict.get("GPS", {})
-            return piexif.GPSIFD.GPSLatitude in gps and piexif.GPSIFD.GPSLongitude in gps
-        else:
-            result = subprocess.run(
-                ["exiftool", "-n", "-GPSLatitude", "-GPSLongitude", "-s", "-s", "-s", str(path)],
-                capture_output=True, text=True, timeout=10
-            )
-            out = result.stdout.strip()
-            return bool(out) and len(out.split("\n")) >= 2
+        result = subprocess.run(
+            ["exiftool", "-n", "-GPSLatitude", "-GPSLongitude", "-s", "-s", "-s", str(path)],
+            capture_output=True, text=True, timeout=10
+        )
+        out = result.stdout.strip()
+        return bool(out) and len(out.split("\n")) >= 2
     except Exception:
         return False
 
@@ -145,11 +110,9 @@ def _reverse_geocode(lat, lon):
             return None
         data = r.json()
         addr = data.get("address", {})
-        # Prioridad: pueblo/ciudad/aldea -> municipio -> provincia
         for key in ["village", "town", "city", "hamlet", "suburb", "municipality", "county", "state"]:
             if addr.get(key):
                 return addr[key]
-        # Fallback: primera parte del display_name
         dn = data.get("display_name", "")
         if dn:
             return dn.split(",")[0]
@@ -249,10 +212,8 @@ def write_gps():
     for rel in files:
         path = Path(PHOTOS_BASE) / rel
         try:
-            if path.suffix.lower() in JPG_EXTS:
-                write_jpg_gps(path, lat, lon, alt)
-            elif path.suffix.lower() in RAW_EXTS:
-                write_raw_gps(path, lat, lon, alt)
+            # exiftool para todo — JPG y RAW — sin recomprimir nunca
+            write_gps_exiftool(path, lat, lon, alt)
             ok.append(path.name)
         except Exception as e:
             errors.append({"file": path.name, "error": str(e)})
@@ -314,7 +275,6 @@ def rename_files():
             errors.append({"file": rel, "error": "no existe"})
             continue
         try:
-            # 1. Obtener nombre de ubicacion: primero geocodificacion inversa del propio archivo
             location_name = ""
             coords = _get_coords(path)
             if coords:
@@ -326,17 +286,14 @@ def rename_files():
                     if rev:
                         location_name = rev
                         geocode_cache[cache_key] = rev
-                        time.sleep(1)  # respetar rate limit de Nominatim
-            # 2. Si no hay GPS, usar el nombre del buscador como fallback
+                        time.sleep(1)
             if not location_name and fallback_name:
                 location_name = fallback_name
             if not location_name:
                 location_name = "sin-ubicacion"
-            # Limpiar nombre
             location_name = re.sub(r'[^\w\s-]', '', location_name).strip()
             location_name = re.sub(r'\s+', '_', location_name)
 
-            # 3. Fecha del EXIF
             result = subprocess.run(
                 ["exiftool", "-DateTimeOriginal", "-s", "-s", "-s", str(path)],
                 capture_output=True, text=True, timeout=10
@@ -365,7 +322,6 @@ def rename_files():
 def photoprism_index():
     """Lanza reindexado en PhotoPrism via su API HTTP."""
     try:
-        # 1. Login para obtener token de sesion
         login = requests.post(
             PHOTOPRISM_URL + "/api/v1/session",
             json={"username": PHOTOPRISM_USER, "password": PHOTOPRISM_PASS},
@@ -376,7 +332,6 @@ def photoprism_index():
         token = login.headers.get("X-Session-ID") or login.json().get("id")
         if not token:
             return jsonify({"ok": False, "error": "No se obtuvo token de sesion"})
-        # 2. Lanzar indexado
         idx = requests.post(
             PHOTOPRISM_URL + "/api/v1/index",
             json={"path": "/", "rescan": False, "cleanup": True},
