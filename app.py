@@ -8,6 +8,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, render_template, send_file
 from PIL import Image
 import requests
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -25,8 +26,6 @@ def sanitize_path(path):
     return p
 
 def _trigger_reindex(path):
-    """Renombra el archivo a temporal y de vuelta para generar un evento
-    de sistema de archivos que QuMagie detecte y reindexe solo esta foto."""
     p = Path(path)
     tmp = p.parent / ("." + p.name + ".reindex_tmp")
     try:
@@ -87,6 +86,27 @@ def write_raw_gps(path, lat, lon, alt=None):
     if result.returncode != 0:
         raise Exception(result.stderr.strip())
     _trigger_reindex(path)
+
+def _has_gps_fast(path):
+    ext = path.suffix.lower()
+    try:
+        if ext in JPG_EXTS:
+            img = Image.open(str(path))
+            exif_bytes = img.info.get("exif", b"")
+            if not exif_bytes:
+                return False
+            exif_dict = piexif.load(exif_bytes)
+            gps = exif_dict.get("GPS", {})
+            return piexif.GPSIFD.GPSLatitude in gps and piexif.GPSIFD.GPSLongitude in gps
+        else:
+            result = subprocess.run(
+                ["exiftool", "-n", "-GPSLatitude", "-GPSLongitude", "-s", "-s", "-s", str(path)],
+                capture_output=True, text=True, timeout=10
+            )
+            out = result.stdout.strip()
+            return bool(out) and len(out.split("\n")) >= 2
+    except Exception:
+        return False
 
 @app.route("/")
 def index():
@@ -189,7 +209,6 @@ def write_gps():
             errors.append({"file": path.name, "error": str(e)})
     return jsonify({"ok": ok, "errors": errors})
 
-
 @app.route("/api/gpsinfo")
 def gpsinfo():
     rel = request.args.get("path", "")
@@ -208,29 +227,6 @@ def gpsinfo():
         return jsonify({"has_gps": False})
     except Exception as e:
         return jsonify({"has_gps": False, "error": str(e)})
-
-
-def _has_gps_fast(path):
-    """Devuelve True si el archivo ya tiene coordenadas GPS."""
-    ext = path.suffix.lower()
-    try:
-        if ext in JPG_EXTS:
-            img = Image.open(str(path))
-            exif_bytes = img.info.get("exif", b"")
-            if not exif_bytes:
-                return False
-            exif_dict = piexif.load(exif_bytes)
-            gps = exif_dict.get("GPS", {})
-            return piexif.GPSIFD.GPSLatitude in gps and piexif.GPSIFD.GPSLongitude in gps
-        else:
-            result = subprocess.run(
-                ["exiftool", "-n", "-GPSLatitude", "-GPSLongitude", "-s", "-s", "-s", str(path)],
-                capture_output=True, text=True, timeout=10
-            )
-            out = result.stdout.strip()
-            return bool(out) and len(out.split("\n")) >= 2
-    except Exception:
-        return False
 
 @app.route("/api/missing_gps")
 def missing_gps():
@@ -254,6 +250,60 @@ def missing_gps():
                 "folder": str(item.parent.relative_to(PHOTOS_BASE))
             })
     return jsonify({"files": found, "count": len(found)})
+
+@app.route("/api/rename", methods=["POST"])
+def rename_files():
+    data = request.json
+    location_name = re.sub(r'[^\w\s-]', '', data.get("location_name", "ubicacion")).strip()
+    location_name = re.sub(r'\s+', '_', location_name)
+    files = data["files"]
+    ok, errors = [], []
+    seen = {}
+    for rel in files:
+        path = Path(PHOTOS_BASE) / rel
+        if not path.exists():
+            errors.append({"file": rel, "error": "no existe"})
+            continue
+        try:
+            result = subprocess.run(
+                ["exiftool", "-DateTimeOriginal", "-s", "-s", "-s", str(path)],
+                capture_output=True, text=True, timeout=10
+            )
+            dt_raw = result.stdout.strip()
+            if dt_raw:
+                dt = dt_raw.replace(":", "-", 2).replace(" ", "_").replace(":", "-")
+            else:
+                dt = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            base_name = dt + "_" + location_name
+            ext = path.suffix
+            candidate = path.parent / (base_name + ext)
+            counter = 2
+            while candidate.exists() or str(candidate) in seen.values():
+                candidate = path.parent / (base_name + "_" + str(counter) + ext)
+                counter += 1
+            seen[rel] = str(candidate)
+            path.rename(candidate)
+            ok.append({"old": path.name, "new": candidate.name})
+        except Exception as e:
+            errors.append({"file": path.name, "error": str(e)})
+    return jsonify({"ok": ok, "errors": errors})
+
+@app.route("/api/photoprism_index", methods=["POST"])
+def photoprism_index():
+    data = request.json
+    folder = data.get("folder", "")
+    try:
+        result = subprocess.run(
+            ["docker", "exec", "photoprism",
+             "/photoprism/bin/photoprism", "index", "--cleanup", folder],
+            capture_output=True, text=True, timeout=300
+        )
+        if result.returncode == 0:
+            return jsonify({"ok": True, "output": result.stdout.strip()})
+        else:
+            return jsonify({"ok": False, "error": result.stderr.strip()})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)

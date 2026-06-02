@@ -47,6 +47,11 @@
   .btn-primary:disabled { background: #555; cursor: not-allowed; }
   .btn-secondary { background: #0f3460; color: #aaa; font-size: 0.85rem; padding: 10px; }
   .btn-secondary:hover { background: #1a4a8a; color: #eee; }
+  .btn-warning { background: #7a4f00; color: #ffd966; font-size: 0.85rem; padding: 10px; }
+  .btn-warning:hover { background: #a06800; }
+  .btn-photoprism { background: #1a3a2a; color: #4caf82; font-size: 0.85rem; padding: 10px; }
+  .btn-photoprism:hover { background: #0d3320; }
+  .btn-photoprism:disabled { background: #333; color: #555; cursor: not-allowed; }
   .result-box { border-radius: 8px; padding: 12px; font-size: 0.8rem; }
   .result-ok { background: #0d3320; border: 1px solid #1a6640; color: #4caf82; }
   .result-err { background: #330d0d; border: 1px solid #662020; color: #e94560; }
@@ -93,13 +98,17 @@
     <div class="selected-count"><strong id="sel-count">0</strong> archivos</div>
     <button class="btn btn-secondary" id="btn-select-all">Seleccionar todos</button>
     <button class="btn btn-primary" id="btn-apply" disabled>Aplicar GPS</button>
+    <button class="btn btn-warning" id="btn-rename" disabled>✏️ Renombrar por EXIF + ubicación</button>
+    <button class="btn btn-photoprism" id="btn-photoprism" disabled>🔄 Sincronizar con PhotoPrism</button>
     <div id="result-box" style="display:none"></div>
+    <div id="rename-box" style="display:none"></div>
+    <div id="photoprism-box" style="display:none"></div>
   </div>
 </div>
 <script>
 let currentPath = "";
 let selectedFiles = new Set();
-let currentLat = null, currentLon = null;
+let currentLat = null, currentLon = null, currentLocationName = "";
 let searchTimer = null;
 let currentFiles = [];
 
@@ -204,8 +213,11 @@ async function checkGps(path) {
 }
 
 function updateSelCount() {
-  document.getElementById("sel-count").textContent = selectedFiles.size;
-  document.getElementById("btn-apply").disabled = selectedFiles.size === 0 || currentLat === null;
+  const count = selectedFiles.size;
+  document.getElementById("sel-count").textContent = count;
+  document.getElementById("btn-apply").disabled = count === 0 || currentLat === null;
+  document.getElementById("btn-rename").disabled = count === 0;
+  document.getElementById("btn-photoprism").disabled = currentPath === "";
 }
 
 document.getElementById("btn-select-all").addEventListener("click", function() {
@@ -234,6 +246,7 @@ searchInput.addEventListener("input", function() {
       el.addEventListener("click", function() {
         currentLat = parseFloat(el.dataset.lat);
         currentLon = parseFloat(el.dataset.lon);
+        currentLocationName = el.dataset.name;
         document.getElementById("lat-val").textContent = currentLat.toFixed(6);
         document.getElementById("lon-val").textContent = currentLon.toFixed(6);
         document.getElementById("alt-val").textContent = "—";
@@ -254,14 +267,12 @@ document.getElementById("btn-apply").addEventListener("click", async function() 
   const total = files.length;
   let done = 0, okCount = 0, errCount = 0;
   const errFiles = [];
-
   btn.disabled = true;
   box.style.display = "block";
   box.className = "result-box";
   box.style.background = "#0f3460";
   box.style.border = "1px solid #1a4a8a";
   box.style.color = "#eee";
-
   for (const f of files) {
     box.innerHTML = "\u23f3 " + done + " de " + total + " completadas...";
     btn.textContent = done + " / " + total;
@@ -279,10 +290,7 @@ document.getElementById("btn-apply").addEventListener("click", async function() 
       errFiles.push(f.split("/").pop());
     }
     done++;
-    box.innerHTML = "\u23f3 " + done + " de " + total + " completadas...";
-    btn.textContent = done + " / " + total;
   }
-
   if (errCount === 0) {
     box.className = "result-box result-ok";
     box.style.background = ""; box.style.border = ""; box.style.color = "";
@@ -299,6 +307,80 @@ document.getElementById("btn-apply").addEventListener("click", async function() 
   updateSelCount();
 });
 
+document.getElementById("btn-rename").addEventListener("click", async function() {
+  if (selectedFiles.size === 0) return;
+  const locName = currentLocationName || searchInput.value.trim() || "sin-ubicacion";
+  if (!confirm("¿Renombrar " + selectedFiles.size + " foto(s) con formato FECHA_" + locName + "?")) return;
+  const btn = document.getElementById("btn-rename");
+  const box = document.getElementById("rename-box");
+  btn.disabled = true;
+  btn.textContent = "Renombrando...";
+  box.style.display = "block";
+  box.className = "result-box";
+  box.style.background = "#0f3460";
+  box.style.color = "#eee";
+  box.innerHTML = "\u23f3 Renombrando...";
+  try {
+    const res = await fetch("/api/rename", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ location_name: locName, files: Array.from(selectedFiles) })
+    });
+    const data = await res.json();
+    if (data.errors.length === 0) {
+      box.className = "result-box result-ok";
+      box.style.background = ""; box.style.color = "";
+      box.innerHTML = "\u2705 " + data.ok.length + " archivos renombrados";
+    } else {
+      box.className = "result-box result-err";
+      box.style.background = ""; box.style.color = "";
+      box.innerHTML = "\u26a0\ufe0f " + data.ok.length + " OK \u00b7 " + data.errors.length + " errores";
+    }
+    selectedFiles.clear();
+    navigate(currentPath);
+  } catch (e) {
+    box.className = "result-box result-err";
+    box.innerHTML = "Error al renombrar";
+  }
+  btn.disabled = false;
+  btn.textContent = "\u270f\ufe0f Renombrar por EXIF + ubicaci\u00f3n";
+  updateSelCount();
+});
+
+document.getElementById("btn-photoprism").addEventListener("click", async function() {
+  const btn = document.getElementById("btn-photoprism");
+  const box = document.getElementById("photoprism-box");
+  btn.disabled = true;
+  btn.textContent = "Indexando...";
+  box.style.display = "block";
+  box.className = "result-box";
+  box.style.background = "#0f3460";
+  box.style.color = "#eee";
+  box.innerHTML = "\u23f3 Lanzando reindexado en PhotoPrism...";
+  try {
+    const res = await fetch("/api/photoprism_index", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ folder: currentPath })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      box.className = "result-box result-ok";
+      box.style.background = ""; box.style.color = "";
+      box.innerHTML = "\u2705 PhotoPrism reindexado correctamente";
+    } else {
+      box.className = "result-box result-err";
+      box.style.background = ""; box.style.color = "";
+      box.innerHTML = "\u26a0\ufe0f Error: " + (data.error || "desconocido");
+    }
+  } catch (e) {
+    box.className = "result-box result-err";
+    box.innerHTML = "Error de conexi\u00f3n";
+  }
+  btn.disabled = false;
+  btn.textContent = "\ud83d\udd04 Sincronizar con PhotoPrism";
+  updateSelCount();
+});
 
 const chkMissing = document.getElementById("chk-missing");
 chkMissing.addEventListener("change", function() {
