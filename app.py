@@ -16,6 +16,11 @@ PHOTOS_BASE = "/photos"
 JPG_EXTS = {".jpg", ".jpeg", ".tiff", ".tif"}
 RAW_EXTS = {".cr3", ".jpr", ".cr2", ".nef", ".arw", ".raf", ".dng"}
 
+# Config PhotoPrism (via API HTTP, no docker)
+PHOTOPRISM_URL = os.environ.get("PHOTOPRISM_URL", "http://172.29.20.2:2342")
+PHOTOPRISM_USER = os.environ.get("PHOTOPRISM_USER", "admin")
+PHOTOPRISM_PASS = os.environ.get("PHOTOPRISM_PASS", "cambiame123")
+
 def sanitize_path(path):
     p = Path(path)
     clean_name = re.sub(r'[:\*\?"<>\|]', '-', p.name)
@@ -107,6 +112,50 @@ def _has_gps_fast(path):
             return bool(out) and len(out.split("\n")) >= 2
     except Exception:
         return False
+
+def _get_coords(path):
+    """Lee las coordenadas GPS del archivo. Devuelve (lat, lon) o None."""
+    try:
+        result = subprocess.run(
+            ["exiftool", "-n", "-GPSLatitude", "-GPSLongitude", "-s", "-s", "-s", str(path)],
+            capture_output=True, text=True, timeout=10
+        )
+        out = result.stdout.strip()
+        if out and "\n" in out:
+            parts = out.split("\n")
+            return float(parts[0].strip()), float(parts[1].strip())
+    except Exception:
+        pass
+    return None
+
+def _reverse_geocode(lat, lon):
+    """Obtiene un nombre de lugar corto a partir de coordenadas."""
+    try:
+        r = requests.get(
+            "https://nominatim.openstreetmap.org/reverse",
+            params={"lat": lat, "lon": lon, "format": "jsonv2", "zoom": 14, "addressdetails": 1},
+            headers={
+                "User-Agent": "GeoTagger-QNAP/1.0 (personal photo tagger)",
+                "Accept": "application/json",
+                "Accept-Language": "es,en"
+            },
+            timeout=10
+        )
+        if r.status_code != 200 or not r.text.strip():
+            return None
+        data = r.json()
+        addr = data.get("address", {})
+        # Prioridad: pueblo/ciudad/aldea -> municipio -> provincia
+        for key in ["village", "town", "city", "hamlet", "suburb", "municipality", "county", "state"]:
+            if addr.get(key):
+                return addr[key]
+        # Fallback: primera parte del display_name
+        dn = data.get("display_name", "")
+        if dn:
+            return dn.split(",")[0]
+    except Exception as e:
+        print("Reverse geocode error:", str(e))
+    return None
 
 @app.route("/")
 def index():
@@ -254,17 +303,40 @@ def missing_gps():
 @app.route("/api/rename", methods=["POST"])
 def rename_files():
     data = request.json
-    location_name = re.sub(r'[^\w\s-]', '', data.get("location_name", "ubicacion")).strip()
-    location_name = re.sub(r'\s+', '_', location_name)
+    fallback_name = data.get("location_name", "").strip()
     files = data["files"]
     ok, errors = [], []
     seen = {}
+    geocode_cache = {}
     for rel in files:
         path = Path(PHOTOS_BASE) / rel
         if not path.exists():
             errors.append({"file": rel, "error": "no existe"})
             continue
         try:
+            # 1. Obtener nombre de ubicacion: primero geocodificacion inversa del propio archivo
+            location_name = ""
+            coords = _get_coords(path)
+            if coords:
+                cache_key = (round(coords[0], 4), round(coords[1], 4))
+                if cache_key in geocode_cache:
+                    location_name = geocode_cache[cache_key]
+                else:
+                    rev = _reverse_geocode(coords[0], coords[1])
+                    if rev:
+                        location_name = rev
+                        geocode_cache[cache_key] = rev
+                        time.sleep(1)  # respetar rate limit de Nominatim
+            # 2. Si no hay GPS, usar el nombre del buscador como fallback
+            if not location_name and fallback_name:
+                location_name = fallback_name
+            if not location_name:
+                location_name = "sin-ubicacion"
+            # Limpiar nombre
+            location_name = re.sub(r'[^\w\s-]', '', location_name).strip()
+            location_name = re.sub(r'\s+', '_', location_name)
+
+            # 3. Fecha del EXIF
             result = subprocess.run(
                 ["exiftool", "-DateTimeOriginal", "-s", "-s", "-s", str(path)],
                 capture_output=True, text=True, timeout=10
@@ -274,6 +346,7 @@ def rename_files():
                 dt = dt_raw.replace(":", "-", 2).replace(" ", "_").replace(":", "-")
             else:
                 dt = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
             base_name = dt + "_" + location_name
             ext = path.suffix
             candidate = path.parent / (base_name + ext)
@@ -290,18 +363,30 @@ def rename_files():
 
 @app.route("/api/photoprism_index", methods=["POST"])
 def photoprism_index():
-    data = request.json
-    folder = data.get("folder", "")
+    """Lanza reindexado en PhotoPrism via su API HTTP."""
     try:
-        result = subprocess.run(
-            ["docker", "exec", "photoprism",
-             "/photoprism/bin/photoprism", "index", "--cleanup", folder],
-            capture_output=True, text=True, timeout=300
+        # 1. Login para obtener token de sesion
+        login = requests.post(
+            PHOTOPRISM_URL + "/api/v1/session",
+            json={"username": PHOTOPRISM_USER, "password": PHOTOPRISM_PASS},
+            timeout=15
         )
-        if result.returncode == 0:
-            return jsonify({"ok": True, "output": result.stdout.strip()})
+        if login.status_code != 200:
+            return jsonify({"ok": False, "error": "Login PhotoPrism fallo (" + str(login.status_code) + ")"})
+        token = login.headers.get("X-Session-ID") or login.json().get("id")
+        if not token:
+            return jsonify({"ok": False, "error": "No se obtuvo token de sesion"})
+        # 2. Lanzar indexado
+        idx = requests.post(
+            PHOTOPRISM_URL + "/api/v1/index",
+            json={"path": "/", "rescan": False, "cleanup": True},
+            headers={"X-Session-ID": token},
+            timeout=30
+        )
+        if idx.status_code in (200, 201):
+            return jsonify({"ok": True, "output": "Indexado lanzado en PhotoPrism"})
         else:
-            return jsonify({"ok": False, "error": result.stderr.strip()})
+            return jsonify({"ok": False, "error": "Index fallo (" + str(idx.status_code) + ")"})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
