@@ -1,6 +1,5 @@
 import os
 import subprocess
-import piexif
 import re
 import io
 import time
@@ -27,6 +26,18 @@ SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
 SMTP_USER = os.environ.get("SMTP_USER", "ecostruxureatlas@gmail.com")
 SMTP_PASS = os.environ.get("SMTP_PASS", "ezpv lhfx qjer fxkm")
+
+# =============================================================================
+# PRINCIPIO FUNDAMENTAL DE ESTA APP:
+# NUNCA se recomprimen ni se re-codifican las imagenes originales.
+# Toda escritura de metadatos (GPS, etc.) se hace EXCLUSIVAMENTE con ExifTool,
+# que reescribe solo los segmentos de metadatos y copia los datos de pixel
+# byte a byte, sin tocar la calidad de la imagen.
+# Pillow se usa UNICAMENTE para LEER y generar miniaturas en memoria (buffers),
+# NUNCA para guardar/sobrescribir archivos originales.
+# El renombrado es solo una operacion de sistema de archivos (rename), que no
+# altera el contenido del archivo en absoluto.
+# =============================================================================
 
 def _load_settings():
     try:
@@ -79,35 +90,13 @@ def _trigger_reindex(path):
             except Exception:
                 pass
 
-def decimal_to_dms(decimal):
-    decimal = abs(decimal)
-    degrees = int(decimal)
-    minutes = int((decimal - degrees) * 60)
-    seconds = round(((decimal - degrees) * 60 - minutes) * 60 * 10000)
-    return ((degrees, 1), (minutes, 1), (seconds, 10000))
-
-def build_gps_ifd(lat, lon, alt=None):
-    gps = {
-        piexif.GPSIFD.GPSLatitudeRef:  b"N" if lat >= 0 else b"S",
-        piexif.GPSIFD.GPSLatitude:     decimal_to_dms(lat),
-        piexif.GPSIFD.GPSLongitudeRef: b"E" if lon >= 0 else b"W",
-        piexif.GPSIFD.GPSLongitude:    decimal_to_dms(lon),
-    }
-    if alt is not None:
-        gps[piexif.GPSIFD.GPSAltitudeRef] = 0 if alt >= 0 else 1
-        gps[piexif.GPSIFD.GPSAltitude]    = (int(abs(alt) * 100), 100)
-    return gps
-
-def write_jpg_gps(path, lat, lon, alt=None):
-    path = sanitize_path(path)
-    img = Image.open(str(path))
-    exif_bytes = img.info.get("exif", b"")
-    exif_dict = piexif.load(exif_bytes) if exif_bytes else {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}}
-    exif_dict["GPS"] = build_gps_ifd(lat, lon, alt)
-    img.save(str(path), exif=piexif.dump(exif_dict))
-    _trigger_reindex(path)
-
-def write_raw_gps(path, lat, lon, alt=None):
+def _write_gps_exiftool(path, lat, lon, alt=None):
+    """
+    Escribe coordenadas GPS usando ExifTool con -overwrite_original.
+    ExifTool reescribe SOLO los metadatos, copiando los datos de imagen
+    byte a byte. NO recomprime ni reduce la calidad. Valido para JPG, TIFF,
+    CR3 y cualquier RAW soportado.
+    """
     path = sanitize_path(path)
     lat_ref = "N" if lat >= 0 else "S"
     lon_ref = "E" if lon >= 0 else "W"
@@ -118,34 +107,25 @@ def write_raw_gps(path, lat, lon, alt=None):
         "-GPSLongitude=" + str(abs(lon)),
         "-GPSLongitudeRef=" + lon_ref,
         "-overwrite_original",
-        str(path)
     ]
     if alt is not None:
-        cmd.insert(-1, "-GPSAltitude=" + str(abs(alt)))
-        cmd.insert(-1, "-GPSAltitudeRef=" + ("0" if alt >= 0 else "1"))
+        cmd.append("-GPSAltitude=" + str(abs(alt)))
+        cmd.append("-GPSAltitudeRef=" + ("0" if alt >= 0 else "1"))
+    cmd.append(str(path))
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise Exception(result.stderr.strip())
     _trigger_reindex(path)
 
 def _has_gps_fast(path):
-    ext = path.suffix.lower()
+    """Lee (sin modificar) si el archivo ya tiene coordenadas GPS."""
     try:
-        if ext in JPG_EXTS:
-            img = Image.open(str(path))
-            exif_bytes = img.info.get("exif", b"")
-            if not exif_bytes:
-                return False
-            exif_dict = piexif.load(exif_bytes)
-            gps = exif_dict.get("GPS", {})
-            return piexif.GPSIFD.GPSLatitude in gps and piexif.GPSIFD.GPSLongitude in gps
-        else:
-            result = subprocess.run(
-                ["exiftool", "-n", "-GPSLatitude", "-GPSLongitude", "-s", "-s", "-s", str(path)],
-                capture_output=True, text=True, timeout=10
-            )
-            out = result.stdout.strip()
-            return bool(out) and len(out.split("\n")) >= 2
+        result = subprocess.run(
+            ["exiftool", "-n", "-GPSLatitude", "-GPSLongitude", "-s", "-s", "-s", str(path)],
+            capture_output=True, text=True, timeout=10
+        )
+        out = result.stdout.strip()
+        return bool(out) and len(out.split("\n")) >= 2
     except Exception:
         return False
 
@@ -219,6 +199,11 @@ def browse():
 
 @app.route("/api/thumb")
 def thumb():
+    """
+    Genera una miniatura EN MEMORIA para mostrar en la interfaz.
+    Para RAW extrae la miniatura embebida (ExifTool). Para JPG genera una
+    copia reducida en un buffer. NUNCA escribe sobre el archivo original.
+    """
     rel = request.args.get("path", "")
     abs_path = Path(PHOTOS_BASE) / rel
     if not abs_path.exists():
@@ -235,7 +220,7 @@ def thumb():
         img = Image.open(str(abs_path))
         img.thumbnail((200, 200))
         buf = io.BytesIO()
-        img.save(buf, format="JPEG")
+        img.save(buf, format="JPEG")   # buffer en memoria, NO el archivo original
         buf.seek(0)
         return send_file(buf, mimetype="image/jpeg")
     except Exception as e:
@@ -289,11 +274,12 @@ def write_gps():
     for rel in files:
         path = Path(PHOTOS_BASE) / rel
         try:
-            if path.suffix.lower() in JPG_EXTS:
-                write_jpg_gps(path, lat, lon, alt)
-            elif path.suffix.lower() in RAW_EXTS:
-                write_raw_gps(path, lat, lon, alt)
-            ok.append(path.name)
+            ext = path.suffix.lower()
+            if ext in JPG_EXTS or ext in RAW_EXTS:
+                _write_gps_exiftool(path, lat, lon, alt)
+                ok.append(path.name)
+            else:
+                errors.append({"file": path.name, "error": "formato no soportado"})
         except Exception as e:
             errors.append({"file": path.name, "error": str(e)})
     return jsonify({"ok": ok, "errors": errors})
@@ -342,6 +328,11 @@ def missing_gps():
 
 @app.route("/api/rename", methods=["POST"])
 def rename_files():
+    """
+    Renombra archivos. SOLO cambia el nombre (operacion de sistema de archivos
+    via Path.rename). NO abre, NO lee el contenido de pixel, NO reescribe la
+    imagen. El archivo es identico byte a byte tras el renombrado.
+    """
     data = request.json
     fallback_name = data.get("location_name", "").strip()
     files = data["files"]
@@ -389,7 +380,7 @@ def rename_files():
                 candidate = path.parent / (base_name + "_" + str(counter) + ext)
                 counter += 1
             seen[rel] = str(candidate)
-            path.rename(candidate)
+            path.rename(candidate)   # solo cambia el nombre, contenido intacto
             ok.append({"old": path.name, "new": candidate.name})
         except Exception as e:
             errors.append({"file": path.name, "error": str(e)})
