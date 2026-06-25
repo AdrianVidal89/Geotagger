@@ -135,11 +135,15 @@ def _write_gps_exiftool(path, lat, lon, alt=None):
     _evict_thumb_cache(path)
 
 def _evict_thumb_cache(abs_path):
-    """Remove all cached thumbnails for a given file (mtime has changed)."""
+    """Remove all cached thumbnails (JPEG + WebP) for a given file."""
     try:
-        prefix = hashlib.md5(str(abs_path).encode()).hexdigest()[:8]
-        for f in Path(THUMB_CACHE_DIR).glob(prefix + "*.jpg"):
-            f.unlink(missing_ok=True)
+        # Both formats share the same path prefix so glob both extensions
+        base_key = hashlib.md5(str(abs_path).encode()).hexdigest()[:16]
+        cache_dir = Path(THUMB_CACHE_DIR)
+        for ext in ("*.jpg", "*.webp"):
+            for f in cache_dir.glob(ext):
+                if f.stem.startswith(base_key[:8]):
+                    f.unlink(missing_ok=True)
     except Exception:
         pass
 
@@ -195,14 +199,15 @@ def _reverse_geocode(lat, lon):
         print("Reverse geocode error:", str(e))
     return None
 
-def _thumb_cache_path(abs_path):
-    """Generate a stable cache filename based on file path + mtime."""
+def _thumb_cache_path(abs_path, fmt="JPEG"):
+    """Generate a stable cache filename based on file path + mtime + format."""
     try:
         mtime = str(int(os.path.getmtime(abs_path) * 1000))
     except Exception:
         mtime = "0"
-    key = hashlib.md5((str(abs_path) + mtime).encode()).hexdigest()
-    return Path(THUMB_CACHE_DIR) / (key + ".jpg")
+    key = hashlib.md5((str(abs_path) + mtime + fmt).encode()).hexdigest()
+    ext = ".webp" if fmt == "WEBP" else ".jpg"
+    return Path(THUMB_CACHE_DIR) / (key + ext)
 
 @app.route("/")
 def index():
@@ -237,6 +242,7 @@ def thumb():
     """
     Genera una miniatura EN MEMORIA para mostrar en la interfaz.
     Usa caché en disco para evitar regenerar en cada petición.
+    Sirve WebP cuando el navegador lo soporta (25-35% más pequeño).
     NUNCA escribe sobre el archivo original.
     """
     rel = request.args.get("path", "")
@@ -244,15 +250,20 @@ def thumb():
     if abs_path is None or not abs_path.exists():
         return "", 404
 
-    cache_file = _thumb_cache_path(abs_path)
+    accept = request.headers.get("Accept", "")
+    fmt = "WEBP" if "image/webp" in accept else "JPEG"
+    mime = "image/webp" if fmt == "WEBP" else "image/jpeg"
+
+    cache_file = _thumb_cache_path(abs_path, fmt)
 
     if cache_file.exists():
         etag = cache_file.stem
         if request.headers.get("If-None-Match") == etag:
             return "", 304
-        resp = send_file(str(cache_file), mimetype="image/jpeg")
+        resp = send_file(str(cache_file), mimetype=mime)
         resp.headers["Cache-Control"] = "public, max-age=2592000, immutable"
         resp.headers["ETag"] = etag
+        resp.headers["Vary"] = "Accept"
         return resp
 
     try:
@@ -263,21 +274,40 @@ def thumb():
                 capture_output=True, timeout=15
             )
             if result.returncode == 0 and result.stdout:
-                cache_file.write_bytes(result.stdout)
-                resp = send_file(str(cache_file), mimetype="image/jpeg")
+                if fmt == "WEBP":
+                    # Convert embedded JPEG thumbnail to WebP
+                    img = Image.open(io.BytesIO(result.stdout))
+                    buf = io.BytesIO()
+                    img.save(buf, format="WEBP", quality=82, method=4)
+                    cache_file.write_bytes(buf.getvalue())
+                else:
+                    cache_file.write_bytes(result.stdout)
+                resp = send_file(str(cache_file), mimetype=mime)
                 resp.headers["Cache-Control"] = "public, max-age=2592000, immutable"
                 resp.headers["ETag"] = cache_file.stem
+                resp.headers["Vary"] = "Accept"
                 return resp
 
         img = Image.open(str(abs_path))
         img.thumbnail((300, 300))
+        # Preserve EXIF orientation without reloading metadata
+        if hasattr(img, '_getexif'):
+            try:
+                from PIL import ImageOps
+                img = ImageOps.exif_transpose(img)
+            except Exception:
+                pass
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=82, optimize=True)
+        if fmt == "WEBP":
+            img.save(buf, format="WEBP", quality=82, method=4)
+        else:
+            img.save(buf, format="JPEG", quality=82, optimize=True)
         data = buf.getvalue()
         cache_file.write_bytes(data)
-        resp = send_file(io.BytesIO(data), mimetype="image/jpeg")
+        resp = send_file(io.BytesIO(data), mimetype=mime)
         resp.headers["Cache-Control"] = "public, max-age=2592000, immutable"
         resp.headers["ETag"] = cache_file.stem
+        resp.headers["Vary"] = "Accept"
         return resp
     except Exception as e:
         return str(e), 404
@@ -487,4 +517,6 @@ def send_report():
         return jsonify({"ok": False, "error": str(e)})
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    # threaded=True allows Flask to handle multiple thumbnail requests concurrently
+    # instead of queuing them one-by-one (critical for gallery performance)
+    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)

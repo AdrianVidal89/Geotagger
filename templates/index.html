@@ -134,6 +134,9 @@ header .spacer{flex:1}
 .fc{
   position:relative;cursor:pointer;border-radius:4px;overflow:hidden;
   background:var(--surface);aspect-ratio:1;user-select:none;-webkit-user-select:none;
+  /* Skip layout+paint for off-screen cards — equivalent to CSS virtual scrolling */
+  content-visibility:auto;
+  contain-intrinsic-size:auto 160px;
 }
 
 /* skeleton shimmer */
@@ -149,6 +152,7 @@ header .spacer{flex:1}
 .fc img{
   width:100%;height:100%;object-fit:cover;display:block;
   position:absolute;inset:0;opacity:0;transition:opacity .35s;
+  will-change:opacity;
 }
 .fc img.ready{opacity:1}
 .fc img.ready~.fc-skeleton{opacity:0;pointer-events:none}
@@ -588,28 +592,71 @@ let missingMode = false;
 let searchTimer = null;
 const RAW_EXTS = [".cr3",".cr2",".nef",".arw",".raf",".dng",".jpr"];
 
-// ── Intersection Observer for lazy loading ────────────────────────────────────
+// ── Thumbnail loading — concurrency-limited queue ─────────────────────────────
+// Browsers allow ~6 parallel connections per origin (HTTP/1.1).
+// Without a queue, 50 IO entries fire at once, causing browser-side queuing,
+// decode bursts on the main thread, and scroll jank.
+const MAX_PARALLEL = 6;
+let activeLoads = 0;
+const loadQueue = []; // { card, src }
+
+function _drainQueue() {
+  while (activeLoads < MAX_PARALLEL && loadQueue.length > 0) {
+    const { card, src } = loadQueue.shift();
+    _startLoad(card, src);
+  }
+}
+
+function _startLoad(card, src) {
+  if (card.dataset.loaded) { _drainQueue(); return; }
+  card.dataset.loaded = "1";
+  activeLoads++;
+  const img = card.querySelector("img");
+  const skeleton = card.querySelector(".fc-skeleton");
+  const fallback = card.querySelector(".fc-icon");
+
+  const probe = new Image();
+  probe.decoding = "async"; // decode off main thread
+  probe.onload = () => {
+    img.src = src;
+    // Use decode() so the browser paints the image in the next frame
+    // without blocking the main thread
+    img.decode ? img.decode().then(() => img.classList.add("ready")).catch(() => img.classList.add("ready"))
+               : img.classList.add("ready");
+    activeLoads--;
+    _drainQueue();
+  };
+  probe.onerror = () => {
+    if (img) img.style.display = "none";
+    if (skeleton) skeleton.style.display = "none";
+    if (fallback) fallback.classList.add("show");
+    activeLoads--;
+    _drainQueue();
+  };
+  probe.src = src;
+}
+
+function _enqueueThumb(card) {
+  if (card.dataset.queued) return;
+  card.dataset.queued = "1";
+  const src = card.dataset.src;
+  if (!src) return;
+  if (activeLoads < MAX_PARALLEL) {
+    _startLoad(card, src);
+  } else {
+    loadQueue.push({ card, src });
+  }
+}
+
+// Preload 500px before entering viewport so images are ready when scrolled to
 const thumbObserver = new IntersectionObserver((entries) => {
   entries.forEach(e => {
-    if (!e.isIntersecting) return;
-    const card = e.target;
-    if (card.dataset.loaded) return;
-    card.dataset.loaded = "1";
-    const src = card.dataset.src;
-    if (!src) return;
-    const img = card.querySelector("img");
-    const skeleton = card.querySelector(".fc-skeleton");
-    const fallback = card.querySelector(".fc-icon");
-    img.onload = () => { img.classList.add("ready"); };
-    img.onerror = () => {
-      img.style.display = "none";
-      if (skeleton) skeleton.style.display = "none";
-      if (fallback) fallback.classList.add("show");
-    };
-    img.src = src;
-    thumbObserver.unobserve(card);
+    if (e.isIntersecting) {
+      _enqueueThumb(e.target);
+      thumbObserver.unobserve(e.target);
+    }
   });
-}, { rootMargin: "300px 0px" });
+}, { rootMargin: "500px 0px" });
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 async function navigate(path) {
@@ -678,9 +725,34 @@ function makeImgIcon() {
     '</svg>';
 }
 
-function renderFiles(files) {
+function makeCard(f, i) {
+  const card = document.createElement("div");
+  card.className = "fc";
+  card.dataset.index = i;
+  card.dataset.src = "/api/thumb?path=" + encodeURIComponent(f.path);
+  const isRaw = RAW_EXTS.includes(f.ext);
+  const folderHtml = f.folder && f.folder !== "." ? '<br><small style="opacity:.7">' + f.folder + '</small>' : '';
+  card.innerHTML =
+    '<img alt="' + f.name + '" decoding="async">' +
+    '<div class="fc-skeleton"></div>' +
+    '<div class="fc-icon">' + (isRaw ? makeRawIcon() : makeImgIcon()) + '</div>' +
+    '<div class="fc-overlay"><div class="fc-check"></div></div>' +
+    '<div class="fc-name">' + f.name + folderHtml + '</div>';
+  card.addEventListener("click", () => toggleFile(i));
+  return card;
+}
+
+// Render in batches of CHUNK using requestAnimationFrame between batches.
+// This keeps the main thread free to handle scroll/input between chunks
+// instead of freezing for 100-200ms rendering 500 cards at once.
+const RENDER_CHUNK = 60;
+
+async function renderFiles(files) {
   currentFiles = files;
+  // Reset the load queue for the new folder
+  loadQueue.length = 0;
   const c = document.getElementById("content");
+
   if (files.length === 0) {
     c.innerHTML = '<div class="empty-state">' +
       '<svg viewBox="0 0 24 24"><path d="M20 4h-3.17L15 2H9L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 13c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.65 0-3 1.35-3 3s1.35 3 3 3 3-1.35 3-3-1.35-3-3-3z"/></svg>' +
@@ -689,27 +761,30 @@ function renderFiles(files) {
       '</div>';
     return;
   }
+
   const grid = document.createElement("div");
   grid.className = "files-grid";
-  files.forEach((f, i) => {
-    const card = document.createElement("div");
-    card.className = "fc";
-    card.dataset.index = i;
-    card.dataset.src = "/api/thumb?path=" + encodeURIComponent(f.path);
-    const isRaw = RAW_EXTS.includes(f.ext);
-    const folderHtml = f.folder && f.folder !== "." ? '<br><small style="opacity:.7">' + f.folder + '</small>' : '';
-    card.innerHTML =
-      '<img alt="' + f.name + '">' +
-      '<div class="fc-skeleton"></div>' +
-      '<div class="fc-icon">' + (isRaw ? makeRawIcon() : makeImgIcon()) + '</div>' +
-      '<div class="fc-overlay"><div class="fc-check"></div></div>' +
-      '<div class="fc-name">' + f.name + folderHtml + '</div>';
-    card.addEventListener("click", () => toggleFile(i));
-    grid.appendChild(card);
-    thumbObserver.observe(card);
-  });
   c.innerHTML = "";
   c.appendChild(grid);
+
+  // Render first chunk immediately so the user sees photos right away
+  const firstEnd = Math.min(RENDER_CHUNK, files.length);
+  for (let i = 0; i < firstEnd; i++) {
+    const card = makeCard(files[i], i);
+    grid.appendChild(card);
+    thumbObserver.observe(card);
+  }
+
+  // Render remaining chunks with rAF pauses so scroll stays smooth
+  for (let i = firstEnd; i < files.length; i += RENDER_CHUNK) {
+    await new Promise(r => requestAnimationFrame(r));
+    const end = Math.min(i + RENDER_CHUNK, files.length);
+    for (let j = i; j < end; j++) {
+      const card = makeCard(files[j], j);
+      grid.appendChild(card);
+      thumbObserver.observe(card);
+    }
+  }
 }
 
 // ── Selection ─────────────────────────────────────────────────────────────────
