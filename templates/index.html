@@ -5,490 +5,1028 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>GeoTagger</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #eee; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+:root {
+  --bg: #fff;
+  --surface: #f8f9fa;
+  --border: #e0e0e0;
+  --primary: #1a73e8;
+  --primary-dk: #1557b0;
+  --accent: #ea4335;
+  --text: #202124;
+  --text2: #5f6368;
+  --green: #34a853;
+  --yellow: #f9ab00;
+  --sidebar-w: 216px;
+  --panel-w: 288px;
+  --hdr-h: 56px;
+  --bar-h: 48px;
+  --radius: 8px;
+  --shadow: 0 1px 3px rgba(0,0,0,.12), 0 1px 2px rgba(0,0,0,.08);
+  --shadow-md: 0 4px 16px rgba(0,0,0,.14);
+}
 
-  /* HEADER */
-  header { background: #16213e; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #0f3460; flex-shrink: 0; z-index: 100; }
-  header .left { display: flex; align-items: center; gap: 12px; }
-  header h1 { font-size: 1.1rem; font-weight: 600; color: #e94560; }
-  header span { font-size: 0.75rem; color: #888; }
-  .header-btn { background: none; border: 1px solid #0f3460; border-radius: 8px; color: #aaa; padding: 6px 12px; font-size: 0.8rem; cursor: pointer; }
-  .header-btn:hover { background: #0f3460; color: #eee; }
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 
-  /* DESKTOP LAYOUT */
-  .main { display: flex; flex: 1; overflow: hidden; }
-  .sidebar { width: 220px; background: #16213e; border-right: 1px solid #0f3460; overflow-y: auto; padding: 10px; flex-shrink: 0; }
-  .sidebar h2 { font-size: 0.7rem; text-transform: uppercase; color: #888; margin-bottom: 8px; letter-spacing: 1px; }
-  .tree-item { display: flex; align-items: center; gap: 8px; padding: 10px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; min-height: 44px; transition: background 0.15s; }
-  .tree-item:hover { background: #0f3460; }
-  .tree-item.active { background: #e94560; color: white; }
-  .center { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-  .top-bar { display: flex; align-items: center; justify-content: space-between; background: #16213e; border-bottom: 1px solid #0f3460; padding: 8px 12px; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
-  .breadcrumb { font-size: 0.8rem; color: #888; }
-  .breadcrumb span { cursor: pointer; color: #e94560; }
-  .top-controls { display: flex; align-items: center; gap: 10px; }
-  .chk-label { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: #aaa; cursor: pointer; white-space: nowrap; }
-  .chk-label input { width: 18px; height: 18px; accent-color: #e94560; cursor: pointer; }
-  .content { flex: 1; overflow-y: auto; padding: 12px; -webkit-overflow-scrolling: touch; }
-  .files-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
-  .file-card { background: #16213e; border-radius: 10px; overflow: hidden; cursor: pointer; border: 2px solid transparent; transition: all 0.15s; -webkit-touch-callout: none; }
-  .file-card:hover { border-color: #0f3460; }
-  .file-card.selected { border-color: #e94560; background: #1f1040; }
-  .file-card .thumb-wrap { width: 100%; aspect-ratio: 1; background: #0f3460; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-  .file-card .thumb-wrap img { width: 100%; height: 100%; object-fit: cover; }
-  .file-card .thumb-wrap .icon { font-size: 2rem; }
-  .file-card .name { font-size: 0.65rem; color: #aaa; padding: 5px 6px; word-break: break-all; line-height: 1.3; }
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,sans-serif;
+  background:var(--bg);color:var(--text);
+  height:100dvh;display:flex;flex-direction:column;overflow:hidden;
+}
 
-  /* PANEL - desktop */
-  .panel { width: 280px; background: #16213e; border-left: 1px solid #0f3460; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; flex-shrink: 0; }
-  .panel h2 { font-size: 0.7rem; text-transform: uppercase; color: #888; letter-spacing: 1px; }
-  .search-box { position: relative; }
-  .search-box input { width: 100%; background: #0f3460; border: 1px solid #1a4a8a; border-radius: 8px; padding: 10px 12px; color: #eee; font-size: 0.9rem; outline: none; }
-  .search-box input:focus { border-color: #e94560; }
-  .suggestions { position: absolute; top: 100%; left: 0; right: 0; background: #0f3460; border: 1px solid #1a4a8a; border-radius: 8px; margin-top: 4px; z-index: 50; max-height: 180px; overflow-y: auto; }
-  .suggestion { padding: 10px 12px; font-size: 0.8rem; cursor: pointer; border-bottom: 1px solid #1a4a8a; min-height: 44px; display: flex; align-items: center; }
-  .suggestion:hover, .suggestion:active { background: #e94560; }
-  .suggestion:last-child { border-bottom: none; }
-  .coords { background: #0f3460; border-radius: 8px; padding: 10px; font-size: 0.8rem; }
-  .coords div { margin-bottom: 3px; color: #aaa; }
-  .coords span { color: #eee; font-weight: 600; }
-  .selected-count { background: #0f3460; border-radius: 8px; padding: 10px; font-size: 0.85rem; text-align: center; }
-  .selected-count strong { color: #e94560; font-size: 1.2rem; }
-  .btn { width: 100%; padding: 14px; border-radius: 10px; border: none; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: all 0.2s; min-height: 48px; }
-  .btn-primary { background: #e94560; color: white; }
-  .btn-primary:hover { background: #c73652; }
-  .btn-primary:disabled { background: #444; color: #777; cursor: not-allowed; }
-  .btn-secondary { background: #0f3460; color: #aaa; }
-  .btn-secondary:hover { background: #1a4a8a; color: #eee; }
-  .btn-warning { background: #7a4f00; color: #ffd966; }
-  .btn-warning:hover { background: #a06800; }
-  .btn-warning:disabled { background: #444; color: #777; cursor: not-allowed; }
-  .result-box { border-radius: 8px; padding: 10px; font-size: 0.8rem; }
-  .result-ok { background: #0d3320; border: 1px solid #1a6640; color: #4caf82; }
-  .result-err { background: #330d0d; border: 1px solid #662020; color: #e94560; }
-  .loading { text-align: center; padding: 40px; color: #888; font-size: 0.9rem; }
-  .input-field { width: 100%; background: #0f3460; border: 1px solid #1a4a8a; border-radius: 8px; padding: 10px 12px; color: #eee; font-size: 0.85rem; outline: none; }
-  .input-field:focus { border-color: #e94560; }
+/* ── HEADER ─────────────────────────────────── */
+header{
+  height:var(--hdr-h);background:var(--bg);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 16px;gap:12px;
+  flex-shrink:0;z-index:100;box-shadow:var(--shadow);
+}
+.logo{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.logo-mark{
+  width:34px;height:34px;border-radius:50%;
+  background:var(--accent);display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;
+}
+.logo-mark svg{width:18px;height:18px;fill:white}
+.logo-name{font-size:1.05rem;font-weight:600;color:var(--text);letter-spacing:-.01em}
+header .spacer{flex:1}
+.hdr-btn{
+  background:none;border:none;border-radius:50%;
+  width:40px;height:40px;display:flex;align-items:center;justify-content:center;
+  cursor:pointer;color:var(--text2);transition:background .15s;flex-shrink:0;
+}
+.hdr-btn:hover{background:var(--surface)}
+.hdr-btn svg{width:22px;height:22px}
+.mob-toggle{display:none}
 
-  /* GPS STATUS */
-  .gps-box { background: #0f3460; border-radius: 8px; padding: 10px; font-size: 0.8rem; color: #888; text-align: center; }
+/* ── MAIN LAYOUT ─────────────────────────────── */
+.main{display:flex;flex:1;overflow:hidden}
 
-  /* SETTINGS MODAL */
-  .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 200; align-items: center; justify-content: center; }
-  .modal-overlay.active { display: flex; }
-  .modal { background: #16213e; border-radius: 16px; padding: 24px; width: 90%; max-width: 400px; }
-  .modal h2 { color: #e94560; font-size: 1rem; margin-bottom: 16px; }
-  .modal label { font-size: 0.8rem; color: #aaa; display: block; margin-bottom: 6px; }
-  .modal .btn { margin-top: 12px; }
+/* ── SIDEBAR ─────────────────────────────────── */
+.sidebar{
+  width:var(--sidebar-w);background:var(--bg);
+  border-right:1px solid var(--border);
+  overflow-y:auto;flex-shrink:0;padding:8px 0;
+}
+.sidebar-lbl{
+  padding:12px 16px 6px;font-size:.7rem;font-weight:600;
+  text-transform:uppercase;letter-spacing:.06em;color:var(--text2);
+}
+.tree-item{
+  display:flex;align-items:center;gap:10px;
+  padding:9px 16px;cursor:pointer;font-size:.875rem;color:var(--text);
+  transition:background .1s;border-radius:0 24px 24px 0;margin-right:8px;
+  min-height:40px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.tree-item:hover{background:var(--surface)}
+.tree-item.active{background:#e8f0fe;color:var(--primary);font-weight:500}
+.tree-item svg{width:18px;height:18px;flex-shrink:0;fill:var(--text2)}
+.tree-item.active svg{fill:var(--primary)}
 
-  /* MOBILE BOTTOM SHEET */
-  .mobile-toggle { display: none; }
+/* ── CENTER ──────────────────────────────────── */
+.center{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 
-  /* RESPONSIVE */
-  @media (max-width: 768px) {
-    .sidebar { display: none; }
-    .sidebar.mobile-open { display: flex; flex-direction: column; position: fixed; top: 0; left: 0; bottom: 0; width: 260px; z-index: 150; padding-top: 60px; }
-    .sidebar-backdrop { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 140; }
-    .sidebar-backdrop.active { display: block; }
-    .mobile-toggle { display: flex; align-items: center; justify-content: center; background: none; border: 1px solid #0f3460; border-radius: 8px; color: #aaa; width: 36px; height: 36px; font-size: 1.2rem; cursor: pointer; }
-    .panel { display: none; position: fixed; bottom: 0; left: 0; right: 0; width: 100%; max-height: 55vh; border-radius: 16px 16px 0 0; border-left: none; border-top: 1px solid #0f3460; z-index: 130; padding: 16px 16px 24px; overflow-y: auto; flex-direction: column; gap: 10px; }
-    .panel.mobile-open { display: flex; }
-    .panel-backdrop { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); z-index: 120; }
-    .panel-backdrop.active { display: block; }
-    .panel-handle { width: 40px; height: 4px; background: #444; border-radius: 2px; margin: 0 auto 8px; flex-shrink: 0; }
-    .files-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
-    .file-card .name { font-size: 0.6rem; padding: 4px; }
-    .top-bar { padding: 6px 10px; }
-    .content { padding: 8px; }
-    .fab { position: fixed; bottom: 20px; right: 20px; width: 56px; height: 56px; border-radius: 50%; background: #e94560; color: white; border: none; font-size: 1.5rem; cursor: pointer; z-index: 110; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(233,69,96,0.4); }
+/* top bar */
+.top-bar{
+  height:var(--bar-h);display:flex;align-items:center;
+  padding:0 16px;gap:10px;
+  border-bottom:1px solid var(--border);flex-shrink:0;
+}
+.breadcrumb{
+  display:flex;align-items:center;gap:4px;
+  font-size:.875rem;flex:1;min-width:0;overflow:hidden;
+}
+.bc-item{
+  cursor:pointer;color:var(--text2);white-space:nowrap;
+  transition:color .15s;
+}
+.bc-item:hover{color:var(--primary)}
+.bc-item.cur{color:var(--text);font-weight:500;cursor:default}
+.bc-item.cur:hover{color:var(--text)}
+.bc-sep{color:var(--border);font-size:.75rem;flex-shrink:0;user-select:none}
+.top-controls{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.chip{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:5px 14px;border-radius:20px;border:1px solid var(--border);
+  font-size:.8rem;cursor:pointer;color:var(--text2);background:var(--bg);
+  transition:all .15s;white-space:nowrap;user-select:none;
+}
+.chip:hover{background:var(--surface);border-color:#bbb}
+.chip.on{background:#e8f0fe;border-color:var(--primary);color:var(--primary)}
+.chip svg{width:14px;height:14px}
+
+/* grid area */
+.content{flex:1;overflow-y:auto;padding:12px;-webkit-overflow-scrolling:touch}
+.empty-state{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  height:100%;color:var(--text2);gap:12px;text-align:center;padding:40px;
+}
+.empty-state svg{width:64px;height:64px;opacity:.3;fill:var(--text2)}
+.empty-state p{font-size:1rem}
+.empty-state small{font-size:.8rem;opacity:.7}
+
+.files-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
+  gap:4px;
+}
+
+/* ── PHOTO CARD ──────────────────────────────── */
+.fc{
+  position:relative;cursor:pointer;border-radius:4px;overflow:hidden;
+  background:var(--surface);aspect-ratio:1;user-select:none;-webkit-user-select:none;
+}
+
+/* skeleton shimmer */
+.fc-skeleton{
+  position:absolute;inset:0;
+  background:linear-gradient(90deg,#f0f0f0 25%,#e8e8e8 50%,#f0f0f0 75%);
+  background-size:200% 100%;
+  animation:shimmer 1.4s infinite;
+  transition:opacity .3s;
+}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+.fc img{
+  width:100%;height:100%;object-fit:cover;display:block;
+  position:absolute;inset:0;opacity:0;transition:opacity .35s;
+}
+.fc img.ready{opacity:1}
+.fc img.ready~.fc-skeleton{opacity:0;pointer-events:none}
+
+/* fallback icon */
+.fc-icon{
+  position:absolute;inset:0;display:none;
+  align-items:center;justify-content:center;flex-direction:column;gap:4px;
+  color:var(--text2);font-size:.65rem;
+}
+.fc-icon.show{display:flex}
+.fc-icon svg{width:28px;height:28px;opacity:.5}
+
+/* hover overlay */
+.fc-overlay{
+  position:absolute;inset:0;
+  background:rgba(0,0,0,0);
+  transition:background .15s;
+  display:flex;align-items:flex-start;justify-content:flex-start;
+  padding:6px;
+}
+.fc:hover .fc-overlay{background:rgba(0,0,0,.08)}
+.fc.sel .fc-overlay{background:rgba(26,115,232,.12)}
+
+/* checkmark circle */
+.fc-check{
+  width:26px;height:26px;border-radius:50%;
+  border:2px solid rgba(255,255,255,.85);
+  background:rgba(255,255,255,.15);
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.25);
+  opacity:0;transition:all .15s;
+}
+.fc:hover .fc-check{opacity:1}
+.fc.sel .fc-check{
+  opacity:1;background:var(--primary);border-color:var(--primary);
+}
+.fc.sel .fc-check::after{
+  content:'';width:11px;height:6px;
+  border-left:2px solid #fff;border-bottom:2px solid #fff;
+  transform:rotate(-45deg) translate(1px,-1px);display:block;
+}
+
+/* filename on hover */
+.fc-name{
+  position:absolute;bottom:0;left:0;right:0;
+  background:linear-gradient(transparent,rgba(0,0,0,.6));
+  color:#fff;font-size:.68rem;padding:20px 6px 6px;
+  opacity:0;transition:opacity .2s;
+  word-break:break-all;line-height:1.3;
+}
+.fc:hover .fc-name{opacity:1}
+.fc.sel .fc-name{opacity:1}
+
+/* ── RIGHT PANEL ─────────────────────────────── */
+.panel{
+  width:var(--panel-w);background:var(--bg);
+  border-left:1px solid var(--border);
+  overflow-y:auto;display:flex;flex-direction:column;
+  flex-shrink:0;
+}
+.panel-section{
+  padding:20px;border-bottom:1px solid var(--border);
+  display:flex;flex-direction:column;gap:12px;
+}
+.panel-section:last-child{border-bottom:none}
+.sec-lbl{
+  font-size:.7rem;font-weight:600;text-transform:uppercase;
+  letter-spacing:.06em;color:var(--text2);
+}
+
+/* search */
+.srch-wrap{position:relative}
+.srch-wrap svg.srch-ico{
+  position:absolute;left:12px;top:50%;transform:translateY(-50%);
+  width:16px;height:16px;fill:var(--text2);pointer-events:none;
+}
+.srch-input{
+  width:100%;padding:10px 14px 10px 38px;
+  border:1px solid var(--border);border-radius:24px;
+  font-size:.875rem;background:var(--surface);color:var(--text);
+  outline:none;transition:all .2s;
+}
+.srch-input:focus{
+  border-color:var(--primary);background:var(--bg);
+  box-shadow:0 0 0 3px rgba(26,115,232,.1);
+}
+.suggestions{
+  position:absolute;top:calc(100% + 4px);left:0;right:0;
+  background:var(--bg);border:1px solid var(--border);
+  border-radius:12px;box-shadow:var(--shadow-md);
+  z-index:60;max-height:220px;overflow-y:auto;display:none;
+}
+.sug-item{
+  display:flex;align-items:center;gap:10px;
+  padding:11px 14px;font-size:.85rem;cursor:pointer;
+  border-bottom:1px solid var(--border);transition:background .1s;
+  min-height:48px;
+}
+.sug-item:last-child{border-bottom:none}
+.sug-item:hover{background:var(--surface)}
+.sug-item svg{width:14px;height:14px;fill:var(--accent);flex-shrink:0}
+.sug-text{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.8rem}
+
+/* coords card */
+.coords-card{
+  background:var(--surface);border-radius:var(--radius);
+  padding:12px;font-size:.85rem;display:none;
+}
+.coords-card.show{display:block}
+.coord-row{display:flex;justify-content:space-between;align-items:center;padding:2px 0}
+.coord-lbl{color:var(--text2);font-size:.75rem}
+.coord-val{font-weight:500}
+
+/* gps status */
+.gps-status{
+  display:flex;align-items:center;gap:8px;
+  padding:10px 12px;border-radius:var(--radius);
+  font-size:.85rem;background:var(--surface);color:var(--text2);
+}
+.gps-status.has{background:#e6f4ea;color:#1b5e20}
+.gps-status.no{background:#fce8e6;color:#b71c1c}
+.gps-status svg{width:16px;height:16px;flex-shrink:0}
+
+/* sel count */
+.sel-info{
+  background:var(--surface);border-radius:var(--radius);
+  padding:12px;text-align:center;font-size:.9rem;
+}
+.sel-info strong{color:var(--primary);font-size:1.4rem;display:block;line-height:1.2}
+.sel-info span{color:var(--text2);font-size:.75rem}
+
+/* form field */
+.field-lbl{font-size:.75rem;color:var(--text2);display:block;margin-bottom:5px}
+.input-field{
+  width:100%;padding:10px 14px;border:1px solid var(--border);
+  border-radius:var(--radius);font-size:.875rem;
+  background:var(--bg);color:var(--text);outline:none;transition:border .2s;
+}
+.input-field:focus{border-color:var(--primary)}
+
+/* buttons */
+.btn{
+  width:100%;padding:11px 16px;border-radius:var(--radius);
+  border:none;font-size:.875rem;font-weight:500;cursor:pointer;
+  transition:all .15s;min-height:44px;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:not(:disabled):hover{background:var(--primary-dk)}
+.btn-secondary{background:transparent;color:var(--primary);border:1px solid var(--border)}
+.btn-secondary:not(:disabled):hover{background:#e8f0fe}
+.btn-warn{background:var(--yellow);color:#fff}
+.btn-warn:not(:disabled):hover{background:#e8a000}
+.btn svg{width:16px;height:16px;flex-shrink:0}
+
+/* result boxes */
+.res-box{
+  border-radius:var(--radius);padding:12px 14px;font-size:.85rem;
+  display:flex;align-items:flex-start;gap:8px;line-height:1.4;
+}
+.res-box svg{width:16px;height:16px;flex-shrink:0;margin-top:1px}
+.res-ok{background:#e6f4ea;color:#1b5e20}
+.res-err{background:#fce8e6;color:#b71c1c}
+.res-progress{background:#e8f0fe;color:var(--primary)}
+
+/* ── SPINNER ─────────────────────────────────── */
+.spinner{
+  width:18px;height:18px;border:2px solid var(--border);
+  border-top-color:var(--primary);border-radius:50%;
+  animation:spin .6s linear infinite;flex-shrink:0;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── FLOATING SELECTION BAR ──────────────────── */
+.sel-bar{
+  position:fixed;bottom:-80px;left:50%;transform:translateX(-50%);
+  background:#202124;color:#fff;border-radius:32px;
+  padding:10px 10px 10px 20px;
+  display:flex;align-items:center;gap:8px;z-index:200;
+  box-shadow:0 4px 20px rgba(0,0,0,.3);
+  transition:bottom .3s cubic-bezier(.34,1.56,.64,1);
+  white-space:nowrap;
+}
+.sel-bar.up{bottom:20px}
+.sel-bar-count{font-size:.875rem;font-weight:500;margin-right:4px}
+.sbar-btn{
+  background:rgba(255,255,255,.12);border:none;border-radius:20px;
+  padding:8px 14px;color:#fff;font-size:.8rem;font-weight:500;
+  cursor:pointer;transition:background .15s;
+  display:flex;align-items:center;gap:6px;
+}
+.sbar-btn:hover{background:rgba(255,255,255,.22)}
+.sbar-btn.pri{background:var(--primary)}
+.sbar-btn.pri:hover{background:var(--primary-dk)}
+.sbar-btn svg{width:14px;height:14px}
+.sbar-close{
+  background:none;border:none;color:rgba(255,255,255,.5);
+  cursor:pointer;font-size:18px;padding:6px;
+  display:flex;align-items:center;border-radius:50%;transition:all .15s;
+}
+.sbar-close:hover{background:rgba(255,255,255,.1);color:#fff}
+
+/* ── MODAL ───────────────────────────────────── */
+.modal-overlay{
+  display:none;position:fixed;inset:0;
+  background:rgba(0,0,0,.5);z-index:300;
+  align-items:center;justify-content:center;padding:16px;
+}
+.modal-overlay.on{display:flex}
+.modal{
+  background:var(--bg);border-radius:16px;padding:24px;
+  width:100%;max-width:420px;box-shadow:0 8px 40px rgba(0,0,0,.2);
+}
+.modal-title{font-size:1rem;font-weight:600;margin-bottom:20px;color:var(--text)}
+.modal label{font-size:.8rem;color:var(--text2);display:block;margin-bottom:6px}
+.modal-actions{display:flex;gap:8px;margin-top:16px}
+.modal-actions .btn{flex:1}
+
+/* ── MOBILE GPS BOTTOM SHEET ─────────────────── */
+.drawer-bd{
+  display:none;position:fixed;inset:0;
+  background:rgba(0,0,0,.35);z-index:190;
+}
+.drawer-bd.on{display:block}
+.gps-sheet{
+  position:fixed;bottom:0;left:0;right:0;
+  background:var(--bg);border-radius:16px 16px 0 0;
+  border-top:1px solid var(--border);
+  box-shadow:0 -4px 24px rgba(0,0,0,.12);
+  z-index:200;max-height:70vh;overflow-y:auto;
+  transform:translateY(100%);transition:transform .3s cubic-bezier(.4,0,.2,1);
+}
+.gps-sheet.on{transform:translateY(0)}
+.sheet-handle{
+  width:40px;height:4px;background:var(--border);
+  border-radius:2px;margin:12px auto 4px;
+}
+.sheet-body{padding:8px 20px 32px;display:flex;flex-direction:column;gap:14px}
+.sheet-title{font-size:1rem;font-weight:500;padding:0 0 4px}
+
+/* ── SIDEBAR MOBILE ──────────────────────────── */
+.sidebar-bd{
+  display:none;position:fixed;inset:0;
+  background:rgba(0,0,0,.4);z-index:240;
+}
+.sidebar-bd.on{display:block}
+
+/* ── RESPONSIVE ──────────────────────────────── */
+@media(max-width:768px){
+  :root{--sidebar-w:260px}
+  .mob-toggle{display:flex}
+  .sidebar{
+    position:fixed;top:0;left:0;bottom:0;
+    width:var(--sidebar-w);z-index:250;padding-top:60px;
+    box-shadow:4px 0 20px rgba(0,0,0,.15);
+    transform:translateX(-100%);transition:transform .3s cubic-bezier(.4,0,.2,1);
   }
-
-  @media (min-width: 769px) {
-    .fab { display: none; }
-    .panel-handle { display: none; }
-    .sidebar-backdrop { display: none !important; }
-    .panel-backdrop { display: none !important; }
-  }
-
-  @media (max-width: 480px) {
-    .files-grid { grid-template-columns: repeat(3, 1fr); gap: 5px; }
-    header h1 { font-size: 1rem; }
-  }
+  .sidebar.open{transform:translateX(0)}
+  .panel{display:none!important}
+  .sel-bar{left:12px;right:12px;transform:none;border-radius:12px}
+  .sel-bar.up{bottom:12px}
+  .files-grid{grid-template-columns:repeat(3,1fr);gap:3px}
+}
+@media(min-width:769px){
+  .gps-sheet{display:none!important}
+  .drawer-bd{display:none!important}
+  .sidebar-bd{display:none!important}
+  .panel{display:flex!important}
+}
+@media(max-width:480px){
+  .files-grid{grid-template-columns:repeat(3,1fr);gap:2px}
+}
 </style>
 </head>
 <body>
 
+<!-- HEADER -->
 <header>
-  <div class="left">
-    <button class="mobile-toggle" id="btn-sidebar">☰</button>
-    <h1>📍 GeoTagger</h1>
+  <button class="hdr-btn mob-toggle" id="btn-sidebar" title="Carpetas">
+    <svg viewBox="0 0 24 24"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" fill="currentColor"/></svg>
+  </button>
+  <div class="logo">
+    <div class="logo-mark">
+      <svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>
+    </div>
+    <span class="logo-name">GeoTagger</span>
   </div>
-  <button class="header-btn" id="btn-settings">⚙ Ajustes</button>
+  <div class="spacer"></div>
+  <button class="hdr-btn" id="btn-settings" title="Ajustes">
+    <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" fill="currentColor"/></svg>
+  </button>
 </header>
 
-<div class="sidebar-backdrop" id="sidebar-backdrop"></div>
-<div class="panel-backdrop" id="panel-backdrop"></div>
+<!-- MOBILE BACKDROP -->
+<div class="sidebar-bd" id="sidebar-bd"></div>
 
 <div class="main">
+
+  <!-- SIDEBAR -->
   <div class="sidebar" id="sidebar">
-    <h2>Carpetas</h2>
+    <div class="sidebar-lbl">Carpetas</div>
     <div id="tree"></div>
   </div>
+
+  <!-- CENTER -->
   <div class="center">
     <div class="top-bar">
-      <div class="breadcrumb" id="breadcrumb">Fotos</div>
+      <div class="breadcrumb" id="breadcrumb"></div>
       <div class="top-controls">
-        <label class="chk-label">
-          <input type="checkbox" id="chk-missing">
+        <div class="chip" id="chip-missing" title="Mostrar solo fotos sin GPS">
+          <svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z" fill="currentColor"/></svg>
           Sin GPS
-        </label>
+        </div>
+        <div class="chip" id="chip-selall">Seleccionar todo</div>
       </div>
     </div>
-    <div class="content">
-      <div id="files-container" class="loading">Selecciona una carpeta</div>
+    <div class="content" id="content">
+      <div class="empty-state">
+        <svg viewBox="0 0 24 24"><path d="M20 4h-3.17L15 2H9L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 13c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.65 0-3 1.35-3 3s1.35 3 3 3 3-1.35 3-3-1.35-3-3-3z"/></svg>
+        <p>Selecciona una carpeta</p>
+        <small>Usa el panel de carpetas para navegar a tus fotos</small>
+      </div>
     </div>
   </div>
+
+  <!-- PANEL (desktop) -->
   <div class="panel" id="panel">
-    <div class="panel-handle"></div>
-    <h2>Ubicacion</h2>
-    <div class="search-box">
-      <input type="text" id="location-search" placeholder="Buscar lugar..." autocomplete="off">
-      <div class="suggestions" id="suggestions" style="display:none"></div>
+    <div class="panel-section">
+      <div class="sec-lbl">Ubicación</div>
+      <div class="srch-wrap">
+        <svg class="srch-ico" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+        <input class="srch-input" id="location-search" type="text" placeholder="Buscar lugar..." autocomplete="off">
+        <div class="suggestions" id="suggestions"></div>
+      </div>
+      <div class="coords-card" id="coords-card">
+        <div class="coord-row"><span class="coord-lbl">Latitud</span><span class="coord-val" id="lat-val">—</span></div>
+        <div class="coord-row"><span class="coord-lbl">Longitud</span><span class="coord-val" id="lon-val">—</span></div>
+      </div>
+      <div>
+        <label class="field-lbl">Altitud (metros, opcional)</label>
+        <input type="number" class="input-field" id="alt-input" placeholder="ej. 650">
+      </div>
     </div>
-    <div class="coords">
-      <div>Lat: <span id="lat-val">—</span></div>
-      <div>Lon: <span id="lon-val">—</span></div>
+
+    <div class="panel-section">
+      <div class="sec-lbl">GPS de la foto</div>
+      <div class="gps-status" id="gps-status">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>
+        Selecciona una foto
+      </div>
     </div>
-    <input type="number" class="input-field" id="alt-input" placeholder="Altitud (metros, opcional)">
-    <h2>Estado GPS</h2>
-    <div class="gps-box" id="gps-status">Selecciona una foto</div>
-    <h2>Seleccion</h2>
-    <div class="selected-count"><strong id="sel-count">0</strong> archivos</div>
-    <button class="btn btn-secondary" id="btn-select-all">Seleccionar todos</button>
-    <button class="btn btn-primary" id="btn-apply" disabled>Aplicar GPS</button>
-    <button class="btn btn-warning" id="btn-rename" disabled>✏️ Renombrar por EXIF</button>
-    <div id="result-box" style="display:none"></div>
-    <div id="rename-box" style="display:none"></div>
+
+    <div class="panel-section">
+      <div class="sec-lbl">Selección</div>
+      <div class="sel-info">
+        <strong id="sel-count">0</strong>
+        <span>fotos seleccionadas</span>
+      </div>
+      <button class="btn btn-secondary" id="btn-select-all">Seleccionar todas</button>
+      <button class="btn btn-primary" id="btn-apply" disabled>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>
+        Aplicar GPS
+      </button>
+      <button class="btn btn-warn" id="btn-rename" disabled>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+        Renombrar por EXIF
+      </button>
+      <div id="result-box" style="display:none"></div>
+      <div id="rename-box" style="display:none"></div>
+    </div>
   </div>
 </div>
 
-<button class="fab" id="fab">▲</button>
+<!-- FLOATING SELECTION BAR (mobile) -->
+<div class="sel-bar" id="sel-bar">
+  <span class="sel-bar-count"><span id="sbar-count">0</span> fotos</span>
+  <button class="sbar-btn pri" id="sbar-gps">
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>
+    GPS
+  </button>
+  <button class="sbar-btn" id="sbar-rename">
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"/></svg>
+    Renombrar
+  </button>
+  <button class="sbar-close" id="sbar-close" title="Deseleccionar">✕</button>
+</div>
+
+<!-- MOBILE GPS BOTTOM SHEET -->
+<div class="drawer-bd" id="drawer-bd"></div>
+<div class="gps-sheet" id="gps-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-body">
+    <div class="sheet-title">Aplicar GPS</div>
+    <div class="srch-wrap">
+      <svg class="srch-ico" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+      <input class="srch-input" id="mob-location-search" type="text" placeholder="Buscar lugar..." autocomplete="off">
+      <div class="suggestions" id="mob-suggestions"></div>
+    </div>
+    <div class="coords-card" id="mob-coords-card">
+      <div class="coord-row"><span class="coord-lbl">Latitud</span><span class="coord-val" id="mob-lat-val">—</span></div>
+      <div class="coord-row"><span class="coord-lbl">Longitud</span><span class="coord-val" id="mob-lon-val">—</span></div>
+    </div>
+    <div>
+      <label class="field-lbl">Altitud (metros, opcional)</label>
+      <input type="number" class="input-field" id="mob-alt-input" placeholder="ej. 650">
+    </div>
+    <button class="btn btn-primary" id="mob-btn-apply" disabled>
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>
+      Aplicar GPS a <span id="mob-sel-count">0</span> fotos
+    </button>
+    <div id="mob-result-box" style="display:none"></div>
+  </div>
+</div>
 
 <!-- SETTINGS MODAL -->
 <div class="modal-overlay" id="modal-settings">
   <div class="modal">
-    <h2>⚙ Ajustes</h2>
+    <div class="modal-title">Ajustes</div>
     <label>Email para reportes:</label>
     <input type="email" class="input-field" id="setting-email" placeholder="tu@email.com">
-    <button class="btn btn-primary" id="btn-save-settings">Guardar</button>
-    <button class="btn btn-secondary" id="btn-close-settings" style="margin-top:8px;">Cerrar</button>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="btn-save-settings">Guardar</button>
+      <button class="btn btn-secondary" id="btn-close-settings">Cerrar</button>
+    </div>
   </div>
 </div>
 
 <script>
+// ── State ────────────────────────────────────────────────────────────────────
 let currentPath = "";
 let selectedFiles = new Set();
 let currentLat = null, currentLon = null, currentLocationName = "";
-let searchTimer = null;
 let currentFiles = [];
+let missingMode = false;
+let searchTimer = null;
+const RAW_EXTS = [".cr3",".cr2",".nef",".arw",".raf",".dng",".jpr"];
 
-/* NAV */
+// ── Intersection Observer for lazy loading ────────────────────────────────────
+const thumbObserver = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (!e.isIntersecting) return;
+    const card = e.target;
+    if (card.dataset.loaded) return;
+    card.dataset.loaded = "1";
+    const src = card.dataset.src;
+    if (!src) return;
+    const img = card.querySelector("img");
+    const skeleton = card.querySelector(".fc-skeleton");
+    const fallback = card.querySelector(".fc-icon");
+    img.onload = () => { img.classList.add("ready"); };
+    img.onerror = () => {
+      img.style.display = "none";
+      if (skeleton) skeleton.style.display = "none";
+      if (fallback) fallback.classList.add("show");
+    };
+    img.src = src;
+    thumbObserver.unobserve(card);
+  });
+}, { rootMargin: "300px 0px" });
+
+// ── Navigation ────────────────────────────────────────────────────────────────
 async function navigate(path) {
   currentPath = path;
   selectedFiles.clear();
   currentFiles = [];
-  updateSelCount();
-  document.getElementById("chk-missing").checked = false;
-  const res = await fetch("/api/browse?path=" + encodeURIComponent(path));
-  const data = await res.json();
-  renderBreadcrumb(path);
-  renderSidebar(data.dirs, path);
-  renderFiles(data.files);
-  closeMobilePanels();
+  missingMode = false;
+  document.getElementById("chip-missing").classList.remove("on");
+  updateSelUI();
+  const c = document.getElementById("content");
+  c.innerHTML = '<div class="empty-state"><div class="spinner"></div><p style="margin-top:12px">Cargando...</p></div>';
+  try {
+    const res = await fetch("/api/browse?path=" + encodeURIComponent(path));
+    const data = await res.json();
+    renderBreadcrumb(path);
+    renderSidebar(data.dirs, path);
+    renderFiles(data.files);
+  } catch(e) {
+    c.innerHTML = '<div class="empty-state"><p>Error cargando carpeta</p></div>';
+  }
+  closeSidebar();
 }
 
 function renderBreadcrumb(path) {
-  const parts = path ? path.split("/") : [];
-  let html = '<span onclick="navigate(\'\')">Fotos</span>';
+  const parts = path ? path.split("/").filter(Boolean) : [];
+  let html = '<span class="bc-item' + (parts.length === 0 ? ' cur' : '') + '" data-path="">Fotos</span>';
   let acc = "";
-  parts.forEach(function(p) {
+  parts.forEach((p, i) => {
     acc += (acc ? "/" : "") + p;
-    const a = acc;
-    html += ' / <span onclick="navigate(\'' + a + '\')">' + p + '</span>';
+    const isCur = i === parts.length - 1;
+    html += '<span class="bc-sep">›</span>';
+    html += '<span class="bc-item' + (isCur ? ' cur' : '') + '" data-path="' + acc + '">' + p + '</span>';
   });
-  document.getElementById("breadcrumb").innerHTML = html;
+  const bc = document.getElementById("breadcrumb");
+  bc.innerHTML = html;
+  bc.querySelectorAll(".bc-item:not(.cur)").forEach(el => {
+    el.addEventListener("click", () => navigate(el.dataset.path));
+  });
 }
 
 function renderSidebar(dirs, activePath) {
   const tree = document.getElementById("tree");
   if (dirs.length === 0) {
-    tree.innerHTML = '<div style="color:#888;font-size:0.8rem;padding:10px">Sin subcarpetas</div>';
+    tree.innerHTML = '<div style="color:var(--text2);font-size:.8rem;padding:12px 16px">Sin subcarpetas</div>';
     return;
   }
-  tree.innerHTML = dirs.map(function(d) {
-    return '<div class="tree-item' + (d.path === activePath ? ' active' : '') + '" data-path="' + d.path + '"><span>📁</span> ' + d.name + '</div>';
-  }).join("");
-  tree.querySelectorAll(".tree-item").forEach(function(el) {
-    el.addEventListener("click", function() { navigate(el.dataset.path); });
+  tree.innerHTML = dirs.map(d =>
+    '<div class="tree-item' + (d.path === activePath ? ' active' : '') + '" data-path="' + d.path + '">' +
+    '<svg viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>' +
+    d.name + '</div>'
+  ).join("");
+  tree.querySelectorAll(".tree-item").forEach(el => {
+    el.addEventListener("click", () => navigate(el.dataset.path));
   });
 }
 
-function extIcon(ext) {
-  if ([".cr3",".cr2",".nef",".arw",".raf",".dng",".jpr"].includes(ext)) return "🟠";
-  return "🖼️";
+function makeRawIcon() {
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">' +
+    '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>' +
+    '</svg><span>RAW</span>';
+}
+
+function makeImgIcon() {
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">' +
+    '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>' +
+    '</svg>';
 }
 
 function renderFiles(files) {
   currentFiles = files;
-  const c = document.getElementById("files-container");
+  const c = document.getElementById("content");
   if (files.length === 0) {
-    c.className = "loading";
-    c.innerHTML = "Sin fotos en esta carpeta";
+    c.innerHTML = '<div class="empty-state">' +
+      '<svg viewBox="0 0 24 24"><path d="M20 4h-3.17L15 2H9L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 13c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.65 0-3 1.35-3 3s1.35 3 3 3 3-1.35 3-3-1.35-3-3-3z"/></svg>' +
+      '<p>Sin fotos en esta carpeta</p>' +
+      '<small>Selecciona otra carpeta o desactiva el filtro</small>' +
+      '</div>';
     return;
   }
-  c.className = "files-grid";
-  c.innerHTML = files.map(function(f, i) {
-    const thumbUrl = "/api/thumb?path=" + encodeURIComponent(f.path);
-    return '<div class="file-card" data-index="' + i + '">' +
-      '<div class="thumb-wrap">' +
-      '<img src="' + thumbUrl + '" loading="lazy" onerror="this.style.display=\'none\';this.parentNode.innerHTML=\'<span class=icon>' + extIcon(f.ext) + '</span>\'">' +
-      '</div>' +
-      '<div class="name">' + f.name + (f.folder ? '<br><span style="color:#555;font-size:0.55rem;">' + f.folder + '</span>' : '') + '</div>' +
-      '</div>';
-  }).join("");
-  c.querySelectorAll(".file-card").forEach(function(card) {
-    card.addEventListener("click", function() { toggleFile(parseInt(card.dataset.index)); });
+  const grid = document.createElement("div");
+  grid.className = "files-grid";
+  files.forEach((f, i) => {
+    const card = document.createElement("div");
+    card.className = "fc";
+    card.dataset.index = i;
+    card.dataset.src = "/api/thumb?path=" + encodeURIComponent(f.path);
+    const isRaw = RAW_EXTS.includes(f.ext);
+    const folderHtml = f.folder && f.folder !== "." ? '<br><small style="opacity:.7">' + f.folder + '</small>' : '';
+    card.innerHTML =
+      '<img alt="' + f.name + '">' +
+      '<div class="fc-skeleton"></div>' +
+      '<div class="fc-icon">' + (isRaw ? makeRawIcon() : makeImgIcon()) + '</div>' +
+      '<div class="fc-overlay"><div class="fc-check"></div></div>' +
+      '<div class="fc-name">' + f.name + folderHtml + '</div>';
+    card.addEventListener("click", () => toggleFile(i));
+    grid.appendChild(card);
+    thumbObserver.observe(card);
   });
+  c.innerHTML = "";
+  c.appendChild(grid);
 }
 
+// ── Selection ─────────────────────────────────────────────────────────────────
 function toggleFile(index) {
-  const path = currentFiles[index].path;
-  const card = document.querySelector('.file-card[data-index="' + index + '"]');
-  if (selectedFiles.has(path)) {
-    selectedFiles.delete(path);
-    card && card.classList.remove("selected");
+  const f = currentFiles[index];
+  const card = document.querySelector('.fc[data-index="' + index + '"]');
+  if (selectedFiles.has(f.path)) {
+    selectedFiles.delete(f.path);
+    card && card.classList.remove("sel");
   } else {
-    selectedFiles.add(path);
-    card && card.classList.add("selected");
-    checkGps(path);
+    selectedFiles.add(f.path);
+    card && card.classList.add("sel");
+    checkGps(f.path);
   }
-  updateSelCount();
+  updateSelUI();
 }
 
 async function checkGps(path) {
   const box = document.getElementById("gps-status");
-  box.style.color = "#888";
-  box.innerHTML = "...";
+  box.className = "gps-status loading";
+  box.innerHTML = '<div class="spinner"></div> Verificando...';
   try {
     const res = await fetch("/api/gpsinfo?path=" + encodeURIComponent(path));
     const data = await res.json();
     if (data.has_gps) {
-      box.style.color = "#4caf82";
-      box.innerHTML = "\u2705 " + parseFloat(data.lat).toFixed(4) + ", " + parseFloat(data.lon).toFixed(4);
+      box.className = "gps-status has";
+      box.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>' +
+        parseFloat(data.lat).toFixed(4) + ", " + parseFloat(data.lon).toFixed(4);
     } else {
-      box.style.color = "#e94560";
-      box.innerHTML = "\u274c Sin GPS";
+      box.className = "gps-status no";
+      box.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>Sin GPS';
     }
-  } catch (e) {
-    box.innerHTML = "Error";
+  } catch(e) {
+    box.className = "gps-status";
+    box.innerHTML = "Error al verificar";
   }
 }
 
-function updateSelCount() {
+function updateSelUI() {
   const n = selectedFiles.size;
   document.getElementById("sel-count").textContent = n;
-  document.getElementById("btn-apply").disabled = n === 0 || currentLat === null;
+  document.getElementById("sbar-count").textContent = n;
+  document.getElementById("mob-sel-count").textContent = n;
+  const hasLoc = currentLat !== null;
+  document.getElementById("btn-apply").disabled = n === 0 || !hasLoc;
   document.getElementById("btn-rename").disabled = n === 0;
+  document.getElementById("mob-btn-apply").disabled = n === 0 || !hasLoc;
+
+  const bar = document.getElementById("sel-bar");
+  if (n > 0) { bar.classList.add("up"); } else { bar.classList.remove("up"); }
+
+  const chip = document.getElementById("chip-selall");
+  if (currentFiles.length > 0 && n === currentFiles.length) {
+    chip.textContent = "Deseleccionar todo";
+  } else {
+    chip.textContent = "Seleccionar todo";
+  }
 }
 
-/* SELECT ALL */
-document.getElementById("btn-select-all").addEventListener("click", function() {
-  if (selectedFiles.size === currentFiles.length) {
+// ── Select all / deselect ─────────────────────────────────────────────────────
+function handleSelectAll() {
+  if (selectedFiles.size === currentFiles.length && currentFiles.length > 0) {
     selectedFiles.clear();
-    document.querySelectorAll(".file-card.selected").forEach(function(c) { c.classList.remove("selected"); });
+    document.querySelectorAll(".fc.sel").forEach(c => c.classList.remove("sel"));
   } else {
-    currentFiles.forEach(function(f, i) {
+    currentFiles.forEach((f, i) => {
       selectedFiles.add(f.path);
-      var card = document.querySelector('.file-card[data-index="' + i + '"]');
-      card && card.classList.add("selected");
+      const card = document.querySelector('.fc[data-index="' + i + '"]');
+      card && card.classList.add("sel");
     });
   }
-  updateSelCount();
-});
-
-/* SEARCH */
-const searchInput = document.getElementById("location-search");
-searchInput.addEventListener("input", function() {
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(async function() {
-    const q = searchInput.value.trim();
-    if (q.length < 3) { document.getElementById("suggestions").style.display = "none"; return; }
-    const res = await fetch("/api/geocode?q=" + encodeURIComponent(q));
-    const data = await res.json();
-    const sug = document.getElementById("suggestions");
-    if (data.length === 0) { sug.style.display = "none"; return; }
-    sug.innerHTML = data.map(function(r) {
-      return '<div class="suggestion" data-lat="' + r.lat + '" data-lon="' + r.lon + '" data-name="' + r.name.split(",")[0].replace(/"/g,"") + '">📍 ' + r.name + '</div>';
-    }).join("");
-    sug.querySelectorAll(".suggestion").forEach(function(el) {
-      el.addEventListener("click", function() {
-        currentLat = parseFloat(el.dataset.lat);
-        currentLon = parseFloat(el.dataset.lon);
-        currentLocationName = el.dataset.name;
-        document.getElementById("lat-val").textContent = currentLat.toFixed(5);
-        document.getElementById("lon-val").textContent = currentLon.toFixed(5);
-        searchInput.value = el.dataset.name;
-        sug.style.display = "none";
-        updateSelCount();
-      });
-    });
-    sug.style.display = "block";
-  }, 500);
-});
-
-/* APPLY GPS */
-document.getElementById("btn-apply").addEventListener("click", async function() {
-  const alt = document.getElementById("alt-input").value || null;
-  const btn = document.getElementById("btn-apply");
-  const box = document.getElementById("result-box");
-  const files = Array.from(selectedFiles);
-  const total = files.length;
-  let done = 0, okCount = 0, errCount = 0;
-  const errFiles = [];
-  btn.disabled = true;
-  box.style.display = "block";
-  box.className = "result-box";
-  box.style.background = "#0f3460"; box.style.border = "1px solid #1a4a8a"; box.style.color = "#eee";
-  for (const f of files) {
-    box.innerHTML = "\u23f3 " + done + "/" + total;
-    btn.textContent = done + "/" + total;
-    try {
-      const res = await fetch("/api/write", {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ lat: currentLat, lon: currentLon, alt: alt, files: [f] })
-      });
-      const data = await res.json();
-      if (data.errors.length === 0) { okCount++; } else { errCount++; errFiles.push(data.errors[0].file); }
-    } catch (e) { errCount++; errFiles.push(f.split("/").pop()); }
-    done++;
-  }
-  if (errCount === 0) {
-    box.className = "result-box result-ok"; box.style.background = ""; box.style.border = ""; box.style.color = "";
-    box.innerHTML = "\u2705 " + okCount + "/" + total + " OK";
-  } else {
-    box.className = "result-box result-err"; box.style.background = ""; box.style.border = ""; box.style.color = "";
-    box.innerHTML = "\u26a0\ufe0f " + okCount + " OK, " + errCount + " err";
-  }
-  btn.disabled = false; btn.textContent = "Aplicar GPS";
-  sendReport("Aplicar GPS", total, okCount, errCount, errFiles);
-  selectedFiles.clear();
-  document.querySelectorAll(".file-card.selected").forEach(function(c) { c.classList.remove("selected"); });
-  updateSelCount();
-});
-
-/* RENAME */
-document.getElementById("btn-rename").addEventListener("click", async function() {
-  if (selectedFiles.size === 0) return;
-  const locName = currentLocationName || searchInput.value.trim() || "";
-  if (!confirm("Renombrar " + selectedFiles.size + " foto(s)?")) return;
-  const btn = document.getElementById("btn-rename");
-  const box = document.getElementById("rename-box");
-  btn.disabled = true; btn.textContent = "Renombrando...";
-  box.style.display = "block"; box.className = "result-box";
-  box.style.background = "#0f3460"; box.style.color = "#eee";
-  box.innerHTML = "\u23f3 Renombrando...";
-  try {
-    const res = await fetch("/api/rename", {
-      method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ location_name: locName, files: Array.from(selectedFiles) })
-    });
-    const data = await res.json();
-    const errFiles = data.errors.map(function(e) { return e.file; });
-    if (data.errors.length === 0) {
-      box.className = "result-box result-ok"; box.style.background = ""; box.style.color = "";
-      box.innerHTML = "\u2705 " + data.ok.length + " renombrados";
-    } else {
-      box.className = "result-box result-err"; box.style.background = ""; box.style.color = "";
-      box.innerHTML = "\u26a0\ufe0f " + data.ok.length + " OK, " + data.errors.length + " err";
-    }
-    sendReport("Renombrar", data.ok.length + data.errors.length, data.ok.length, data.errors.length, errFiles);
-    selectedFiles.clear(); navigate(currentPath);
-  } catch (e) {
-    box.className = "result-box result-err"; box.innerHTML = "Error";
-  }
-  btn.disabled = false; btn.textContent = "\u270f\ufe0f Renombrar por EXIF";
-  updateSelCount();
-});
-
-/* EMAIL REPORT */
-async function sendReport(action, total, okCount, errCount, errFiles) {
-  try {
-    await fetch("/api/send_report", {
-      method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ action: action, folder: currentPath, total: total, ok_count: okCount, err_count: errCount, err_files: errFiles || [] })
-    });
-  } catch (e) {}
+  updateSelUI();
 }
+document.getElementById("chip-selall").addEventListener("click", handleSelectAll);
+document.getElementById("btn-select-all").addEventListener("click", handleSelectAll);
 
-/* MISSING GPS */
-document.getElementById("chk-missing").addEventListener("change", function() {
-  if (this.checked) { loadMissing(currentPath); } else { navigate(currentPath); }
+// ── Missing GPS filter ────────────────────────────────────────────────────────
+document.getElementById("chip-missing").addEventListener("click", function() {
+  missingMode = !missingMode;
+  this.classList.toggle("on", missingMode);
+  if (missingMode) { loadMissing(currentPath); } else { navigate(currentPath); }
 });
 
 async function loadMissing(path) {
-  const c = document.getElementById("files-container");
-  c.className = "loading";
-  c.innerHTML = "\ud83d\udd0d Buscando fotos sin GPS...";
-  selectedFiles.clear(); updateSelCount();
+  selectedFiles.clear();
+  updateSelUI();
+  const c = document.getElementById("content");
+  c.innerHTML = '<div class="empty-state"><div class="spinner"></div><p style="margin-top:12px">Buscando fotos sin GPS...</p></div>';
   try {
     const res = await fetch("/api/missing_gps?path=" + encodeURIComponent(path));
     const data = await res.json();
     currentFiles = data.files;
-    if (data.files.length === 0) { c.className = "loading"; c.innerHTML = "\u2705 Todas tienen GPS"; return; }
+    if (data.files.length === 0) {
+      c.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24" fill="currentColor" style="width:48px;height:48px;fill:var(--green);opacity:.6"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg><p>¡Todas las fotos tienen GPS!</p></div>';
+      return;
+    }
     renderFiles(data.files);
-  } catch (e) { c.className = "loading"; c.innerHTML = "Error"; }
+  } catch(e) {
+    c.innerHTML = '<div class="empty-state"><p>Error al buscar</p></div>';
+  }
 }
 
-/* MOBILE */
-function closeMobilePanels() {
-  document.getElementById("sidebar").classList.remove("mobile-open");
-  document.getElementById("sidebar-backdrop").classList.remove("active");
-  document.getElementById("panel").classList.remove("mobile-open");
-  document.getElementById("panel-backdrop").classList.remove("active");
-}
-document.getElementById("btn-sidebar").addEventListener("click", function() {
-  document.getElementById("sidebar").classList.toggle("mobile-open");
-  document.getElementById("sidebar-backdrop").classList.toggle("active");
-});
-document.getElementById("sidebar-backdrop").addEventListener("click", closeMobilePanels);
-document.getElementById("fab").addEventListener("click", function() {
-  document.getElementById("panel").classList.toggle("mobile-open");
-  document.getElementById("panel-backdrop").classList.toggle("active");
-});
-document.getElementById("panel-backdrop").addEventListener("click", closeMobilePanels);
+// ── Location search ───────────────────────────────────────────────────────────
+function setupSearch(inputId, sugsId, coordsCardId, latId, lonId, applyBtnId) {
+  const input = document.getElementById(inputId);
+  const sugs = document.getElementById(sugsId);
+  const card = document.getElementById(coordsCardId);
 
-/* SETTINGS */
-document.getElementById("btn-settings").addEventListener("click", async function() {
-  document.getElementById("modal-settings").classList.add("active");
+  input.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(async () => {
+      const q = input.value.trim();
+      if (q.length < 3) { sugs.style.display = "none"; return; }
+      try {
+        const res = await fetch("/api/geocode?q=" + encodeURIComponent(q));
+        const data = await res.json();
+        if (!data.length) { sugs.style.display = "none"; return; }
+        sugs.innerHTML = data.map(r =>
+          '<div class="sug-item" data-lat="' + r.lat + '" data-lon="' + r.lon + '" data-name="' + (r.name.split(",")[0].replace(/"/g,"")) + '">' +
+          '<svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>' +
+          '<span class="sug-text">' + r.name + '</span>' +
+          '</div>'
+        ).join("");
+        sugs.querySelectorAll(".sug-item").forEach(el => {
+          el.addEventListener("click", () => {
+            currentLat = parseFloat(el.dataset.lat);
+            currentLon = parseFloat(el.dataset.lon);
+            currentLocationName = el.dataset.name;
+            document.getElementById(latId).textContent = currentLat.toFixed(5);
+            document.getElementById(lonId).textContent = currentLon.toFixed(5);
+            // Sync both search inputs
+            document.getElementById("location-search").value = currentLocationName;
+            document.getElementById("mob-location-search").value = currentLocationName;
+            // Show both coord cards
+            document.getElementById("coords-card").classList.add("show");
+            document.getElementById("mob-coords-card").classList.add("show");
+            document.getElementById("lat-val").textContent = currentLat.toFixed(5);
+            document.getElementById("lon-val").textContent = currentLon.toFixed(5);
+            document.getElementById("mob-lat-val").textContent = currentLat.toFixed(5);
+            document.getElementById("mob-lon-val").textContent = currentLon.toFixed(5);
+            sugs.style.display = "none";
+            updateSelUI();
+          });
+        });
+        sugs.style.display = "block";
+      } catch(e) {}
+    }, 450);
+  });
+
+  document.addEventListener("click", e => {
+    if (!input.contains(e.target) && !sugs.contains(e.target)) {
+      sugs.style.display = "none";
+    }
+  });
+}
+
+setupSearch("location-search", "suggestions", "coords-card", "lat-val", "lon-val", "btn-apply");
+setupSearch("mob-location-search", "mob-suggestions", "mob-coords-card", "mob-lat-val", "mob-lon-val", "mob-btn-apply");
+
+// ── Apply GPS ─────────────────────────────────────────────────────────────────
+async function applyGps(btnId, boxId, altId) {
+  const alt = document.getElementById(altId).value || null;
+  const btn = document.getElementById(btnId);
+  const box = document.getElementById(boxId);
+  const files = Array.from(selectedFiles);
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Aplicando...';
+  box.style.display = "flex";
+  box.className = "res-box res-progress";
+  box.innerHTML = '<div class="spinner"></div> Aplicando GPS a ' + files.length + ' foto(s)...';
+  try {
+    const res = await fetch("/api/write", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ lat: currentLat, lon: currentLon, alt: alt, files: files })
+    });
+    const data = await res.json();
+    const ok = data.ok.length, err = data.errors.length;
+    if (err === 0) {
+      box.className = "res-box res-ok";
+      box.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>' + ok + ' foto(s) actualizadas';
+    } else {
+      box.className = "res-box res-err";
+      box.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>' + ok + ' OK, ' + err + ' con error';
+    }
+    sendReport("Aplicar GPS", files.length, ok, err, data.errors.map(e => e.file));
+  } catch(e) {
+    box.className = "res-box res-err";
+    box.innerHTML = "Error de conexión";
+  }
+  btn.disabled = false;
+  btn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>Aplicar GPS';
+  document.getElementById("mob-btn-apply").disabled = false;
+  document.getElementById("mob-btn-apply").innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>Aplicar GPS a <span id="mob-sel-count">' + selectedFiles.size + '</span> fotos';
+  selectedFiles.clear();
+  document.querySelectorAll(".fc.sel").forEach(c => c.classList.remove("sel"));
+  updateSelUI();
+}
+
+document.getElementById("btn-apply").addEventListener("click", () => applyGps("btn-apply", "result-box", "alt-input"));
+document.getElementById("mob-btn-apply").addEventListener("click", () => applyGps("mob-btn-apply", "mob-result-box", "mob-alt-input"));
+
+// ── Rename ────────────────────────────────────────────────────────────────────
+async function doRename() {
+  if (selectedFiles.size === 0) return;
+  const locName = currentLocationName ||
+    document.getElementById("location-search").value.trim() ||
+    document.getElementById("mob-location-search").value.trim() || "";
+  if (!confirm("Renombrar " + selectedFiles.size + " foto(s) basándose en EXIF y ubicación?")) return;
+
+  const btn = document.getElementById("btn-rename");
+  const box = document.getElementById("rename-box");
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Renombrando...';
+  box.style.display = "flex";
+  box.className = "res-box res-progress";
+  box.innerHTML = '<div class="spinner"></div> Renombrando...';
+
+  try {
+    const res = await fetch("/api/rename", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ location_name: locName, files: Array.from(selectedFiles) })
+    });
+    const data = await res.json();
+    const errFiles = data.errors.map(e => e.file);
+    if (data.errors.length === 0) {
+      box.className = "res-box res-ok";
+      box.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>' + data.ok.length + ' archivo(s) renombrados';
+    } else {
+      box.className = "res-box res-err";
+      box.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>' + data.ok.length + ' OK, ' + data.errors.length + ' con error';
+    }
+    sendReport("Renombrar", data.ok.length + data.errors.length, data.ok.length, data.errors.length, errFiles);
+    selectedFiles.clear();
+    navigate(currentPath);
+  } catch(e) {
+    box.className = "res-box res-err";
+    box.innerHTML = "Error de conexión";
+  }
+  btn.disabled = false;
+  btn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>Renombrar por EXIF';
+  updateSelUI();
+}
+
+document.getElementById("btn-rename").addEventListener("click", doRename);
+
+// ── Email report ──────────────────────────────────────────────────────────────
+async function sendReport(action, total, okCount, errCount, errFiles) {
+  try {
+    await fetch("/api/send_report", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ action, folder: currentPath, total, ok_count: okCount, err_count: errCount, err_files: errFiles || [] })
+    });
+  } catch(e) {}
+}
+
+// ── Mobile sidebar ────────────────────────────────────────────────────────────
+function closeSidebar() {
+  document.getElementById("sidebar").classList.remove("open");
+  document.getElementById("sidebar-bd").classList.remove("on");
+}
+document.getElementById("btn-sidebar").addEventListener("click", () => {
+  document.getElementById("sidebar").classList.toggle("open");
+  document.getElementById("sidebar-bd").classList.toggle("on");
+});
+document.getElementById("sidebar-bd").addEventListener("click", closeSidebar);
+
+// ── Mobile GPS sheet ──────────────────────────────────────────────────────────
+function openGpsSheet() {
+  document.getElementById("gps-sheet").classList.add("on");
+  document.getElementById("drawer-bd").classList.add("on");
+}
+function closeGpsSheet() {
+  document.getElementById("gps-sheet").classList.remove("on");
+  document.getElementById("drawer-bd").classList.remove("on");
+}
+document.getElementById("sbar-gps").addEventListener("click", openGpsSheet);
+document.getElementById("drawer-bd").addEventListener("click", closeGpsSheet);
+
+// ── Floating selection bar ────────────────────────────────────────────────────
+document.getElementById("sbar-rename").addEventListener("click", doRename);
+document.getElementById("sbar-close").addEventListener("click", () => {
+  selectedFiles.clear();
+  document.querySelectorAll(".fc.sel").forEach(c => c.classList.remove("sel"));
+  updateSelUI();
+});
+
+// ── Settings modal ────────────────────────────────────────────────────────────
+document.getElementById("btn-settings").addEventListener("click", async () => {
+  document.getElementById("modal-settings").classList.add("on");
   try {
     const res = await fetch("/api/settings");
     const data = await res.json();
     document.getElementById("setting-email").value = data.recipient_email || "";
-  } catch (e) {}
+  } catch(e) {}
 });
-document.getElementById("btn-close-settings").addEventListener("click", function() {
-  document.getElementById("modal-settings").classList.remove("active");
+document.getElementById("btn-close-settings").addEventListener("click", () => {
+  document.getElementById("modal-settings").classList.remove("on");
 });
-document.getElementById("btn-save-settings").addEventListener("click", async function() {
+document.getElementById("btn-save-settings").addEventListener("click", async () => {
   const email = document.getElementById("setting-email").value.trim();
   await fetch("/api/settings", {
-    method: "POST", headers: {"Content-Type": "application/json"},
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
     body: JSON.stringify({ recipient_email: email })
   });
-  document.getElementById("modal-settings").classList.remove("active");
+  document.getElementById("modal-settings").classList.remove("on");
+});
+document.getElementById("modal-settings").addEventListener("click", e => {
+  if (e.target === document.getElementById("modal-settings")) {
+    document.getElementById("modal-settings").classList.remove("on");
+  }
 });
 
+// ── Bootstrap ─────────────────────────────────────────────────────────────────
 navigate("");
 </script>
 </body>
