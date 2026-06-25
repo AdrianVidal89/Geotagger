@@ -308,6 +308,8 @@ header .spacer{flex:1}
 .btn-secondary:not(:disabled):hover{background:#e8f0fe}
 .btn-warn{background:var(--yellow);color:#fff}
 .btn-warn:not(:disabled):hover{background:#e8a000}
+.btn-dl{background:var(--green);color:#fff}
+.btn-dl:not(:disabled):hover{background:#2a9048}
 .btn svg{width:16px;height:16px;flex-shrink:0}
 
 /* result boxes */
@@ -522,6 +524,10 @@ header .spacer{flex:1}
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
         Renombrar por EXIF
       </button>
+      <button class="btn btn-dl" id="btn-download" disabled>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+        Descargar
+      </button>
       <div id="result-box" style="display:none"></div>
       <div id="rename-box" style="display:none"></div>
     </div>
@@ -534,6 +540,10 @@ header .spacer{flex:1}
   <button class="sbar-btn pri" id="sbar-gps">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>
     GPS
+  </button>
+  <button class="sbar-btn" id="sbar-download">
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+    Descargar
   </button>
   <button class="sbar-btn" id="sbar-rename">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"/></svg>
@@ -564,6 +574,10 @@ header .spacer{flex:1}
     <button class="btn btn-primary" id="mob-btn-apply" disabled>
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>
       Aplicar GPS a <span id="mob-sel-count">0</span> fotos
+    </button>
+    <button class="btn btn-dl" id="mob-btn-download" disabled>
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+      Descargar <span id="mob-dl-count">0</span> foto(s)
     </button>
     <div id="mob-result-box" style="display:none"></div>
   </div>
@@ -828,10 +842,13 @@ function updateSelUI() {
   document.getElementById("sel-count").textContent = n;
   document.getElementById("sbar-count").textContent = n;
   document.getElementById("mob-sel-count").textContent = n;
+  document.getElementById("mob-dl-count").textContent = n;
   const hasLoc = currentLat !== null;
   document.getElementById("btn-apply").disabled = n === 0 || !hasLoc;
   document.getElementById("btn-rename").disabled = n === 0;
+  document.getElementById("btn-download").disabled = n === 0;
   document.getElementById("mob-btn-apply").disabled = n === 0 || !hasLoc;
+  document.getElementById("mob-btn-download").disabled = n === 0;
 
   const bar = document.getElementById("sel-bar");
   if (n > 0) { bar.classList.add("up"); } else { bar.classList.remove("up"); }
@@ -1031,6 +1048,62 @@ async function doRename() {
 }
 
 document.getElementById("btn-rename").addEventListener("click", doRename);
+
+// ── Download ──────────────────────────────────────────────────────────────────
+const DL_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>';
+
+async function downloadFiles() {
+  const files = Array.from(selectedFiles);
+  if (!files.length) return;
+
+  if (files.length === 1) {
+    // Single file: direct browser download — no memory buffering needed
+    const a = document.createElement("a");
+    a.href = "/api/download?path=" + encodeURIComponent(files[0]);
+    a.download = files[0].split("/").pop();
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    return;
+  }
+
+  // Multiple files: fetch ZIP, create blob URL, trigger download
+  const btn = document.getElementById("btn-download");
+  const mobBtn = document.getElementById("mob-btn-download");
+  const origHtml = btn.innerHTML;
+  btn.disabled = true; mobBtn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Preparando ZIP...';
+  mobBtn.innerHTML = '<div class="spinner"></div> Preparando ZIP...';
+
+  try {
+    const res = await fetch("/api/download_zip", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ files })
+    });
+    if (!res.ok) throw new Error("Error del servidor: " + res.status);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "GeoTagger_" + new Date().toISOString().slice(0, 10) + ".zip";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // Revoke after a moment to free memory
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  } catch(e) {
+    alert("Error al descargar: " + e.message);
+  }
+
+  btn.disabled = false; mobBtn.disabled = false;
+  btn.innerHTML = origHtml;
+  mobBtn.innerHTML = DL_ICON + ' Descargar <span id="mob-dl-count">' + selectedFiles.size + '</span> foto(s)';
+}
+
+document.getElementById("btn-download").addEventListener("click", downloadFiles);
+document.getElementById("mob-btn-download").addEventListener("click", downloadFiles);
+document.getElementById("sbar-download").addEventListener("click", downloadFiles);
 
 // ── Email report ──────────────────────────────────────────────────────────────
 async function sendReport(action, total, okCount, errCount, errFiles) {
