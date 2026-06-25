@@ -4,6 +4,7 @@ import re
 import io
 import time
 import json
+import hashlib
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -18,14 +19,17 @@ app = Flask(__name__)
 PHOTOS_BASE = "/photos"
 SETTINGS_DIR = "/app/data"
 SETTINGS_FILE = SETTINGS_DIR + "/settings.json"
+THUMB_CACHE_DIR = SETTINGS_DIR + "/thumb_cache"
 os.makedirs(SETTINGS_DIR, exist_ok=True)
+os.makedirs(THUMB_CACHE_DIR, exist_ok=True)
+
 JPG_EXTS = {".jpg", ".jpeg", ".tiff", ".tif"}
 RAW_EXTS = {".cr3", ".jpr", ".cr2", ".nef", ".arw", ".raf", ".dng"}
 
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
 SMTP_USER = os.environ.get("SMTP_USER", "ecostruxureatlas@gmail.com")
-SMTP_PASS = os.environ.get("SMTP_PASS", "ezpv lhfx qjer fxkm")
+SMTP_PASS = os.environ.get("SMTP_PASS", "")
 
 # =============================================================================
 # PRINCIPIO FUNDAMENTAL DE ESTA APP:
@@ -38,6 +42,18 @@ SMTP_PASS = os.environ.get("SMTP_PASS", "ezpv lhfx qjer fxkm")
 # El renombrado es solo una operacion de sistema de archivos (rename), que no
 # altera el contenido del archivo en absoluto.
 # =============================================================================
+
+def _resolve_path(rel, base=PHOTOS_BASE):
+    """Safely resolve a user-supplied relative path under base.
+    Returns None if the resolved path escapes the base directory."""
+    base_p = Path(base).resolve()
+    try:
+        target = (base_p / rel).resolve()
+    except Exception:
+        return None
+    if not str(target).startswith(str(base_p) + os.sep) and str(target) != str(base_p):
+        return None
+    return target
 
 def _load_settings():
     try:
@@ -53,7 +69,7 @@ def _save_settings(data):
 def _send_report(subject, body_html):
     settings = _load_settings()
     recipient = settings.get("recipient_email", "").strip()
-    if not recipient:
+    if not recipient or not SMTP_PASS:
         return
     try:
         msg = MIMEMultipart("alternative")
@@ -94,8 +110,7 @@ def _write_gps_exiftool(path, lat, lon, alt=None):
     """
     Escribe coordenadas GPS usando ExifTool con -overwrite_original.
     ExifTool reescribe SOLO los metadatos, copiando los datos de imagen
-    byte a byte. NO recomprime ni reduce la calidad. Valido para JPG, TIFF,
-    CR3 y cualquier RAW soportado.
+    byte a byte. NO recomprime ni reduce la calidad.
     """
     path = sanitize_path(path)
     lat_ref = "N" if lat >= 0 else "S"
@@ -116,6 +131,17 @@ def _write_gps_exiftool(path, lat, lon, alt=None):
     if result.returncode != 0:
         raise Exception(result.stderr.strip())
     _trigger_reindex(path)
+    # Invalidate thumbnail cache for this file
+    _evict_thumb_cache(path)
+
+def _evict_thumb_cache(abs_path):
+    """Remove all cached thumbnails for a given file (mtime has changed)."""
+    try:
+        prefix = hashlib.md5(str(abs_path).encode()).hexdigest()[:8]
+        for f in Path(THUMB_CACHE_DIR).glob(prefix + "*.jpg"):
+            f.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 def _has_gps_fast(path):
     """Lee (sin modificar) si el archivo ya tiene coordenadas GPS."""
@@ -169,6 +195,15 @@ def _reverse_geocode(lat, lon):
         print("Reverse geocode error:", str(e))
     return None
 
+def _thumb_cache_path(abs_path):
+    """Generate a stable cache filename based on file path + mtime."""
+    try:
+        mtime = str(int(os.path.getmtime(abs_path) * 1000))
+    except Exception:
+        mtime = "0"
+    key = hashlib.md5((str(abs_path) + mtime).encode()).hexdigest()
+    return Path(THUMB_CACHE_DIR) / (key + ".jpg")
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -184,8 +219,8 @@ def settings():
 @app.route("/api/browse")
 def browse():
     rel = request.args.get("path", "")
-    abs_path = Path(PHOTOS_BASE) / rel
-    if not abs_path.exists():
+    abs_path = _resolve_path(rel)
+    if abs_path is None or not abs_path.exists():
         return jsonify({"error": "Ruta no existe"}), 404
     dirs, files = [], []
     for item in sorted(abs_path.iterdir()):
@@ -201,28 +236,49 @@ def browse():
 def thumb():
     """
     Genera una miniatura EN MEMORIA para mostrar en la interfaz.
-    Para RAW extrae la miniatura embebida (ExifTool). Para JPG genera una
-    copia reducida en un buffer. NUNCA escribe sobre el archivo original.
+    Usa caché en disco para evitar regenerar en cada petición.
+    NUNCA escribe sobre el archivo original.
     """
     rel = request.args.get("path", "")
-    abs_path = Path(PHOTOS_BASE) / rel
-    if not abs_path.exists():
+    abs_path = _resolve_path(rel)
+    if abs_path is None or not abs_path.exists():
         return "", 404
+
+    cache_file = _thumb_cache_path(abs_path)
+
+    if cache_file.exists():
+        etag = cache_file.stem
+        if request.headers.get("If-None-Match") == etag:
+            return "", 304
+        resp = send_file(str(cache_file), mimetype="image/jpeg")
+        resp.headers["Cache-Control"] = "public, max-age=2592000, immutable"
+        resp.headers["ETag"] = etag
+        return resp
+
     try:
         ext = abs_path.suffix.lower()
         if ext in RAW_EXTS:
             result = subprocess.run(
                 ["exiftool", "-b", "-ThumbnailImage", str(abs_path)],
-                capture_output=True, timeout=10
+                capture_output=True, timeout=15
             )
             if result.returncode == 0 and result.stdout:
-                return send_file(io.BytesIO(result.stdout), mimetype="image/jpeg")
+                cache_file.write_bytes(result.stdout)
+                resp = send_file(str(cache_file), mimetype="image/jpeg")
+                resp.headers["Cache-Control"] = "public, max-age=2592000, immutable"
+                resp.headers["ETag"] = cache_file.stem
+                return resp
+
         img = Image.open(str(abs_path))
-        img.thumbnail((200, 200))
+        img.thumbnail((300, 300))
         buf = io.BytesIO()
-        img.save(buf, format="JPEG")   # buffer en memoria, NO el archivo original
-        buf.seek(0)
-        return send_file(buf, mimetype="image/jpeg")
+        img.save(buf, format="JPEG", quality=82, optimize=True)
+        data = buf.getvalue()
+        cache_file.write_bytes(data)
+        resp = send_file(io.BytesIO(data), mimetype="image/jpeg")
+        resp.headers["Cache-Control"] = "public, max-age=2592000, immutable"
+        resp.headers["ETag"] = cache_file.stem
+        return resp
     except Exception as e:
         return str(e), 404
 
@@ -272,7 +328,10 @@ def write_gps():
     files = data["files"]
     ok, errors = [], []
     for rel in files:
-        path = Path(PHOTOS_BASE) / rel
+        path = _resolve_path(rel)
+        if path is None:
+            errors.append({"file": rel, "error": "ruta invalida"})
+            continue
         try:
             ext = path.suffix.lower()
             if ext in JPG_EXTS or ext in RAW_EXTS:
@@ -287,8 +346,8 @@ def write_gps():
 @app.route("/api/gpsinfo")
 def gpsinfo():
     rel = request.args.get("path", "")
-    abs_path = Path(PHOTOS_BASE) / rel
-    if not abs_path.exists():
+    abs_path = _resolve_path(rel)
+    if abs_path is None or not abs_path.exists():
         return jsonify({"has_gps": False, "error": "no existe"})
     try:
         result = subprocess.run(
@@ -306,8 +365,8 @@ def gpsinfo():
 @app.route("/api/missing_gps")
 def missing_gps():
     rel = request.args.get("path", "")
-    base = Path(PHOTOS_BASE) / rel
-    if not base.exists():
+    base = _resolve_path(rel)
+    if base is None or not base.exists():
         return jsonify({"error": "no existe", "files": []}), 404
     found = []
     for item in sorted(base.rglob("*")):
@@ -340,9 +399,9 @@ def rename_files():
     seen = {}
     geocode_cache = {}
     for rel in files:
-        path = Path(PHOTOS_BASE) / rel
-        if not path.exists():
-            errors.append({"file": rel, "error": "no existe"})
+        path = _resolve_path(rel)
+        if path is None or not path.exists():
+            errors.append({"file": rel, "error": "no existe o ruta invalida"})
             continue
         try:
             location_name = ""
@@ -380,7 +439,9 @@ def rename_files():
                 candidate = path.parent / (base_name + "_" + str(counter) + ext)
                 counter += 1
             seen[rel] = str(candidate)
-            path.rename(candidate)   # solo cambia el nombre, contenido intacto
+            path.rename(candidate)
+            # Invalidate old thumbnail cache
+            _evict_thumb_cache(path)
             ok.append({"old": path.name, "new": candidate.name})
         except Exception as e:
             errors.append({"file": path.name, "error": str(e)})
@@ -401,17 +462,17 @@ def send_report():
     subject = "GeoTagger: " + action + " " + status + " (" + str(total) + " archivos)"
 
     body = "<div style='font-family:system-ui;max-width:500px;margin:0 auto;'>"
-    body += "<h2 style='color:#e94560;'>GeoTagger — Reporte</h2>"
+    body += "<h2 style='color:#1a73e8;'>GeoTagger — Reporte</h2>"
     body += "<table style='width:100%;border-collapse:collapse;'>"
     body += "<tr><td style='padding:8px;color:#888;'>Accion</td><td style='padding:8px;font-weight:600;'>" + action + "</td></tr>"
     body += "<tr><td style='padding:8px;color:#888;'>Carpeta</td><td style='padding:8px;'>" + (folder or "Raiz") + "</td></tr>"
     body += "<tr><td style='padding:8px;color:#888;'>Fecha</td><td style='padding:8px;'>" + ts + "</td></tr>"
     body += "<tr><td style='padding:8px;color:#888;'>Total</td><td style='padding:8px;'>" + str(total) + " archivos</td></tr>"
-    body += "<tr><td style='padding:8px;color:#888;'>Exitosos</td><td style='padding:8px;color:#4caf82;font-weight:600;'>" + str(ok_count) + "</td></tr>"
-    body += "<tr><td style='padding:8px;color:#888;'>Errores</td><td style='padding:8px;color:" + ("#e94560" if err_count > 0 else "#4caf82") + ";font-weight:600;'>" + str(err_count) + "</td></tr>"
+    body += "<tr><td style='padding:8px;color:#888;'>Exitosos</td><td style='padding:8px;color:#34a853;font-weight:600;'>" + str(ok_count) + "</td></tr>"
+    body += "<tr><td style='padding:8px;color:#888;'>Errores</td><td style='padding:8px;color:" + ("#ea4335" if err_count > 0 else "#34a853") + ";font-weight:600;'>" + str(err_count) + "</td></tr>"
     body += "</table>"
     if err_files:
-        body += "<h3 style='color:#e94560;margin-top:16px;'>Archivos con error:</h3><ul>"
+        body += "<h3 style='color:#ea4335;margin-top:16px;'>Archivos con error:</h3><ul>"
         for ef in err_files[:20]:
             body += "<li style='font-size:0.9em;'>" + ef + "</li>"
         if len(err_files) > 20:
