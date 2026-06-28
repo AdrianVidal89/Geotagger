@@ -517,6 +517,28 @@ def send_report():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
+@app.route("/api/delete", methods=["POST"])
+def delete_files():
+    """Elimina los archivos indicados de forma permanente."""
+    data = request.json
+    files = data.get("files", [])
+    ok, errors = [], []
+    for rel in files:
+        path = _resolve_path(rel)
+        if path is None:
+            errors.append({"file": rel, "error": "ruta inválida"})
+            continue
+        if not path.exists() or not path.is_file():
+            errors.append({"file": rel, "error": "no existe"})
+            continue
+        try:
+            _evict_thumb_cache(path)
+            path.unlink()
+            ok.append(path.name)
+        except Exception as e:
+            errors.append({"file": path.name, "error": str(e)})
+    return jsonify({"ok": ok, "errors": errors})
+
 @app.route("/api/download")
 def download_file():
     """Descarga el archivo original sin modificarlo."""
@@ -545,7 +567,6 @@ def download_zip():
             path = _resolve_path(rel)
             if not path or not path.exists() or not path.is_file():
                 continue
-            # Handle duplicate filenames across subdirectories
             name = path.name
             if name in seen_names:
                 seen_names[name] += 1
