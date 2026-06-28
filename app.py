@@ -486,5 +486,72 @@ def send_report():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
+@app.route("/api/delete", methods=["POST"])
+def delete_files():
+    """Elimina los archivos indicados de forma permanente."""
+    data = request.json
+    files = data.get("files", [])
+    ok, errors = [], []
+    for rel in files:
+        path = _resolve_path(rel)
+        if path is None:
+            errors.append({"file": rel, "error": "ruta inválida"})
+            continue
+        if not path.exists() or not path.is_file():
+            errors.append({"file": rel, "error": "no existe"})
+            continue
+        try:
+            _evict_thumb_cache(path)
+            path.unlink()
+            ok.append(path.name)
+        except Exception as e:
+            errors.append({"file": path.name, "error": str(e)})
+    return jsonify({"ok": ok, "errors": errors})
+
+@app.route("/api/download")
+def download_file():
+    """Descarga el archivo original sin modificarlo."""
+    rel = request.args.get("path", "")
+    abs_path = _resolve_path(rel)
+    if abs_path is None or not abs_path.exists() or not abs_path.is_file():
+        return "", 404
+    return send_file(str(abs_path), as_attachment=True, download_name=abs_path.name)
+
+@app.route("/api/download_zip", methods=["POST"])
+def download_zip():
+    """
+    Crea un ZIP con los archivos seleccionados y lo sirve como descarga.
+    Usa ZIP_STORED (sin comprimir) porque los RAW ya están comprimidos;
+    evita consumo innecesario de CPU en el NAS.
+    """
+    data = request.json
+    files = data.get("files", [])
+    if not files:
+        return jsonify({"error": "sin archivos"}), 400
+
+    buf = io.BytesIO()
+    seen_names = {}
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED) as zf:
+        for rel in files:
+            path = _resolve_path(rel)
+            if not path or not path.exists() or not path.is_file():
+                continue
+            name = path.name
+            if name in seen_names:
+                seen_names[name] += 1
+                name = path.stem + "_" + str(seen_names[path.name]) + path.suffix
+            else:
+                seen_names[path.name] = 1
+            zf.write(str(path), name)
+    buf.seek(0)
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return send_file(
+        buf,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name="GeoTagger_" + ts + ".zip"
+    )
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)

@@ -304,6 +304,10 @@ header .spacer{flex:1}
 .btn-secondary:not(:disabled):hover{background:#e8f0fe}
 .btn-warn{background:var(--yellow);color:#fff}
 .btn-warn:not(:disabled):hover{background:#e8a000}
+.btn-dl{background:var(--green);color:#fff}
+.btn-dl:not(:disabled):hover{background:#2a9048}
+.btn-danger{background:var(--accent);color:#fff}
+.btn-danger:not(:disabled):hover{background:#c62828}
 .btn svg{width:16px;height:16px;flex-shrink:0}
 
 /* result boxes */
@@ -352,6 +356,8 @@ header .spacer{flex:1}
   display:flex;align-items:center;border-radius:50%;transition:all .15s;
 }
 .sbar-close:hover{background:rgba(255,255,255,.1);color:#fff}
+.sbar-btn.danger{background:rgba(234,67,53,.25);color:#ff8a80}
+.sbar-btn.danger:hover{background:rgba(234,67,53,.45)}
 
 /* ── MODAL ───────────────────────────────────── */
 .modal-overlay{
@@ -368,6 +374,27 @@ header .spacer{flex:1}
 .modal label{font-size:.8rem;color:var(--text2);display:block;margin-bottom:6px}
 .modal-actions{display:flex;gap:8px;margin-top:16px}
 .modal-actions .btn{flex:1}
+/* delete modal specifics */
+.del-warning{
+  display:flex;align-items:flex-start;gap:10px;
+  background:#fce8e6;border-radius:var(--radius);
+  padding:12px 14px;margin-bottom:14px;
+}
+.del-warning svg{width:20px;height:20px;fill:var(--accent);flex-shrink:0;margin-top:1px}
+.del-warning p{font-size:.85rem;color:#b71c1c;line-height:1.45}
+.del-warning strong{display:block;font-size:.9rem;margin-bottom:2px}
+.del-file-list{
+  background:var(--surface);border-radius:var(--radius);
+  padding:10px 14px;max-height:160px;overflow-y:auto;
+  font-size:.8rem;color:var(--text2);
+  border:1px solid var(--border);margin-bottom:4px;
+}
+.del-file-list div{
+  padding:3px 0;border-bottom:1px solid var(--border);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.del-file-list div:last-child{border-bottom:none}
+.del-more{font-size:.75rem;color:var(--text2);padding:4px 0 0;text-align:right}
 
 /* ── MOBILE GPS BOTTOM SHEET ─────────────────── */
 .drawer-bd{
@@ -518,6 +545,14 @@ header .spacer{flex:1}
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
         Renombrar por EXIF
       </button>
+      <button class="btn btn-dl" id="btn-download" disabled>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+        Descargar
+      </button>
+      <button class="btn btn-danger" id="btn-delete" disabled>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+        Eliminar
+      </button>
       <div id="result-box" style="display:none"></div>
       <div id="rename-box" style="display:none"></div>
     </div>
@@ -534,6 +569,10 @@ header .spacer{flex:1}
   <button class="sbar-btn" id="sbar-rename">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"/></svg>
     Renombrar
+  </button>
+  <button class="sbar-btn danger" id="sbar-delete">
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+    Eliminar
   </button>
   <button class="sbar-close" id="sbar-close" title="Deseleccionar">✕</button>
 </div>
@@ -562,6 +601,28 @@ header .spacer{flex:1}
       Aplicar GPS a <span id="mob-sel-count">0</span> fotos
     </button>
     <div id="mob-result-box" style="display:none"></div>
+  </div>
+</div>
+
+<!-- DELETE CONFIRMATION MODAL -->
+<div class="modal-overlay" id="modal-delete">
+  <div class="modal">
+    <div class="del-warning">
+      <svg viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
+      <div>
+        <strong>Acción irreversible</strong>
+        <p>Los archivos se eliminarán permanentemente del disco. No se pueden recuperar.</p>
+      </div>
+    </div>
+    <div class="del-file-list" id="del-file-list"></div>
+    <p class="del-more" id="del-more" style="display:none"></p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="btn-delete-cancel">Cancelar</button>
+      <button class="btn btn-danger" id="btn-delete-confirm">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+        Sí, eliminar permanentemente
+      </button>
+    </div>
   </div>
 </div>
 
@@ -756,6 +817,8 @@ function updateSelUI() {
   const hasLoc = currentLat !== null;
   document.getElementById("btn-apply").disabled = n === 0 || !hasLoc;
   document.getElementById("btn-rename").disabled = n === 0;
+  document.getElementById("btn-download").disabled = n === 0;
+  document.getElementById("btn-delete").disabled = n === 0;
   document.getElementById("mob-btn-apply").disabled = n === 0 || !hasLoc;
 
   const bar = document.getElementById("sel-bar");
@@ -956,6 +1019,145 @@ async function doRename() {
 }
 
 document.getElementById("btn-rename").addEventListener("click", doRename);
+
+// ── Download ──────────────────────────────────────────────────────────────────
+const DL_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>';
+
+async function downloadFiles() {
+  const files = Array.from(selectedFiles);
+  if (!files.length) return;
+
+  if (files.length === 1) {
+    const a = document.createElement("a");
+    a.href = "/api/download?path=" + encodeURIComponent(files[0]);
+    a.download = files[0].split("/").pop();
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    return;
+  }
+
+  const btn = document.getElementById("btn-download");
+  const mobBtn = document.getElementById("mob-btn-download");
+  const origHtml = btn.innerHTML;
+  btn.disabled = true; mobBtn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Preparando ZIP...';
+  mobBtn.innerHTML = '<div class="spinner"></div> Preparando ZIP...';
+
+  try {
+    const res = await fetch("/api/download_zip", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ files })
+    });
+    if (!res.ok) throw new Error("Error del servidor: " + res.status);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "GeoTagger_" + new Date().toISOString().slice(0, 10) + ".zip";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  } catch(e) {
+    alert("Error al descargar: " + e.message);
+  }
+
+  btn.disabled = false; mobBtn.disabled = false;
+  btn.innerHTML = origHtml;
+  mobBtn.innerHTML = DL_ICON + ' Descargar <span id="mob-dl-count">' + selectedFiles.size + '</span> foto(s)';
+}
+
+document.getElementById("btn-download").addEventListener("click", downloadFiles);
+document.getElementById("mob-btn-download").addEventListener("click", downloadFiles);
+document.getElementById("sbar-download").addEventListener("click", downloadFiles);
+
+// ── Delete ────────────────────────────────────────────────────────────────────
+const MAX_LIST = 12;
+
+function requestDelete() {
+  if (selectedFiles.size === 0) return;
+  const files = Array.from(selectedFiles);
+  const listEl = document.getElementById("del-file-list");
+  const moreEl = document.getElementById("del-more");
+  const shown = files.slice(0, MAX_LIST);
+  listEl.innerHTML = shown.map(p =>
+    '<div>🗑 ' + p.split("/").pop() + '</div>'
+  ).join("");
+  if (files.length > MAX_LIST) {
+    moreEl.style.display = "block";
+    moreEl.textContent = "... y " + (files.length - MAX_LIST) + " archivo(s) más";
+  } else {
+    moreEl.style.display = "none";
+  }
+  document.getElementById("modal-delete").classList.add("on");
+}
+
+async function executeDelete() {
+  const files = Array.from(selectedFiles);
+  document.getElementById("modal-delete").classList.remove("on");
+
+  const delBtn = document.getElementById("btn-delete");
+  const box = document.getElementById("result-box");
+  delBtn.disabled = true;
+  box.style.display = "flex";
+  box.className = "res-box res-progress";
+  box.innerHTML = '<div class="spinner"></div> Eliminando ' + files.length + ' archivo(s)...';
+
+  try {
+    const res = await fetch("/api/delete", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ files })
+    });
+    const data = await res.json();
+    const ok = data.ok.length, err = data.errors.length;
+
+    if (err === 0) {
+      box.className = "res-box res-ok";
+      box.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>' +
+        ok + ' archivo(s) eliminados';
+    } else {
+      box.className = "res-box res-err";
+      box.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>' +
+        ok + ' eliminados, ' + err + ' con error';
+    }
+
+    const deletedSet = new Set(data.ok);
+    currentFiles = currentFiles.filter(f => !deletedSet.has(f.name));
+    selectedFiles.clear();
+    document.querySelectorAll(".fc.sel").forEach(c => c.classList.remove("sel"));
+    deletedSet.forEach(name => {
+      const idx = Array.from(document.querySelectorAll(".fc")).findIndex(c => {
+        const img = c.querySelector("img");
+        return img && img.alt === name;
+      });
+      if (idx >= 0) {
+        const card = document.querySelectorAll(".fc")[idx];
+        card && card.remove();
+      }
+    });
+    updateSelUI();
+  } catch(e) {
+    box.className = "res-box res-err";
+    box.innerHTML = "Error de conexión";
+  }
+  delBtn.disabled = false;
+}
+
+document.getElementById("btn-delete").addEventListener("click", requestDelete);
+document.getElementById("sbar-delete").addEventListener("click", requestDelete);
+document.getElementById("btn-delete-confirm").addEventListener("click", executeDelete);
+document.getElementById("btn-delete-cancel").addEventListener("click", () => {
+  document.getElementById("modal-delete").classList.remove("on");
+});
+document.getElementById("modal-delete").addEventListener("click", e => {
+  if (e.target === document.getElementById("modal-delete")) {
+    document.getElementById("modal-delete").classList.remove("on");
+  }
+});
+
 
 // ── Email report ──────────────────────────────────────────────────────────────
 async function sendReport(action, total, okCount, errCount, errFiles) {
