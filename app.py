@@ -26,6 +26,9 @@ os.makedirs(THUMB_CACHE_DIR, exist_ok=True)
 
 JPG_EXTS = {".jpg", ".jpeg", ".tiff", ".tif"}
 RAW_EXTS = {".cr3", ".jpr", ".cr2", ".nef", ".arw", ".raf", ".dng"}
+# Extensiones permitidas al SUBIR fotos. Incluye las que ya soporta la app
+# mas los formatos habituales de la galeria de iPhone/iPad (HEIC/HEIF, PNG).
+UPLOAD_EXTS = JPG_EXTS | RAW_EXTS | {".png", ".heic", ".heif", ".webp"}
 
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
@@ -583,6 +586,70 @@ def download_zip():
         as_attachment=True,
         download_name="GeoTagger_" + ts + ".zip"
     )
+
+def _safe_upload_name(filename):
+    """Limpia el nombre de un archivo subido.
+    - Elimina cualquier componente de ruta (solo se queda con el nombre base).
+    - Sustituye caracteres invalidos por '-'.
+    - Evita nombres ocultos o reservados (que empiecen por '.' o '@').
+    Devuelve None si el nombre resultante no es utilizable."""
+    if not filename:
+        return None
+    # Descartar cualquier ruta que pudiera venir en el nombre (../, C:\, etc.)
+    name = os.path.basename(filename.replace("\\", "/")).strip()
+    name = re.sub(r'[:\*\?"<>\|]', '-', name)
+    while name.startswith(".") or name.startswith("@"):
+        name = name[1:]
+    name = name.strip()
+    if not name or name in (".", ".."):
+        return None
+    return name
+
+@app.route("/api/upload", methods=["POST"])
+def upload_files():
+    """
+    Guarda las fotos subidas en la carpeta de destino indicada.
+    Escribe el stream recibido TAL CUAL en disco (file.save copia byte a byte);
+    NO recomprime ni re-codifica la imagen, respetando el principio de la app.
+    Si un nombre ya existe, se anade un sufijo numerico para no sobrescribir.
+    """
+    rel = request.form.get("path", "")
+    dest = _resolve_path(rel)
+    if dest is None:
+        return jsonify({"error": "ruta invalida"}), 400
+    if not dest.exists() or not dest.is_dir():
+        return jsonify({"error": "la carpeta de destino no existe"}), 404
+
+    uploaded = request.files.getlist("files")
+    if not uploaded:
+        return jsonify({"error": "sin archivos"}), 400
+
+    ok, errors = [], []
+    for f in uploaded:
+        if not f or not f.filename:
+            continue
+        name = _safe_upload_name(f.filename)
+        if not name:
+            errors.append({"file": f.filename, "error": "nombre invalido"})
+            continue
+        ext = Path(name).suffix.lower()
+        if ext not in UPLOAD_EXTS:
+            errors.append({"file": name, "error": "formato no soportado"})
+            continue
+        stem = Path(name).stem
+        candidate = dest / name
+        counter = 2
+        while candidate.exists():
+            candidate = dest / (stem + "_" + str(counter) + ext)
+            counter += 1
+        try:
+            f.save(str(candidate))
+            _trigger_reindex(candidate)
+            ok.append(candidate.name)
+        except Exception as e:
+            errors.append({"file": name, "error": str(e)})
+
+    return jsonify({"ok": ok, "errors": errors})
 
 if __name__ == "__main__":
     # threaded=True allows Flask to handle multiple thumbnail requests concurrently
