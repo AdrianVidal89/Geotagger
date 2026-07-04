@@ -146,6 +146,51 @@ header .spacer{flex:1}
 }
 .fb-clear:hover{background:#e8f0fe}
 
+/* location multi-select dropdown */
+.fb-loc{cursor:pointer}
+.fb-loc-btn{
+  border:none;background:none;outline:none;cursor:pointer;
+  font-size:.8rem;font-family:inherit;color:var(--text);
+  display:flex;align-items:center;gap:6px;padding:0;max-width:160px;
+}
+.fb-loc-btn .fb-loc-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fb-loc-btn .caret{width:14px;height:14px;fill:var(--text2);flex-shrink:0;transition:transform .15s}
+.fb-loc.open .caret{transform:rotate(180deg)}
+.fb-loc-btn .placeholder{color:var(--text2)}
+.loc-menu{
+  display:none;position:fixed;z-index:330;
+  background:var(--bg);border:1px solid var(--border);
+  border-radius:12px;box-shadow:var(--shadow-md);
+  min-width:210px;max-width:290px;max-height:320px;
+  flex-direction:column;overflow:hidden;
+}
+.loc-menu.on{display:flex}
+.loc-menu-head{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:11px 14px 6px;font-size:.7rem;font-weight:600;
+  text-transform:uppercase;letter-spacing:.05em;color:var(--text2);
+}
+.loc-menu-head button{
+  background:none;border:none;color:var(--primary);cursor:pointer;
+  font-size:.72rem;font-weight:500;text-transform:none;letter-spacing:0;
+}
+.loc-search{
+  margin:0 12px 6px;padding:8px 10px;border:1px solid var(--border);
+  border-radius:8px;font-size:.8rem;outline:none;background:var(--surface);
+  color:var(--text);font-family:inherit;
+}
+.loc-search:focus{border-color:var(--primary);background:var(--bg)}
+.loc-list{overflow-y:auto;padding:4px 0;-webkit-overflow-scrolling:touch}
+.loc-opt{
+  display:flex;align-items:center;gap:10px;
+  padding:9px 14px;font-size:.85rem;cursor:pointer;
+  min-height:42px;transition:background .1s;
+}
+.loc-opt:hover{background:var(--surface)}
+.loc-opt input{width:18px;height:18px;accent-color:var(--primary);flex-shrink:0;margin:0}
+.loc-opt span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.loc-empty{padding:16px 14px;font-size:.8rem;color:var(--text2);text-align:center}
+
 /* ── UPLOAD TOAST (mobile + desktop) ─────────────── */
 .upload-toast{
   position:fixed;bottom:-120px;left:50%;transform:translateX(-50%);
@@ -566,9 +611,12 @@ header .spacer{flex:1}
     </div>
     <!-- FILTER BAR -->
     <div class="filter-bar" id="filter-bar">
-      <div class="fb-field">
-        <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
-        <input type="text" id="filter-loc" placeholder="Ubicación o nombre" autocomplete="off">
+      <div class="fb-field fb-loc" id="filter-loc-field">
+        <svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z" fill="currentColor"/></svg>
+        <button type="button" class="fb-loc-btn" id="filter-loc-btn">
+          <span class="fb-loc-txt placeholder" id="filter-loc-label">Ubicación</span>
+          <svg class="caret" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
+        </button>
       </div>
       <div class="fb-field">
         <label>Desde</label><input type="date" id="filter-from">
@@ -650,6 +698,16 @@ header .spacer{flex:1}
       <div id="rename-box" style="display:none"></div>
     </div>
   </div>
+</div>
+
+<!-- LOCATION MULTI-SELECT MENU (posicionado por JS) -->
+<div class="loc-menu" id="filter-loc-menu">
+  <div class="loc-menu-head">
+    <span>Ubicaciones</span>
+    <button type="button" id="loc-clear-sel">Limpiar</button>
+  </div>
+  <input type="text" class="loc-search" id="loc-search" placeholder="Buscar ubicación..." autocomplete="off">
+  <div class="loc-list" id="loc-list"></div>
 </div>
 
 <!-- UPLOAD PROGRESS TOAST -->
@@ -1064,18 +1122,125 @@ async function loadMissing(path) {
 }
 
 // ── Filter & sort bar ─────────────────────────────────────────────────────────
-const fbLoc  = document.getElementById("filter-loc");
 const fbFrom = document.getElementById("filter-from");
 const fbTo   = document.getElementById("filter-to");
 const fbSort = document.getElementById("filter-sort");
+
+const NO_LOC = " sin";               // clave interna para "sin ubicación"
+let selectedLocations = new Set();   // ubicaciones marcadas en el desplegable
 
 // Normaliza para comparar sin acentos ni mayusculas
 function _norm(s) {
   return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
+// Extrae la ubicación del nombre generado por "Renombrar por EXIF":
+// AAAA-MM-DD_HH-MM-SS_Ubicacion(_n).ext  ->  "Ubicacion"
+function fileLocation(f) {
+  const stem = (f.name || "").replace(/\.[^.]+$/, "");
+  const m = stem.match(/^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_(.+)$/);
+  if (!m) return NO_LOC;
+  let loc = m[1].replace(/_\d+$/, "");         // quita sufijo anticolision _2, _3...
+  loc = loc.replace(/_/g, " ").trim();
+  if (!loc || _norm(loc) === "sin ubicacion") return NO_LOC;
+  return loc;
+}
+function locationLabel(loc) { return loc === NO_LOC ? "Sin ubicación" : loc; }
+
+// Fecha REAL de la foto en ms. Prioriza la fecha embebida en el nombre por
+// "Renombrar por EXIF" (AAAA-MM-DD_HH-MM-SS); si no existe, usa la fecha del
+// archivo (mtime). Así el filtro/orden coincide con la fecha que ve el usuario.
+function fileTime(f) {
+  const m = (f.name || "").match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})_/);
+  if (m) {
+    const t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
+    if (!isNaN(t)) return t;
+  }
+  return (f.mtime || 0) * 1000;
+}
+
+// Ubicaciones presentes en la carpeta actual, ordenadas ("Sin ubicación" al final)
+function availableLocations() {
+  const set = new Set();
+  allFiles.forEach(f => set.add(fileLocation(f)));
+  const out = [...set].filter(l => l !== NO_LOC).sort((a, b) => a.localeCompare(b, "es"));
+  if (set.has(NO_LOC)) out.push(NO_LOC);
+  return out;
+}
+
+function updateLocLabel() {
+  const el = document.getElementById("filter-loc-label");
+  const n = selectedLocations.size;
+  if (n === 0)      { el.textContent = "Ubicación"; el.classList.add("placeholder"); }
+  else if (n === 1) { el.textContent = locationLabel([...selectedLocations][0]); el.classList.remove("placeholder"); }
+  else              { el.textContent = n + " lugares"; el.classList.remove("placeholder"); }
+}
+
+function renderLocMenu(filterText) {
+  const list = document.getElementById("loc-list");
+  const locs = availableLocations();
+  if (locs.length === 0) {
+    list.innerHTML = '<div class="loc-empty">No hay ubicaciones detectadas.<br>Usa Renombrar por EXIF para agrupar las fotos por lugar.</div>';
+    return;
+  }
+  const q = _norm(filterText || "");
+  const shown = q ? locs.filter(l => _norm(locationLabel(l)).includes(q)) : locs;
+  if (shown.length === 0) { list.innerHTML = '<div class="loc-empty">Sin coincidencias</div>'; return; }
+  list.innerHTML = shown.map(l => {
+    const checked = selectedLocations.has(l) ? " checked" : "";
+    const safe = locationLabel(l).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    return '<label class="loc-opt"><input type="checkbox" data-loc="' + encodeURIComponent(l) + '"' + checked + '>' +
+           '<span>' + safe + '</span></label>';
+  }).join("");
+  list.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.addEventListener("change", () => {
+      const loc = decodeURIComponent(cb.dataset.loc);
+      if (cb.checked) selectedLocations.add(loc); else selectedLocations.delete(loc);
+      updateLocLabel();
+      applyFilters();
+    });
+  });
+}
+
+// El menu se posiciona con position:fixed para no ser recortado por el scroll
+// horizontal de la barra de filtros en movil.
+function openLocMenu() {
+  const field = document.getElementById("filter-loc-field");
+  const menu = document.getElementById("filter-loc-menu");
+  const r = field.getBoundingClientRect();
+  menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 298)) + "px";
+  menu.style.top = (r.bottom + 6) + "px";
+  document.getElementById("loc-search").value = "";
+  renderLocMenu("");
+  menu.classList.add("on");
+  field.classList.add("open");
+}
+function closeLocMenu() {
+  document.getElementById("filter-loc-menu").classList.remove("on");
+  document.getElementById("filter-loc-field").classList.remove("open");
+}
+document.getElementById("filter-loc-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const isOpen = document.getElementById("filter-loc-menu").classList.contains("on");
+  if (isOpen) closeLocMenu(); else openLocMenu();
+});
+document.getElementById("loc-search").addEventListener("input", (e) => renderLocMenu(e.target.value));
+document.getElementById("loc-clear-sel").addEventListener("click", () => {
+  selectedLocations.clear();
+  updateLocLabel();
+  renderLocMenu(document.getElementById("loc-search").value);
+  applyFilters();
+});
+document.addEventListener("click", (e) => {
+  const menu = document.getElementById("filter-loc-menu");
+  const field = document.getElementById("filter-loc-field");
+  if (menu.classList.contains("on") && !menu.contains(e.target) && !field.contains(e.target)) closeLocMenu();
+});
+
 function resetFilters() {
-  if (fbLoc) fbLoc.value = "";
+  selectedLocations.clear();
+  updateLocLabel();
+  closeLocMenu();
   if (fbFrom) fbFrom.value = "";
   if (fbTo) fbTo.value = "";
   // Se conserva el criterio de orden elegido por el usuario entre carpetas.
@@ -1083,7 +1248,7 @@ function resetFilters() {
 }
 
 function refreshFilterChip() {
-  const active = (fbLoc && fbLoc.value.trim()) || (fbFrom && fbFrom.value) ||
+  const active = selectedLocations.size > 0 || (fbFrom && fbFrom.value) ||
                  (fbTo && fbTo.value) || (fbSort && fbSort.value !== "new");
   const chip = document.getElementById("chip-filter");
   chip.classList.toggle("on", !!active);
@@ -1094,18 +1259,19 @@ function refreshFilterChip() {
 
 function applyFilters() {
   let list = allFiles.slice();
-  const loc = _norm(fbLoc ? fbLoc.value.trim() : "");
-  if (loc) {
-    list = list.filter(f => _norm(f.name).includes(loc) || _norm(f.folder).includes(loc));
+  if (selectedLocations.size > 0) {
+    list = list.filter(f => selectedLocations.has(fileLocation(f)));
   }
-  const from = fbFrom && fbFrom.value ? Date.parse(fbFrom.value + "T00:00:00") : null;
-  const to   = fbTo && fbTo.value ? Date.parse(fbTo.value + "T23:59:59") : null;
-  if (from !== null) list = list.filter(f => (f.mtime || 0) * 1000 >= from);
-  if (to   !== null) list = list.filter(f => (f.mtime || 0) * 1000 <= to);
+  const fromP = fbFrom && fbFrom.value ? fbFrom.value.split("-").map(Number) : null;
+  const toP   = fbTo && fbTo.value ? fbTo.value.split("-").map(Number) : null;
+  const from = fromP ? new Date(fromP[0], fromP[1] - 1, fromP[2], 0, 0, 0).getTime() : null;
+  const to   = toP ? new Date(toP[0], toP[1] - 1, toP[2], 23, 59, 59, 999).getTime() : null;
+  if (from !== null) list = list.filter(f => fileTime(f) >= from);
+  if (to   !== null) list = list.filter(f => fileTime(f) <= to);
 
   const sort = fbSort ? fbSort.value : "new";
-  if (sort === "new")  list.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
-  else if (sort === "old")  list.sort((a, b) => (a.mtime || 0) - (b.mtime || 0));
+  if (sort === "new")  list.sort((a, b) => fileTime(b) - fileTime(a));
+  else if (sort === "old")  list.sort((a, b) => fileTime(a) - fileTime(b));
   else if (sort === "name") list.sort((a, b) => a.name.localeCompare(b.name, "es"));
 
   currentFiles = list;
@@ -1124,12 +1290,6 @@ function applyFilters() {
   updateSelUI();
 }
 
-// Debounce del filtro de texto; el resto reacciona al instante
-let filterTextTimer = null;
-if (fbLoc) fbLoc.addEventListener("input", () => {
-  clearTimeout(filterTextTimer);
-  filterTextTimer = setTimeout(applyFilters, 220);
-});
 [fbFrom, fbTo, fbSort].forEach(el => { if (el) el.addEventListener("change", applyFilters); });
 
 document.getElementById("filter-clear").addEventListener("click", () => {
@@ -1141,6 +1301,7 @@ document.getElementById("filter-clear").addEventListener("click", () => {
 document.getElementById("chip-filter").addEventListener("click", () => {
   const bar = document.getElementById("filter-bar");
   bar.classList.toggle("on");
+  if (!bar.classList.contains("on")) closeLocMenu();
 });
 
 // ── Location search ───────────────────────────────────────────────────────────
