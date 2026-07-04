@@ -25,10 +25,14 @@ os.makedirs(SETTINGS_DIR, exist_ok=True)
 os.makedirs(THUMB_CACHE_DIR, exist_ok=True)
 
 JPG_EXTS = {".jpg", ".jpeg", ".tiff", ".tif"}
+PNG_EXTS = {".png"}
 RAW_EXTS = {".cr3", ".jpr", ".cr2", ".nef", ".arw", ".raf", ".dng"}
+# Conjunto de todo lo que la app muestra y sabe geoetiquetar. PNG incluido:
+# ExifTool escribe GPS en PNG (chunk eXIf) y Pillow genera su miniatura.
+SUPPORTED_EXTS = JPG_EXTS | PNG_EXTS | RAW_EXTS
 # Extensiones permitidas al SUBIR fotos. Incluye las que ya soporta la app
-# mas los formatos habituales de la galeria de iPhone/iPad (HEIC/HEIF, PNG).
-UPLOAD_EXTS = JPG_EXTS | RAW_EXTS | {".png", ".heic", ".heif", ".webp"}
+# mas los formatos habituales de la galeria de iPhone/iPad (HEIC/HEIF).
+UPLOAD_EXTS = SUPPORTED_EXTS | {".heic", ".heif", ".webp"}
 
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
@@ -237,8 +241,19 @@ def browse():
             continue
         if item.is_dir():
             dirs.append({"name": item.name, "path": str(Path(rel) / item.name)})
-        elif item.suffix.lower() in JPG_EXTS | RAW_EXTS:
-            files.append({"name": item.name, "path": str(Path(rel) / item.name), "ext": item.suffix.lower()})
+        elif item.suffix.lower() in SUPPORTED_EXTS:
+            try:
+                mtime = int(item.stat().st_mtime)
+            except Exception:
+                mtime = 0
+            files.append({
+                "name": item.name,
+                "path": str(Path(rel) / item.name),
+                "ext": item.suffix.lower(),
+                "mtime": mtime,
+            })
+    # Las fotos mas recientes primero (por fecha de modificacion del archivo).
+    files.sort(key=lambda f: f["mtime"], reverse=True)
     return jsonify({"dirs": dirs, "files": files, "current": rel})
 
 @app.route("/api/thumb")
@@ -368,7 +383,7 @@ def write_gps():
             continue
         try:
             ext = path.suffix.lower()
-            if ext in JPG_EXTS or ext in RAW_EXTS:
+            if ext in SUPPORTED_EXTS:
                 _write_gps_exiftool(path, lat, lon, alt)
                 ok.append(path.name)
             else:
@@ -408,15 +423,21 @@ def missing_gps():
             continue
         if any(part.startswith("@") or part.startswith(".") for part in item.relative_to(PHOTOS_BASE).parts):
             continue
-        if item.suffix.lower() not in (JPG_EXTS | RAW_EXTS):
+        if item.suffix.lower() not in SUPPORTED_EXTS:
             continue
         if not _has_gps_fast(item):
+            try:
+                mtime = int(item.stat().st_mtime)
+            except Exception:
+                mtime = 0
             found.append({
                 "name": item.name,
                 "path": str(item.relative_to(PHOTOS_BASE)),
                 "ext": item.suffix.lower(),
-                "folder": str(item.parent.relative_to(PHOTOS_BASE))
+                "folder": str(item.parent.relative_to(PHOTOS_BASE)),
+                "mtime": mtime,
             })
+    found.sort(key=lambda f: f["mtime"], reverse=True)
     return jsonify({"files": found, "count": len(found)})
 
 @app.route("/api/rename", methods=["POST"])

@@ -116,6 +116,35 @@ header .spacer{flex:1}
 .chip-upload{background:var(--primary);border-color:var(--primary);color:#fff;font-weight:500}
 .chip-upload:hover{background:var(--primary-dk);border-color:var(--primary-dk)}
 .chip-upload.busy{opacity:.6;pointer-events:none}
+.chip .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);margin-left:2px}
+
+/* ── FILTER BAR ──────────────────────────────── */
+.filter-bar{
+  display:none;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:10px 16px;border-bottom:1px solid var(--border);
+  background:var(--surface);flex-shrink:0;
+}
+.filter-bar.on{display:flex}
+.fb-field{
+  display:flex;align-items:center;gap:6px;
+  background:var(--bg);border:1px solid var(--border);border-radius:20px;
+  padding:5px 12px;font-size:.8rem;color:var(--text2);min-height:34px;
+}
+.fb-field svg{width:15px;height:15px;fill:var(--text2);flex-shrink:0}
+.fb-field input,.fb-field select{
+  border:none;outline:none;background:none;color:var(--text);
+  font-size:.8rem;font-family:inherit;min-width:0;
+}
+.fb-field input[type=text]{width:150px}
+.fb-field input[type=date]{width:130px;color:var(--text)}
+.fb-field label{font-size:.72rem;color:var(--text2)}
+.fb-sort{cursor:pointer}
+.fb-count{font-size:.78rem;color:var(--text2);margin-left:auto;white-space:nowrap}
+.fb-clear{
+  background:none;border:none;color:var(--primary);cursor:pointer;
+  font-size:.8rem;padding:6px 8px;border-radius:16px;white-space:nowrap;
+}
+.fb-clear:hover{background:#e8f0fe}
 
 /* ── UPLOAD TOAST (mobile + desktop) ─────────────── */
 .upload-toast{
@@ -465,6 +494,12 @@ header .spacer{flex:1}
   .sel-bar{left:12px;right:12px;transform:none;border-radius:12px}
   .sel-bar.up{bottom:12px}
   .files-grid{grid-template-columns:repeat(3,1fr);gap:3px}
+  /* Evita amontonamiento: los controles superiores scrollean en horizontal */
+  .top-controls{overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .top-controls::-webkit-scrollbar{display:none}
+  .filter-bar{overflow-x:auto;flex-wrap:nowrap}
+  .fb-field input[type=text]{width:120px}
+  .fb-count{display:none}
 }
 @media(min-width:769px){
   .gps-sheet{display:none!important}
@@ -516,6 +551,10 @@ header .spacer{flex:1}
           <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" fill="currentColor"/></svg>
           Subir
         </div>
+        <div class="chip" id="chip-filter" title="Filtrar y ordenar">
+          <svg viewBox="0 0 24 24"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z" fill="currentColor"/></svg>
+          Filtros
+        </div>
         <div class="chip" id="chip-missing" title="Mostrar solo fotos sin GPS">
           <svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z" fill="currentColor"/></svg>
           Sin GPS
@@ -524,6 +563,29 @@ header .spacer{flex:1}
       </div>
       <!-- accept=image/* + sin capture => en iPhone/iPad abre la Fototeca (galeria) -->
       <input type="file" id="upload-input" accept="image/*,.heic,.heif,.cr3,.cr2,.nef,.arw,.raf,.dng,.jpr" multiple style="display:none">
+    </div>
+    <!-- FILTER BAR -->
+    <div class="filter-bar" id="filter-bar">
+      <div class="fb-field">
+        <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+        <input type="text" id="filter-loc" placeholder="Ubicación o nombre" autocomplete="off">
+      </div>
+      <div class="fb-field">
+        <label>Desde</label><input type="date" id="filter-from">
+      </div>
+      <div class="fb-field">
+        <label>Hasta</label><input type="date" id="filter-to">
+      </div>
+      <div class="fb-field fb-sort">
+        <svg viewBox="0 0 24 24"><path d="M3 18h6v-2H3v2zM3 6v2h18V6H3zm0 7h12v-2H3v2z" fill="currentColor"/></svg>
+        <select id="filter-sort">
+          <option value="new">Más recientes</option>
+          <option value="old">Más antiguas</option>
+          <option value="name">Nombre A-Z</option>
+        </select>
+      </div>
+      <button class="fb-clear" id="filter-clear">Limpiar</button>
+      <span class="fb-count" id="filter-count"></span>
     </div>
     <div class="content" id="content">
       <div class="empty-state">
@@ -692,7 +754,8 @@ header .spacer{flex:1}
 let currentPath = "";
 let selectedFiles = new Set();
 let currentLat = null, currentLon = null, currentLocationName = "";
-let currentFiles = [];
+let allFiles = [];      // todo lo que devuelve el servidor para la carpeta actual
+let currentFiles = [];  // lo que se muestra tras aplicar filtros/orden
 let missingMode = false;
 let searchTimer = null;
 const RAW_EXTS = [".cr3",".cr2",".nef",".arw",".raf",".dng",".jpr"];
@@ -767,9 +830,11 @@ const thumbObserver = new IntersectionObserver((entries) => {
 async function navigate(path) {
   currentPath = path;
   selectedFiles.clear();
+  allFiles = [];
   currentFiles = [];
   missingMode = false;
   document.getElementById("chip-missing").classList.remove("on");
+  resetFilters();
   updateSelUI();
   const c = document.getElementById("content");
   c.innerHTML = '<div class="empty-state"><div class="spinner"></div><p style="margin-top:12px">Cargando...</p></div>';
@@ -778,7 +843,8 @@ async function navigate(path) {
     const data = await res.json();
     renderBreadcrumb(path);
     renderSidebar(data.dirs, path);
-    renderFiles(data.files);
+    allFiles = data.files;
+    applyFilters();
   } catch(e) {
     c.innerHTML = '<div class="empty-state"><p>Error cargando carpeta</p></div>';
   }
@@ -832,7 +898,7 @@ function makeImgIcon() {
 
 function makeCard(f, i) {
   const card = document.createElement("div");
-  card.className = "fc";
+  card.className = "fc" + (selectedFiles.has(f.path) ? " sel" : "");
   card.dataset.index = i;
   card.dataset.src = "/api/thumb?path=" + encodeURIComponent(f.path);
   const isRaw = RAW_EXTS.includes(f.ext);
@@ -985,16 +1051,97 @@ async function loadMissing(path) {
   try {
     const res = await fetch("/api/missing_gps?path=" + encodeURIComponent(path));
     const data = await res.json();
-    currentFiles = data.files;
+    allFiles = data.files;
     if (data.files.length === 0) {
+      currentFiles = [];
       c.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24" fill="currentColor" style="width:48px;height:48px;fill:var(--green);opacity:.6"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg><p>¡Todas las fotos tienen GPS!</p></div>';
       return;
     }
-    renderFiles(data.files);
+    applyFilters();
   } catch(e) {
     c.innerHTML = '<div class="empty-state"><p>Error al buscar</p></div>';
   }
 }
+
+// ── Filter & sort bar ─────────────────────────────────────────────────────────
+const fbLoc  = document.getElementById("filter-loc");
+const fbFrom = document.getElementById("filter-from");
+const fbTo   = document.getElementById("filter-to");
+const fbSort = document.getElementById("filter-sort");
+
+// Normaliza para comparar sin acentos ni mayusculas
+function _norm(s) {
+  return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function resetFilters() {
+  if (fbLoc) fbLoc.value = "";
+  if (fbFrom) fbFrom.value = "";
+  if (fbTo) fbTo.value = "";
+  // Se conserva el criterio de orden elegido por el usuario entre carpetas.
+  refreshFilterChip();
+}
+
+function refreshFilterChip() {
+  const active = (fbLoc && fbLoc.value.trim()) || (fbFrom && fbFrom.value) ||
+                 (fbTo && fbTo.value) || (fbSort && fbSort.value !== "new");
+  const chip = document.getElementById("chip-filter");
+  chip.classList.toggle("on", !!active);
+  let dot = chip.querySelector(".dot");
+  if (active && !dot) { dot = document.createElement("span"); dot.className = "dot"; chip.appendChild(dot); }
+  if (!active && dot) dot.remove();
+}
+
+function applyFilters() {
+  let list = allFiles.slice();
+  const loc = _norm(fbLoc ? fbLoc.value.trim() : "");
+  if (loc) {
+    list = list.filter(f => _norm(f.name).includes(loc) || _norm(f.folder).includes(loc));
+  }
+  const from = fbFrom && fbFrom.value ? Date.parse(fbFrom.value + "T00:00:00") : null;
+  const to   = fbTo && fbTo.value ? Date.parse(fbTo.value + "T23:59:59") : null;
+  if (from !== null) list = list.filter(f => (f.mtime || 0) * 1000 >= from);
+  if (to   !== null) list = list.filter(f => (f.mtime || 0) * 1000 <= to);
+
+  const sort = fbSort ? fbSort.value : "new";
+  if (sort === "new")  list.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
+  else if (sort === "old")  list.sort((a, b) => (a.mtime || 0) - (b.mtime || 0));
+  else if (sort === "name") list.sort((a, b) => a.name.localeCompare(b.name, "es"));
+
+  currentFiles = list;
+  const cnt = document.getElementById("filter-count");
+  if (cnt) cnt.textContent = list.length + (list.length === 1 ? " foto" : " fotos");
+  refreshFilterChip();
+
+  if (list.length === 0 && allFiles.length > 0) {
+    document.getElementById("content").innerHTML =
+      '<div class="empty-state"><svg viewBox="0 0 24 24" style="fill:var(--text2)"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/></svg>' +
+      '<p>Ningún resultado con estos filtros</p><small>Ajusta la búsqueda o pulsa Limpiar</small></div>';
+    updateSelUI();
+    return;
+  }
+  renderFiles(list);
+  updateSelUI();
+}
+
+// Debounce del filtro de texto; el resto reacciona al instante
+let filterTextTimer = null;
+if (fbLoc) fbLoc.addEventListener("input", () => {
+  clearTimeout(filterTextTimer);
+  filterTextTimer = setTimeout(applyFilters, 220);
+});
+[fbFrom, fbTo, fbSort].forEach(el => { if (el) el.addEventListener("change", applyFilters); });
+
+document.getElementById("filter-clear").addEventListener("click", () => {
+  if (fbSort) fbSort.value = "new";
+  resetFilters();
+  applyFilters();
+});
+
+document.getElementById("chip-filter").addEventListener("click", () => {
+  const bar = document.getElementById("filter-bar");
+  bar.classList.toggle("on");
+});
 
 // ── Location search ───────────────────────────────────────────────────────────
 function setupSearch(inputId, sugsId, coordsCardId, latId, lonId, applyBtnId) {
