@@ -81,6 +81,14 @@ header .spacer{flex:1}
 .tree-item.active{background:#e8f0fe;color:var(--primary);font-weight:500}
 .tree-item svg{width:18px;height:18px;flex-shrink:0;fill:var(--text2)}
 .tree-item.active svg{fill:var(--primary)}
+/* entrada "subir a la carpeta superior" del arbol */
+.tree-up{
+  color:var(--text2);font-weight:500;
+  border-bottom:1px solid var(--border);margin-bottom:4px;border-radius:0;
+}
+
+/* boton "atras" junto al breadcrumb */
+.bc-back{width:36px;height:36px;margin:0 -4px 0 -6px;flex-shrink:0}
 
 /* ── CENTER ──────────────────────────────────── */
 .center{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
@@ -648,6 +656,9 @@ header .spacer{flex:1}
   <!-- CENTER -->
   <div class="center">
     <div class="top-bar">
+      <button class="hdr-btn bc-back" id="btn-back" title="Carpeta superior" style="display:none">
+        <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" fill="currentColor"/></svg>
+      </button>
       <div class="breadcrumb" id="breadcrumb"></div>
       <div class="top-controls">
         <div class="chip chip-upload" id="chip-upload" title="Subir fotos a esta carpeta">
@@ -972,7 +983,45 @@ const thumbObserver = new IntersectionObserver((entries) => {
 }, { rootMargin: "500px 0px" });
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-async function navigate(path) {
+// Cada carpeta visitada (y el visor abierto) se apunta en el historial del
+// navegador para que el gesto/botón "atrás" del móvil navegue DENTRO de la
+// app (subir de carpeta, cerrar el visor) en vez de salir de ella.
+function hashForPath(path) { return path ? "#/" + encodeURIComponent(path) : "#/"; }
+function pathFromHash() {
+  const h = location.hash;
+  if (!h || h === "#" || h === "#/") return "";
+  try { return decodeURIComponent(h.replace(/^#\//, "")); } catch (e) { return ""; }
+}
+function parentOf(path) {
+  return path.split("/").filter(Boolean).slice(0, -1).join("/");
+}
+
+window.addEventListener("popstate", (e) => {
+  const st = e.state || { view: "folder", path: pathFromHash() };
+  // Si el visor está abierto, "atrás" lo cierra (sin recargar la carpeta)
+  if (document.getElementById("viewer").classList.contains("on") && st.view !== "viewer") {
+    hideViewer();
+    if (st.path !== currentPath) navigate(st.path, { fromHistory: true });
+    return;
+  }
+  if (st.view === "folder") {
+    closeGpsSheet();
+    closeSidebar();
+    if (st.path !== currentPath) navigate(st.path, { fromHistory: true });
+  }
+});
+
+async function navigate(path, opts) {
+  opts = opts || {};
+  if (!opts.fromHistory) {
+    const entry = { view: "folder", path: path };
+    // Recargas de la misma carpeta (subir/renombrar) no ensucian el historial
+    if (opts.replace || path === currentPath) {
+      history.replaceState(entry, "", hashForPath(path));
+    } else {
+      history.pushState(entry, "", hashForPath(path));
+    }
+  }
   currentPath = path;
   selectedFiles.clear();
   allFiles = [];
@@ -998,6 +1047,11 @@ async function navigate(path) {
 
 function renderBreadcrumb(path) {
   const parts = path ? path.split("/").filter(Boolean) : [];
+  // Botón "atrás": sube a la carpeta superior (clave en móvil, donde el
+  // breadcrumb puede quedar recortado)
+  const back = document.getElementById("btn-back");
+  back.style.display = parts.length ? "flex" : "none";
+  back.dataset.path = parts.slice(0, -1).join("/");
   let html = '<span class="bc-item' + (parts.length === 0 ? ' cur' : '') + '" data-path="">Fotos</span>';
   let acc = "";
   parts.forEach((p, i) => {
@@ -1015,19 +1069,33 @@ function renderBreadcrumb(path) {
 
 function renderSidebar(dirs, activePath) {
   const tree = document.getElementById("tree");
-  if (dirs.length === 0) {
-    tree.innerHTML = '<div style="color:var(--text2);font-size:.8rem;padding:12px 16px">Sin subcarpetas</div>';
-    return;
+  let html = "";
+  // Fuera de la raíz, primera entrada: volver a la carpeta superior
+  if (activePath) {
+    const parent = parentOf(activePath);
+    const parentName = parent ? parent.split("/").pop() : "Fotos";
+    html += '<div class="tree-item tree-up" data-path="' + parent + '">' +
+      '<svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>' +
+      parentName + '</div>';
   }
-  tree.innerHTML = dirs.map(d =>
-    '<div class="tree-item' + (d.path === activePath ? ' active' : '') + '" data-path="' + d.path + '">' +
-    '<svg viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>' +
-    d.name + '</div>'
-  ).join("");
+  if (dirs.length === 0) {
+    html += '<div style="color:var(--text2);font-size:.8rem;padding:12px 16px">Sin subcarpetas</div>';
+  } else {
+    html += dirs.map(d =>
+      '<div class="tree-item' + (d.path === activePath ? ' active' : '') + '" data-path="' + d.path + '">' +
+      '<svg viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>' +
+      d.name + '</div>'
+    ).join("");
+  }
+  tree.innerHTML = html;
   tree.querySelectorAll(".tree-item").forEach(el => {
     el.addEventListener("click", () => navigate(el.dataset.path));
   });
 }
+
+document.getElementById("btn-back").addEventListener("click", () => {
+  navigate(document.getElementById("btn-back").dataset.path || "");
+});
 
 function makeRawIcon() {
   return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">' +
@@ -1732,15 +1800,25 @@ function openViewer(i) {
   viewerIndex = i;
   viewerEl.classList.add("on");
   document.addEventListener("keydown", viewerKeys);
+  // Entrada en el historial: el gesto "atrás" del móvil cierra el visor
+  history.pushState({ view: "viewer", path: currentPath }, "", hashForPath(currentPath));
   showViewerPhoto();
 }
 
-function closeViewer() {
+// Cierre "real" del visor (solo DOM); lo invoca el manejador de popstate
+function hideViewer() {
   viewerEl.classList.remove("on");
   viewerIndex = -1;
   vwImg.removeAttribute("src");
   vwImg.classList.remove("ready");
   document.removeEventListener("keydown", viewerKeys);
+}
+
+// Cierre desde la interfaz (X, Esc, fondo, swipe): retrocede en el historial
+// para que el estado del navegador y el visor no se desincronicen
+function closeViewer() {
+  if (history.state && history.state.view === "viewer") history.back();
+  else hideViewer();
 }
 
 function viewerKeys(e) {
@@ -2024,7 +2102,9 @@ function uploadPhotos(files) {
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
-navigate("");
+// Restaura la carpeta indicada en la URL (permite recargar o compartir enlace
+// sin perder el sitio); con URL limpia arranca en la raíz.
+navigate(pathFromHash(), { replace: true });
 </script>
 </body>
 </html>
