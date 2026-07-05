@@ -11,7 +11,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from flask import Flask, jsonify, request, render_template, send_file
-from PIL import Image
+from PIL import Image, ImageOps
 import requests
 from datetime import datetime
 
@@ -27,12 +27,29 @@ os.makedirs(THUMB_CACHE_DIR, exist_ok=True)
 JPG_EXTS = {".jpg", ".jpeg", ".tiff", ".tif"}
 PNG_EXTS = {".png"}
 RAW_EXTS = {".cr3", ".jpr", ".cr2", ".nef", ".arw", ".raf", ".dng"}
+WEBP_EXTS = {".webp"}
+HEIC_EXTS = {".heic", ".heif"}
+
+# pillow-heif registra un DECODIFICADOR HEIC/HEIF en Pillow (fotos de
+# iPhone/iPad). Solo afecta a la LECTURA para miniaturas y previews; la
+# escritura de GPS sigue siendo exclusiva de ExifTool, que soporta HEIC.
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+    HEIF_SUPPORT = True
+except Exception:
+    HEIF_SUPPORT = False
+
 # Conjunto de todo lo que la app muestra y sabe geoetiquetar. PNG incluido:
 # ExifTool escribe GPS en PNG (chunk eXIf) y Pillow genera su miniatura.
-SUPPORTED_EXTS = JPG_EXTS | PNG_EXTS | RAW_EXTS
+# WebP tambien: ExifTool escribe EXIF/GPS en WebP extendido. HEIC solo se
+# muestra si pillow-heif esta instalado (sin el no habria miniatura/preview).
+SUPPORTED_EXTS = JPG_EXTS | PNG_EXTS | RAW_EXTS | WEBP_EXTS
+if HEIF_SUPPORT:
+    SUPPORTED_EXTS = SUPPORTED_EXTS | HEIC_EXTS
 # Extensiones permitidas al SUBIR fotos. Incluye las que ya soporta la app
 # mas los formatos habituales de la galeria de iPhone/iPad (HEIC/HEIF).
-UPLOAD_EXTS = SUPPORTED_EXTS | {".heic", ".heif", ".webp"}
+UPLOAD_EXTS = SUPPORTED_EXTS | HEIC_EXTS | WEBP_EXTS
 
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
@@ -214,7 +231,7 @@ def _thumb_cache_path(abs_path, fmt="JPEG"):
     except Exception:
         mtime = "0"
     key = hashlib.md5((str(abs_path) + mtime + fmt).encode()).hexdigest()
-    ext = ".webp" if fmt == "WEBP" else ".jpg"
+    ext = ".webp" if "WEBP" in fmt else ".jpg"
     return Path(THUMB_CACHE_DIR) / (key + ext)
 
 @app.route("/")
@@ -320,6 +337,9 @@ def thumb():
         if fmt == "WEBP":
             img.save(buf, format="WEBP", quality=82, method=4)
         else:
+            # JPEG no admite canal alfa (PNG/WebP RGBA) ni paleta
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
             img.save(buf, format="JPEG", quality=82, optimize=True)
         data = buf.getvalue()
         cache_file.write_bytes(data)
@@ -328,6 +348,108 @@ def thumb():
         resp.headers["ETag"] = cache_file.stem
         resp.headers["Vary"] = "Accept"
         return resp
+    except Exception as e:
+        return str(e), 404
+
+# Mapa de valores EXIF Orientation -> operacion de transposicion de Pillow.
+# Se usa para orientar los previews extraidos de RAW, que no llevan EXIF propio.
+ORIENTATION_OPS = {
+    2: Image.FLIP_LEFT_RIGHT,
+    3: Image.ROTATE_180,
+    4: Image.FLIP_TOP_BOTTOM,
+    5: Image.TRANSPOSE,
+    6: Image.ROTATE_270,
+    7: Image.TRANSVERSE,
+    8: Image.ROTATE_90,
+}
+
+PREVIEW_MAX = 2048
+
+def _extract_raw_preview(abs_path):
+    """Extrae la vista previa JPEG embebida en un RAW (solo LECTURA).
+    Prueba del preview mas grande al mas pequeno."""
+    for tag in ("-JpgFromRaw", "-PreviewImage", "-ThumbnailImage"):
+        try:
+            result = subprocess.run(
+                ["exiftool", "-b", tag, str(abs_path)],
+                capture_output=True, timeout=20
+            )
+            if result.returncode == 0 and result.stdout:
+                return result.stdout
+        except Exception:
+            pass
+    return None
+
+def _read_orientation(abs_path):
+    """Lee el tag EXIF Orientation del archivo original (sin modificarlo)."""
+    try:
+        result = subprocess.run(
+            ["exiftool", "-n", "-Orientation", "-s", "-s", "-s", str(abs_path)],
+            capture_output=True, text=True, timeout=10
+        )
+        return int(result.stdout.strip())
+    except Exception:
+        return 1
+
+def _cached_image_response(cache_file, mime):
+    resp = send_file(str(cache_file), mimetype=mime)
+    resp.headers["Cache-Control"] = "public, max-age=2592000, immutable"
+    resp.headers["ETag"] = cache_file.stem
+    resp.headers["Vary"] = "Accept"
+    return resp
+
+@app.route("/api/preview")
+def preview():
+    """
+    Genera EN MEMORIA una vista previa grande (max 2048px) para el visor de
+    fotos. Convierte cualquier formato soportado (RAW, TIFF, HEIC, WebP...)
+    a JPEG/WebP para que el navegador pueda mostrarlo.
+    Usa la misma cache en disco que las miniaturas (clave por ruta + mtime).
+    NUNCA escribe sobre el archivo original.
+    """
+    rel = request.args.get("path", "")
+    abs_path = _resolve_path(rel)
+    if abs_path is None or not abs_path.exists():
+        return "", 404
+
+    accept = request.headers.get("Accept", "")
+    fmt = "WEBP" if "image/webp" in accept else "JPEG"
+    mime = "image/webp" if fmt == "WEBP" else "image/jpeg"
+
+    cache_file = _thumb_cache_path(abs_path, "PREVIEW-" + fmt)
+    if cache_file.exists():
+        if request.headers.get("If-None-Match") == cache_file.stem:
+            return "", 304
+        return _cached_image_response(cache_file, mime)
+
+    try:
+        ext = abs_path.suffix.lower()
+        img = None
+        if ext in RAW_EXTS:
+            data = _extract_raw_preview(abs_path)
+            if data:
+                img = Image.open(io.BytesIO(data))
+                # Los previews embebidos no llevan EXIF: aplicar la
+                # orientacion declarada en el RAW original.
+                op = ORIENTATION_OPS.get(_read_orientation(abs_path))
+                if op is not None:
+                    img = img.transpose(op)
+        if img is None:
+            img = Image.open(str(abs_path))
+            try:
+                img = ImageOps.exif_transpose(img)
+            except Exception:
+                pass
+        img.thumbnail((PREVIEW_MAX, PREVIEW_MAX))
+        if fmt == "JPEG" and img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        if fmt == "WEBP":
+            img.save(buf, format="WEBP", quality=88, method=4)
+        else:
+            img.save(buf, format="JPEG", quality=88, optimize=True)
+        cache_file.write_bytes(buf.getvalue())
+        return _cached_image_response(cache_file, mime)
     except Exception as e:
         return str(e), 404
 
