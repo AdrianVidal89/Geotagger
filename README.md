@@ -38,7 +38,35 @@ carpeta.
 |---|---|
 | `SMTP_USER` / `SMTP_PASS` | Cuenta desde la que se envían los reportes por email (el destinatario se configura en Ajustes). |
 
+## Construir y arrancar
+
+El repositorio incluye `Dockerfile` y `docker-compose.yml` listos para el NAS:
+
+```sh
+docker compose up -d --build
+```
+
+O a mano, si prefieres no usar compose:
+
+```sh
+docker build -t geotagger .
+docker run -d --name geotagger --restart unless-stopped \
+  -p 5000:5000 \
+  -v /share:/share \
+  -v geotagger_geotagger_settings:/app/data \
+  -e NAS_ROOT=/share \
+  geotagger
+```
+
+Los volumenes no se pueden cambiar en un contenedor ya creado: para anadir o
+cambiar un montaje hay que recrearlo (`docker rm -f geotagger` y volver a
+lanzarlo). Los datos y las fotos viven en el NAS, no en el contenedor, asi que
+recrearlo no pierde nada — pero conviene mantener el mismo montaje de
+`/app/data` para conservar los ajustes y la cache de miniaturas.
+
 ## Requisitos
 
-- `exiftool` instalado en la imagen (lectura y escritura de metadatos).
+- `exiftool` instalado en la imagen (lo instala el `Dockerfile`).
 - Dependencias de Python en `requirements.txt`.
+- El montaje del NAS debe permitir escritura: si es de solo lectura, la
+  galeria se ve pero fallan GPS, fecha y renombrado.
