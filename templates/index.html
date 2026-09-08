@@ -71,6 +71,27 @@ header .spacer{flex:1}
   padding:12px 16px 6px;font-size:.7rem;font-weight:600;
   text-transform:uppercase;letter-spacing:.06em;color:var(--text2);
 }
+/* carpeta de trabajo (raíz de la galería) */
+.work-root{
+  display:flex;flex-direction:column;gap:7px;
+  padding:10px 14px 12px;border-bottom:1px solid var(--border);
+}
+.wr-lbl{
+  font-size:.6rem;font-weight:600;text-transform:uppercase;
+  letter-spacing:.06em;color:var(--text2);white-space:nowrap;
+}
+.wr-row{display:flex;align-items:center;gap:8px}
+.wr-row>svg{width:18px;height:18px;fill:var(--primary);flex-shrink:0}
+.wr-name{
+  flex:1;min-width:0;font-size:.85rem;font-weight:500;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.wr-change{
+  border:1px solid var(--border);background:var(--bg);color:var(--primary);
+  border-radius:16px;padding:5px 11px;font-size:.72rem;
+  cursor:pointer;flex-shrink:0;transition:all .15s;
+}
+.wr-change:hover{background:#e8f0fe;border-color:var(--primary)}
 .tree-item{
   display:flex;align-items:center;gap:10px;
   padding:9px 16px;cursor:pointer;font-size:.875rem;color:var(--text);
@@ -504,6 +525,34 @@ header .spacer{flex:1}
 }
 .del-file-list div:last-child{border-bottom:none}
 .del-more{font-size:.75rem;color:var(--text2);padding:4px 0 0;text-align:right}
+/* work-root picker modal */
+#modal-root .modal{max-width:480px}
+.root-help{font-size:.8rem;color:var(--text2);line-height:1.45;margin-bottom:14px}
+.root-crumb{
+  display:flex;align-items:center;gap:5px;flex-wrap:wrap;
+  font-size:.78rem;margin-bottom:10px;
+}
+.rc-item{color:var(--primary);cursor:pointer}
+.rc-item:hover{text-decoration:underline}
+.rc-item.cur{color:var(--text);font-weight:500;cursor:default;text-decoration:none}
+.rc-sep{color:var(--border)}
+.root-list{
+  border:1px solid var(--border);border-radius:var(--radius);
+  max-height:260px;overflow-y:auto;-webkit-overflow-scrolling:touch;
+}
+.root-item{
+  display:flex;align-items:center;gap:10px;padding:11px 12px;
+  border-bottom:1px solid var(--border);cursor:pointer;font-size:.85rem;
+}
+.root-item:last-child{border-bottom:none}
+.root-item:hover{background:var(--surface)}
+.root-item svg{width:18px;height:18px;fill:var(--text2);flex-shrink:0}
+.root-item.up svg{fill:var(--primary)}
+.ri-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ri-count{font-size:.72rem;color:var(--text2);flex-shrink:0}
+.root-empty{padding:20px 14px;text-align:center;font-size:.8rem;color:var(--text2)}
+.root-sel{font-size:.78rem;color:var(--text2);margin-top:12px;line-height:1.45}
+.root-sel strong{color:var(--text);font-weight:500}
 /* date modal specifics */
 /* Se puede abrir desde el visor de fotos, que va en z-index 400 */
 #modal-date{z-index:500}
@@ -690,6 +739,14 @@ header .spacer{flex:1}
 
   <!-- SIDEBAR -->
   <div class="sidebar" id="sidebar">
+    <div class="work-root">
+      <span class="wr-lbl">Carpeta de trabajo</span>
+      <div class="wr-row">
+        <svg viewBox="0 0 24 24"><path d="M4 20h16v-4H4v4zm2-3h2v2H6v-2zM4 4v4h16V4H4zm4 3H6V5h2v2zm-4 7h16v-4H4v4zm2-3h2v2H6v-2z"/></svg>
+        <span class="wr-name" id="work-root-name">—</span>
+        <button class="wr-change" id="btn-work-root">Cambiar</button>
+      </div>
+    </div>
     <div class="sidebar-lbl">Carpetas</div>
     <div id="tree"></div>
   </div>
@@ -952,6 +1009,25 @@ header .spacer{flex:1}
   </div>
 </div>
 
+<!-- WORK ROOT PICKER MODAL -->
+<div class="modal-overlay" id="modal-root">
+  <div class="modal">
+    <div class="modal-title">Carpeta de trabajo</div>
+    <p class="root-help">
+      Navega por el NAS y elige desde qué carpeta quieres trabajar. La galería
+      mostrará esa carpeta y todo lo que cuelgue de ella.
+    </p>
+    <div class="root-crumb" id="root-crumb"></div>
+    <div class="root-list" id="root-list"></div>
+    <div class="root-sel" id="root-sel"></div>
+    <div id="root-box" class="res-box" style="display:none"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="btn-root-cancel">Cancelar</button>
+      <button class="btn btn-primary" id="btn-root-apply">Usar esta carpeta</button>
+    </div>
+  </div>
+</div>
+
 <!-- DATE EDIT MODAL -->
 <div class="modal-overlay" id="modal-date">
   <div class="modal">
@@ -1166,7 +1242,7 @@ function renderBreadcrumb(path) {
   const back = document.getElementById("btn-back");
   back.style.display = parts.length ? "flex" : "none";
   back.dataset.path = parts.slice(0, -1).join("/");
-  let html = '<span class="bc-item' + (parts.length === 0 ? ' cur' : '') + '" data-path="">Fotos</span>';
+  let html = '<span class="bc-item' + (parts.length === 0 ? ' cur' : '') + '" data-path="">' + workRootName + '</span>';
   let acc = "";
   parts.forEach((p, i) => {
     acc += (acc ? "/" : "") + p;
@@ -1187,7 +1263,7 @@ function renderSidebar(dirs, activePath) {
   // Fuera de la raíz, primera entrada: volver a la carpeta superior
   if (activePath) {
     const parent = parentOf(activePath);
-    const parentName = parent ? parent.split("/").pop() : "Fotos";
+    const parentName = parent ? parent.split("/").pop() : workRootName;
     html += '<div class="tree-item tree-up" data-path="' + parent + '">' +
       '<svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>' +
       parentName + '</div>';
@@ -1900,6 +1976,150 @@ document.getElementById("modal-delete").addEventListener("click", e => {
 });
 
 
+// ── Carpeta de trabajo (raíz de la galería) ───────────────────────────────────
+// El contenedor ve una raíz del NAS (NAS_ROOT); dentro de ella el usuario elige
+// desde qué carpeta trabajar, y la galería se reinicia ahí.
+const RI_FOLDER = '<svg viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>';
+let rootBrowsePath = "";   // carpeta que se está mirando en el selector
+let workRootName = "Fotos";   // nombre de la carpeta de trabajo (raíz de la galería)
+const NAS_LABEL = "NAS";      // etiqueta de la raíz del NAS en el selector
+
+// Refleja la carpeta de trabajo en el panel lateral y en las migas de pan
+function showWorkRoot(d) {
+  workRootName = d.name || NAS_LABEL;
+  const el = document.getElementById("work-root-name");
+  el.textContent = workRootName;
+  el.title = d.abs || d.path || "";
+}
+
+async function loadWorkRoot() {
+  try {
+    const res = await fetch("/api/work_root");
+    showWorkRoot(await res.json());
+    renderBreadcrumb(currentPath);
+  } catch(e) {}
+}
+
+function renderRootCrumb(path) {
+  const parts = path ? path.split("/").filter(Boolean) : [];
+  let html = '<span class="rc-item' + (parts.length ? '' : ' cur') + '" data-path="">' + NAS_LABEL + '</span>';
+  let acc = "";
+  parts.forEach((seg, i) => {
+    acc += (acc ? "/" : "") + seg;
+    html += '<span class="rc-sep">›</span>';
+    html += '<span class="rc-item' + (i === parts.length - 1 ? ' cur' : '') + '" data-path="' + acc + '">' + seg + '</span>';
+  });
+  const crumb = document.getElementById("root-crumb");
+  crumb.innerHTML = html;
+  crumb.querySelectorAll(".rc-item:not(.cur)").forEach(el => {
+    el.addEventListener("click", () => browseNas(el.dataset.path));
+  });
+}
+
+function photoCountLabel(n) {
+  if (!n) return "";
+  return (n >= 99 ? "99+" : n) + " foto" + (n === 1 ? "" : "s");
+}
+
+async function browseNas(path) {
+  const list = document.getElementById("root-list");
+  list.innerHTML = '<div class="root-empty"><div class="spinner" style="margin:0 auto"></div></div>';
+  document.getElementById("root-box").style.display = "none";
+  let d;
+  try {
+    const res = await fetch("/api/nas_browse?path=" + encodeURIComponent(path || ""));
+    d = await res.json();
+    if (d.error) throw new Error(d.error);
+  } catch(e) {
+    list.innerHTML = '<div class="root-empty">No se pudo abrir la carpeta: ' + e.message + '</div>';
+    return;
+  }
+
+  rootBrowsePath = d.current || "";
+  renderRootCrumb(rootBrowsePath);
+
+  let html = "";
+  if (d.parent !== null && d.parent !== undefined) {
+    html += '<div class="root-item up" data-path="' + d.parent + '">' +
+      '<svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>' +
+      '<span class="ri-name">Subir un nivel</span></div>';
+  }
+  html += d.dirs.map(dir =>
+    '<div class="root-item" data-path="' + dir.path + '">' + RI_FOLDER +
+    '<span class="ri-name">' + dir.name + '</span>' +
+    '<span class="ri-count">' + photoCountLabel(dir.photos) + '</span></div>'
+  ).join("");
+  if (!d.dirs.length && (d.parent === null || d.parent === undefined)) {
+    html += '<div class="root-empty">Esta carpeta no tiene subcarpetas</div>';
+  } else if (!d.dirs.length) {
+    html += '<div class="root-empty">Sin subcarpetas aquí</div>';
+  }
+  list.innerHTML = html;
+  list.querySelectorAll(".root-item").forEach(el => {
+    el.addEventListener("click", () => browseNas(el.dataset.path));
+  });
+
+  const here = rootBrowsePath || "la raíz del NAS (" + d.nas_root + ")";
+  const count = d.photos ? " (" + photoCountLabel(d.photos) + " sueltas aquí)" : "";
+  document.getElementById("root-sel").innerHTML =
+    "Se usará <strong>" + here + "</strong>" + count +
+    (d.work_root === rootBrowsePath ? " — es la carpeta de trabajo actual" : "");
+}
+
+async function applyWorkRoot() {
+  const btn = document.getElementById("btn-root-apply");
+  const box = document.getElementById("root-box");
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Cambiando...';
+  try {
+    const res = await fetch("/api/work_root", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ path: rootBrowsePath })
+    });
+    const d = await res.json();
+    if (d.error) {
+      box.style.display = "flex";
+      box.className = "res-box res-err";
+      box.innerHTML = '<span>' + d.error + '</span>';
+    } else {
+      showWorkRoot(d);
+      document.getElementById("modal-root").classList.remove("on");
+      selectedFiles.clear();
+      // La galería arranca de cero en la nueva raíz
+      navigate("", { replace: true });
+    }
+  } catch(e) {
+    box.style.display = "flex";
+    box.className = "res-box res-err";
+    box.innerHTML = '<span>Error de conexión</span>';
+  }
+  btn.disabled = false;
+  btn.innerHTML = orig;
+}
+
+document.getElementById("btn-work-root").addEventListener("click", async () => {
+  document.getElementById("modal-root").classList.add("on");
+  let start = "";
+  try {
+    const res = await fetch("/api/work_root");
+    const d = await res.json();
+    start = d.path || "";
+  } catch(e) {}
+  browseNas(start);
+});
+document.getElementById("btn-root-apply").addEventListener("click", applyWorkRoot);
+document.getElementById("btn-root-cancel").addEventListener("click", () => {
+  document.getElementById("modal-root").classList.remove("on");
+});
+document.getElementById("modal-root").addEventListener("click", e => {
+  if (e.target === document.getElementById("modal-root")) {
+    document.getElementById("modal-root").classList.remove("on");
+  }
+});
+
+
 // ── Fecha de los metadatos ────────────────────────────────────────────────────
 // Lee y escribe la fecha EXIF (DateTimeOriginal / CreateDate / ModifyDate) de
 // las fotos elegidas. El servidor lo hace con ExifTool, sin recomprimir nada.
@@ -2434,6 +2654,7 @@ function uploadPhotos(files) {
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 // Restaura la carpeta indicada en la URL (permite recargar o compartir enlace
 // sin perder el sitio); con URL limpia arranca en la raíz.
+loadWorkRoot();
 navigate(pathFromHash(), { replace: true });
 </script>
 </body>
