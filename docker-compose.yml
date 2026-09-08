@@ -29,4 +29,10 @@ services:
       # selector pero no se puedan abrir.
       - /share:/share
       # Ajustes y cache de miniaturas: que sobrevivan al recrear el contenedor.
-      - /share/Container/geotagger-data:/app/data
+      - geotagger_settings:/app/data
+
+volumes:
+  geotagger_settings:
+    # Nombre explicito para reutilizar el volumen que ya existe en el NAS
+    # (creado por el despliegue anterior). Si no existe, se crea.
+    name: geotagger_geotagger_settings

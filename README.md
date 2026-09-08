@@ -50,10 +50,10 @@ O a mano, si prefieres no usar compose:
 
 ```sh
 docker build -t geotagger .
-docker run -d --name geotagger \
+docker run -d --name geotagger --restart unless-stopped \
   -p 5000:5000 \
   -v /share:/share \
-  -v /share/Container/geotagger-data:/app/data \
+  -v geotagger_geotagger_settings:/app/data \
   -e NAS_ROOT=/share \
   geotagger
 ```
