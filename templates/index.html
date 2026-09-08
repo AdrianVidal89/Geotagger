@@ -504,6 +504,36 @@ header .spacer{flex:1}
 }
 .del-file-list div:last-child{border-bottom:none}
 .del-more{font-size:.75rem;color:var(--text2);padding:4px 0 0;text-align:right}
+/* date modal specifics */
+/* Se puede abrir desde el visor de fotos, que va en z-index 400 */
+#modal-date{z-index:500}
+.date-target{
+  font-size:.82rem;color:var(--text2);background:var(--surface);
+  border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.date-tabs{
+  display:flex;gap:4px;background:var(--surface);
+  border-radius:var(--radius);padding:4px;margin-bottom:16px;
+}
+.date-tab{
+  flex:1;padding:9px 8px;border:none;background:transparent;
+  border-radius:6px;font-size:.82rem;font-weight:500;
+  color:var(--text2);cursor:pointer;transition:all .15s;
+}
+.date-tab.on{background:var(--bg);color:var(--primary);box-shadow:var(--shadow)}
+.date-current{font-size:.78rem;color:var(--text2);margin-top:8px}
+.date-current strong{color:var(--text);font-weight:500}
+.date-quick{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.date-quick .chip{font-size:.75rem}
+.shift-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.shift-grid label{font-size:.72rem}
+.date-check{
+  display:flex!important;align-items:center;gap:9px;
+  margin:16px 0 0!important;font-size:.8rem;color:var(--text2);cursor:pointer;
+}
+.date-check input{width:18px;height:18px;accent-color:var(--primary);margin:0;flex-shrink:0}
+#date-box{margin-top:14px}
 
 /* ── PHOTO VIEWER (lightbox) ─────────────────── */
 .viewer{
@@ -602,7 +632,12 @@ header .spacer{flex:1}
   }
   .sidebar.open{transform:translateX(0)}
   .panel{display:none!important}
-  .sel-bar{left:12px;right:12px;transform:none;border-radius:12px}
+  .sel-bar{
+    left:12px;right:12px;transform:none;border-radius:12px;
+    padding-left:14px;overflow-x:auto;scrollbar-width:none;
+  }
+  .sel-bar::-webkit-scrollbar{display:none}
+  .sel-bar>*{flex-shrink:0}
   .sel-bar.up{bottom:12px}
   .files-grid{grid-template-columns:repeat(3,1fr);gap:3px}
   /* Evita amontonamiento: los controles superiores scrollean en horizontal */
@@ -617,6 +652,12 @@ header .spacer{flex:1}
   .drawer-bd{display:none!important}
   .sidebar-bd{display:none!important}
   .panel{display:flex!important}
+}
+@media(max-width:560px){
+  /* Con cinco acciones los textos no caben: solo iconos */
+  .sbar-lbl{display:none}
+  .sbar-btn{padding:9px 11px}
+  .sbar-btn svg{width:16px;height:16px}
 }
 @media(max-width:480px){
   .files-grid{grid-template-columns:repeat(3,1fr);gap:2px}
@@ -741,6 +782,18 @@ header .spacer{flex:1}
     </div>
 
     <div class="panel-section">
+      <div class="sec-lbl">Fecha de la foto</div>
+      <div class="gps-status" id="date-status">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>
+        Selecciona una foto
+      </div>
+      <button class="btn btn-secondary" id="btn-date" disabled>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>
+        Modificar fecha
+      </button>
+    </div>
+
+    <div class="panel-section">
       <div class="sec-lbl">Selección</div>
       <div class="sel-info">
         <strong id="sel-count">0</strong>
@@ -791,21 +844,25 @@ header .spacer{flex:1}
 <!-- FLOATING SELECTION BAR (mobile) -->
 <div class="sel-bar" id="sel-bar">
   <span class="sel-bar-count"><span id="sbar-count">0</span> fotos</span>
-  <button class="sbar-btn pri" id="sbar-gps">
+  <button class="sbar-btn pri" id="sbar-gps" title="Aplicar GPS">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>
-    GPS
+    <span class="sbar-lbl">GPS</span>
   </button>
-  <button class="sbar-btn" id="sbar-download">
+  <button class="sbar-btn" id="sbar-download" title="Descargar">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
-    Descargar
+    <span class="sbar-lbl">Descargar</span>
   </button>
-  <button class="sbar-btn" id="sbar-rename">
+  <button class="sbar-btn" id="sbar-date" title="Modificar fecha">
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>
+    <span class="sbar-lbl">Fecha</span>
+  </button>
+  <button class="sbar-btn" id="sbar-rename" title="Renombrar por EXIF">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"/></svg>
-    Renombrar
+    <span class="sbar-lbl">Renombrar</span>
   </button>
-  <button class="sbar-btn danger" id="sbar-delete">
+  <button class="sbar-btn danger" id="sbar-delete" title="Eliminar">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-    Eliminar
+    <span class="sbar-lbl">Eliminar</span>
   </button>
   <button class="sbar-close" id="sbar-close" title="Deseleccionar">✕</button>
 </div>
@@ -853,8 +910,11 @@ header .spacer{flex:1}
     </button>
     <div class="vw-title">
       <span class="vw-name" id="vw-name"></span>
-      <span class="vw-meta"><span id="vw-count"></span><span class="vw-ext" id="vw-ext"></span></span>
+      <span class="vw-meta"><span id="vw-count"></span><span class="vw-ext" id="vw-ext"></span><span id="vw-date"></span></span>
     </div>
+    <button class="vw-btn" id="vw-date-btn" title="Modificar fecha de esta foto">
+      <svg viewBox="0 0 24 24"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>
+    </button>
     <button class="vw-btn" id="vw-select" title="Seleccionar esta foto">
       <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
     </button>
@@ -887,6 +947,60 @@ header .spacer{flex:1}
       <button class="btn btn-danger" id="btn-delete-confirm">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
         Sí, eliminar permanentemente
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- DATE EDIT MODAL -->
+<div class="modal-overlay" id="modal-date">
+  <div class="modal">
+    <div class="modal-title">Modificar fecha</div>
+    <div class="date-target" id="date-target"></div>
+
+    <div class="date-tabs">
+      <button type="button" class="date-tab on" id="date-tab-set">Fecha exacta</button>
+      <button type="button" class="date-tab" id="date-tab-shift">Desplazar</button>
+    </div>
+
+    <!-- Fecha exacta: se aplica tal cual a todas las fotos elegidas -->
+    <div id="date-pane-set">
+      <label for="date-input">Nueva fecha y hora</label>
+      <input type="datetime-local" step="1" class="input-field" id="date-input">
+      <div class="date-quick">
+        <div class="chip" id="date-quick-now">Ahora</div>
+        <div class="chip" id="date-quick-file" style="display:none">Fecha del archivo</div>
+      </div>
+      <div class="date-current" id="date-current"></div>
+    </div>
+
+    <!-- Desplazar: suma o resta tiempo a la fecha que ya tiene cada foto
+         (util cuando la camara tenia la hora mal) -->
+    <div id="date-pane-shift" style="display:none">
+      <label for="shift-sign">Ajuste</label>
+      <select class="input-field" id="shift-sign">
+        <option value="+">Adelantar (+)</option>
+        <option value="-">Atrasar (−)</option>
+      </select>
+      <div class="shift-grid" style="margin-top:12px">
+        <div><label for="shift-days">Días</label><input type="number" min="0" class="input-field" id="shift-days" value="0"></div>
+        <div><label for="shift-hours">Horas</label><input type="number" min="0" class="input-field" id="shift-hours" value="0"></div>
+        <div><label for="shift-mins">Minutos</label><input type="number" min="0" class="input-field" id="shift-mins" value="0"></div>
+      </div>
+    </div>
+
+    <label class="date-check">
+      <input type="checkbox" id="date-sync-file" checked>
+      Cambiar también la fecha del archivo (para que la galería ordene igual)
+    </label>
+
+    <div id="date-box" class="res-box" style="display:none"></div>
+
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="btn-date-cancel">Cancelar</button>
+      <button class="btn btn-primary" id="btn-date-apply">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>
+        Aplicar fecha
       </button>
     </div>
   </div>
@@ -1223,6 +1337,7 @@ function toggleFile(index) {
     selectedFiles.add(f.path);
     card && card.classList.add("sel");
     checkGps(f.path);
+    checkDate(f.path);
   }
   updateSelUI();
 }
@@ -1257,6 +1372,7 @@ function updateSelUI() {
   const hasLoc = currentLat !== null;
   document.getElementById("btn-apply").disabled = n === 0 || !hasLoc;
   document.getElementById("btn-rename").disabled = n === 0;
+  document.getElementById("btn-date").disabled = n === 0;
   document.getElementById("btn-download").disabled = n === 0;
   document.getElementById("btn-delete").disabled = n === 0;
   document.getElementById("mob-btn-apply").disabled = n === 0 || !hasLoc;
@@ -1784,6 +1900,203 @@ document.getElementById("modal-delete").addEventListener("click", e => {
 });
 
 
+// ── Fecha de los metadatos ────────────────────────────────────────────────────
+// Lee y escribe la fecha EXIF (DateTimeOriginal / CreateDate / ModifyDate) de
+// las fotos elegidas. El servidor lo hace con ExifTool, sin recomprimir nada.
+const CAL_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>';
+let dateTargets = [];      // rutas sobre las que actúa el modal
+let dateMode = "set";      // "set" (fecha exacta) | "shift" (desplazar)
+let dateFileDate = "";     // fecha del archivo de la primera foto elegida
+
+function pad2(n) { return (n < 10 ? "0" : "") + n; }
+
+// Date -> valor de <input type="datetime-local">
+function dateToInput(d) {
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) +
+    "T" + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
+}
+// "AAAA-MM-DD HH:MM:SS" (servidor) -> valor del input
+function exifToInput(s) { return s ? s.replace(" ", "T") : ""; }
+// "AAAA-MM-DD HH:MM:SS" -> "DD/MM/AAAA HH:MM"
+function humanDate(s) {
+  const m = (s || "").match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  return m ? m[3] + "/" + m[2] + "/" + m[1] + " " + m[4] + ":" + m[5] : (s || "");
+}
+
+async function fetchDates(path) {
+  try {
+    const res = await fetch("/api/dateinfo?path=" + encodeURIComponent(path));
+    return await res.json();
+  } catch(e) { return {}; }
+}
+
+// Panel de escritorio: muestra la fecha de la última foto seleccionada
+async function checkDate(path) {
+  const box = document.getElementById("date-status");
+  box.className = "gps-status";
+  box.innerHTML = '<div class="spinner"></div> Leyendo fecha...';
+  const d = await fetchDates(path);
+  const shot = d.date || d.create_date;
+  if (shot) {
+    box.className = "gps-status has";
+    box.innerHTML = CAL_ICON + humanDate(shot);
+  } else if (d.file_date) {
+    box.className = "gps-status no";
+    box.innerHTML = CAL_ICON + "Sin fecha EXIF (archivo: " + humanDate(d.file_date) + ")";
+  } else {
+    box.className = "gps-status no";
+    box.innerHTML = CAL_ICON + "Sin fecha";
+  }
+}
+
+function setDateMode(mode) {
+  dateMode = mode;
+  document.getElementById("date-tab-set").classList.toggle("on", mode === "set");
+  document.getElementById("date-tab-shift").classList.toggle("on", mode === "shift");
+  document.getElementById("date-pane-set").style.display = mode === "set" ? "block" : "none";
+  document.getElementById("date-pane-shift").style.display = mode === "shift" ? "block" : "none";
+}
+
+function showDateBox(cls, iconPath, text) {
+  const box = document.getElementById("date-box");
+  box.style.display = "flex";
+  box.className = "res-box " + cls;
+  box.innerHTML = (iconPath
+    ? '<svg viewBox="0 0 24 24" fill="currentColor"><path d="' + iconPath + '"/></svg>'
+    : '<div class="spinner"></div>') + '<span>' + text + '</span>';
+}
+
+function closeDateModal() {
+  document.getElementById("modal-date").classList.remove("on");
+}
+
+// targets: rutas de las fotos a modificar (selección o foto del visor)
+async function openDateModal(targets) {
+  if (!targets || !targets.length) return;
+  dateTargets = targets.slice();
+  dateFileDate = "";
+  document.getElementById("date-target").textContent = targets.length === 1
+    ? targets[0].split("/").pop()
+    : targets.length + " fotos seleccionadas";
+  document.getElementById("date-box").style.display = "none";
+  document.getElementById("date-current").textContent = "";
+  document.getElementById("date-quick-file").style.display = "none";
+  setDateMode("set");
+  document.getElementById("modal-date").classList.add("on");
+
+  // Precarga la fecha actual de la primera foto para editarla en vez de
+  // escribirla desde cero
+  const inp = document.getElementById("date-input");
+  inp.value = dateToInput(new Date());
+  const d = await fetchDates(targets[0]);
+  const shot = d.date || d.create_date;
+  if (shot) inp.value = exifToInput(shot);
+  else if (d.file_date) inp.value = exifToInput(d.file_date);
+  if (d.file_date) {
+    dateFileDate = d.file_date;
+    document.getElementById("date-quick-file").style.display = "inline-flex";
+  }
+  const name = targets[0].split("/").pop();
+  document.getElementById("date-current").innerHTML = shot
+    ? "Fecha actual de <strong>" + name + "</strong>: " + humanDate(shot)
+    : "<strong>" + name + "</strong> no tiene fecha en los metadatos";
+}
+
+async function applyDate() {
+  const files = dateTargets.slice();
+  if (!files.length) return;
+
+  const payload = {
+    files: files,
+    mode: dateMode,
+    sync_file: document.getElementById("date-sync-file").checked
+  };
+  if (dateMode === "shift") {
+    payload.shift = {
+      sign:    document.getElementById("shift-sign").value,
+      days:    parseInt(document.getElementById("shift-days").value, 10) || 0,
+      hours:   parseInt(document.getElementById("shift-hours").value, 10) || 0,
+      minutes: parseInt(document.getElementById("shift-mins").value, 10) || 0
+    };
+    if (!payload.shift.days && !payload.shift.hours && !payload.shift.minutes) {
+      showDateBox("res-err", ICON_WARN, "Indica cuánto quieres desplazar la fecha");
+      return;
+    }
+  } else {
+    payload.date = document.getElementById("date-input").value;
+    if (!payload.date) {
+      showDateBox("res-err", ICON_WARN, "Elige una fecha");
+      return;
+    }
+  }
+
+  const btn = document.getElementById("btn-date-apply");
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Aplicando...';
+  showDateBox("res-progress", null, "Cambiando la fecha de " + files.length + " foto(s)...");
+
+  let done = false;
+  try {
+    const res = await fetch("/api/write_date", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.error) {
+      showDateBox("res-err", ICON_WARN, data.error);
+    } else {
+      const ok = data.ok.length, err = data.errors.length;
+      if (err === 0) {
+        showDateBox("res-ok", ICON_CHECK, ok + " foto(s) con la fecha actualizada");
+        done = true;
+      } else {
+        showDateBox("res-err", ICON_WARN, ok + " OK, " + err + " con error: " +
+          data.errors.slice(0, 3).map(e => e.file).join(", "));
+        done = ok > 0;
+      }
+      sendReport("Modificar fecha", files.length, ok, err, data.errors.map(e => e.file));
+    }
+  } catch(e) {
+    showDateBox("res-err", ICON_WARN, "Error de conexión");
+  }
+  btn.disabled = false;
+  btn.innerHTML = orig;
+
+  if (done) {
+    setTimeout(() => {
+      closeDateModal();
+      // Con el visor abierto solo se refresca su cabecera; recargar la carpeta
+      // lo cerraría a media vista
+      if (viewerEl.classList.contains("on")) {
+        showViewerDate(currentFiles[viewerIndex]);
+      } else if (missingMode) {
+        loadMissing(currentPath);
+      } else {
+        navigate(currentPath);
+      }
+    }, 900);
+  }
+}
+
+document.getElementById("btn-date").addEventListener("click", () => openDateModal(Array.from(selectedFiles)));
+document.getElementById("sbar-date").addEventListener("click", () => openDateModal(Array.from(selectedFiles)));
+document.getElementById("date-tab-set").addEventListener("click", () => setDateMode("set"));
+document.getElementById("date-tab-shift").addEventListener("click", () => setDateMode("shift"));
+document.getElementById("date-quick-now").addEventListener("click", () => {
+  document.getElementById("date-input").value = dateToInput(new Date());
+});
+document.getElementById("date-quick-file").addEventListener("click", () => {
+  if (dateFileDate) document.getElementById("date-input").value = exifToInput(dateFileDate);
+});
+document.getElementById("btn-date-apply").addEventListener("click", applyDate);
+document.getElementById("btn-date-cancel").addEventListener("click", closeDateModal);
+document.getElementById("modal-date").addEventListener("click", e => {
+  if (e.target === document.getElementById("modal-date")) closeDateModal();
+});
+
+
 // ── Photo viewer (lightbox) ───────────────────────────────────────────────────
 // Muestra la foto a tamaño grande vía /api/preview, que convierte cualquier
 // formato soportado (RAW, TIFF, HEIC, WebP...) a JPEG/WebP en el servidor.
@@ -1855,6 +2168,7 @@ function showViewerPhoto() {
   document.getElementById("vw-prev").classList.toggle("hidden", viewerIndex === 0);
   document.getElementById("vw-next").classList.toggle("hidden", viewerIndex === currentFiles.length - 1);
   updateViewerSelBtn();
+  showViewerDate(f);
 
   const spinner = document.getElementById("vw-spinner");
   spinner.style.display = "block";
@@ -1883,6 +2197,22 @@ function showViewerPhoto() {
     if (n >= 0 && n < currentFiles.length) { const p = new Image(); p.src = previewUrl(currentFiles[n]); }
   });
 }
+
+// Fecha de la foto abierta en el visor (lectura asíncrona: la imagen no espera)
+async function showViewerDate(f) {
+  const el = document.getElementById("vw-date");
+  if (!f) { el.textContent = ""; return; }
+  el.textContent = "";
+  const d = await fetchDates(f.path);
+  if (currentFiles[viewerIndex] !== f) return;   // el usuario ya pasó a otra foto
+  const shot = d.date || d.create_date || d.file_date;
+  el.textContent = shot ? humanDate(shot) : "Sin fecha";
+}
+
+document.getElementById("vw-date-btn").addEventListener("click", () => {
+  const f = currentFiles[viewerIndex];
+  if (f) openDateModal([f.path]);
+});
 
 document.getElementById("vw-close").addEventListener("click", closeViewer);
 document.getElementById("vw-prev").addEventListener("click", () => viewerNav(-1));
