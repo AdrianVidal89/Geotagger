@@ -674,7 +674,7 @@ header .spacer{flex:1}
   padding:14px;overflow:hidden;
 }
 .ed-frame{position:relative;display:flex;max-width:100%;max-height:100%}
-#ed-canvas{display:block;max-width:100%;max-height:100%;object-fit:contain}
+#ed-canvas{display:block;max-width:100%;max-height:100%}
 .ed-crop-layer{position:absolute;inset:0;display:none;touch-action:none}
 .ed-crop-layer.on{display:block}
 .ed-crop-box{
@@ -1167,7 +1167,11 @@ header .spacer{flex:1}
     </button>
     <button class="ed-tab" data-tab="light">
       <svg viewBox="0 0 24 24"><path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zm0 8c-1.65 0-3-1.35-3-3s1.35-3 3-3 3 1.35 3 3-1.35 3-3 3zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58a.996.996 0 0 0-1.41 0 .996.996 0 0 0 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37a.996.996 0 0 0-1.41 0 .996.996 0 0 0 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0a.996.996 0 0 0 0-1.41l-1.06-1.06zm1.06-10.96a.996.996 0 0 0 0-1.41.996.996 0 0 0-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36a.996.996 0 0 0 0-1.41.996.996 0 0 0-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/></svg>
-      <span>Luz y color</span>
+      <span>Luz</span>
+    </button>
+    <button class="ed-tab" data-tab="color">
+      <svg viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
+      <span>Color</span>
     </button>
   </div>
 
@@ -1208,13 +1212,8 @@ header .spacer{flex:1}
       <div class="ed-hint" id="ed-crop-size">Arrastra el recuadro o sus esquinas para elegir el encuadre.</div>
     </div>
 
-    <!-- LUZ Y COLOR -->
+    <!-- LUZ -->
     <div id="ed-pane-light" style="display:none">
-      <div class="ed-slider">
-        <label for="ed-temp">Temperatura</label>
-        <input type="range" id="ed-temp" min="-100" max="100" step="1" value="0">
-        <span class="ed-val" id="ed-temp-v">0</span>
-      </div>
       <div class="ed-slider">
         <label for="ed-bright">Exposición</label>
         <input type="range" id="ed-bright" min="50" max="180" step="1" value="100">
@@ -1226,13 +1225,63 @@ header .spacer{flex:1}
         <span class="ed-val" id="ed-contrast-v">0</span>
       </div>
       <div class="ed-slider">
+        <label for="ed-shadows">Sombras</label>
+        <input type="range" id="ed-shadows" min="-100" max="100" step="1" value="0">
+        <span class="ed-val" id="ed-shadows-v">0</span>
+      </div>
+      <div class="ed-slider">
+        <label for="ed-high">Luces</label>
+        <input type="range" id="ed-high" min="-100" max="100" step="1" value="0">
+        <span class="ed-val" id="ed-high-v">0</span>
+      </div>
+      <div class="ed-slider">
+        <label for="ed-black">Punto negro</label>
+        <input type="range" id="ed-black" min="0" max="80" step="1" value="0">
+        <span class="ed-val" id="ed-black-v">0</span>
+      </div>
+      <div class="ed-slider">
+        <label for="ed-white">Punto blanco</label>
+        <input type="range" id="ed-white" min="175" max="255" step="1" value="255">
+        <span class="ed-val" id="ed-white-v">255</span>
+      </div>
+      <div class="ed-row" style="margin-top:12px">
+        <button class="ed-chip" id="ed-auto">✨ Auto restaurar</button>
+        <button class="ed-chip" id="ed-light-reset">Restablecer</button>
+      </div>
+      <div class="ed-hint">
+        Punto negro y punto blanco devuelven el contraste a una foto desvaída;
+        sombras y luces recuperan detalle sin quemar el resto.
+      </div>
+    </div>
+
+    <!-- COLOR -->
+    <div id="ed-pane-color" style="display:none">
+      <div class="ed-slider">
+        <label for="ed-temp">Temperatura</label>
+        <input type="range" id="ed-temp" min="-100" max="100" step="1" value="0">
+        <span class="ed-val" id="ed-temp-v">0</span>
+      </div>
+      <div class="ed-slider">
+        <label for="ed-tint">Tinte</label>
+        <input type="range" id="ed-tint" min="-100" max="100" step="1" value="0">
+        <span class="ed-val" id="ed-tint-v">0</span>
+      </div>
+      <div class="ed-slider">
         <label for="ed-sat">Saturación</label>
         <input type="range" id="ed-sat" min="0" max="200" step="1" value="100">
         <span class="ed-val" id="ed-sat-v">0</span>
       </div>
       <div class="ed-row" style="margin-top:12px">
-        <button class="ed-chip" id="ed-auto">✨ Auto</button>
-        <button class="ed-chip" id="ed-light-reset">Restablecer luz</button>
+        <button class="ed-chip" id="ed-wb">Equilibrar color</button>
+        <button class="ed-chip" id="ed-auto-color">✨ Auto restaurar</button>
+        <button class="ed-chip" id="ed-color-reset">Restablecer</button>
+        <button class="ed-chip" id="ed-bw">Blanco y negro</button>
+      </div>
+      <div class="ed-hint">
+        <strong>Equilibrar color</strong> estira cada canal por separado: es lo que
+        quita de golpe el amarillento del papel viejo y devuelve el contraste.
+        Temperatura y tinte lo afinan a mano; saturación a 0 deja la foto en
+        blanco y negro.
       </div>
     </div>
   </div>
@@ -2767,14 +2816,18 @@ viewerEl.addEventListener("touchend", (e) => {
 }, { passive: true });
 
 // ── Editor de imagen ─────────────────────────────────────────────────────────
-// La vista previa se dibuja en un canvas: giro/volteo se aplican al lienzo y la
-// temperatura con un "multiply"; brillo, contraste y saturación son filtros CSS.
-// El servidor repite EXACTAMENTE la misma fórmula y en el mismo orden, así que
-// lo guardado es lo que se veía.
+// La vista previa se dibuja en un canvas y los ajustes se aplican con un LUT
+// por canal más una matriz de saturación: EXACTAMENTE la misma cadena, en el
+// mismo orden, que aplica el servidor al guardar. Por eso lo que se ve es lo
+// que se guarda.
+//   1. niveles (punto negro / punto blanco)
+//   2. temperatura y tinte (ganancia por canal)
+//   3. sombras y luces (curvas gamma)
+//   4. exposición    5. contraste    6. saturación
 //
-// El estado del giro se lleva como una orientación EXIF (1-8) y se compone con
-// las mismas tablas que usa el backend; al guardar se traduce a los parámetros
-// que espera /api/edit. Ambas tablas están verificadas contra Pillow.
+// El giro se lleva como una orientación EXIF (1-8) y se compone con las mismas
+// tablas que el backend; al guardar se traduce a los parámetros de /api/edit.
+// Ambas tablas están verificadas contra Pillow.
 const ED_OPS = {
   cw:    {1:6, 2:7, 3:8, 4:5, 5:2, 6:3, 7:4, 8:1},
   ccw:   {1:8, 2:5, 3:6, 4:7, 5:4, 6:1, 7:2, 8:3},
@@ -2782,28 +2835,39 @@ const ED_OPS = {
   flipv: {1:4, 2:3, 3:2, 4:1, 5:8, 6:7, 7:6, 8:5}
 };
 const ED_ORIENT_PARAMS = {
-  1: {rotate:0,   flip_h:false, flip_v:false},
-  2: {rotate:0,   flip_h:true,  flip_v:false},
-  3: {rotate:0,   flip_h:true,  flip_v:true},
-  4: {rotate:0,   flip_h:false, flip_v:true},
-  5: {rotate:90,  flip_h:true,  flip_v:false},
-  6: {rotate:90,  flip_h:false, flip_v:false},
-  7: {rotate:90,  flip_h:false, flip_v:true},
-  8: {rotate:90,  flip_h:true,  flip_v:true}
+  1: {rotate:0,  flip_h:false, flip_v:false},
+  2: {rotate:0,  flip_h:true,  flip_v:false},
+  3: {rotate:0,  flip_h:true,  flip_v:true},
+  4: {rotate:0,  flip_h:false, flip_v:true},
+  5: {rotate:90, flip_h:true,  flip_v:false},
+  6: {rotate:90, flip_h:false, flip_v:false},
+  7: {rotate:90, flip_h:false, flip_v:true},
+  8: {rotate:90, flip_h:true,  flip_v:true}
 };
-const ED_DEFAULT_ADJ = {temp:0, brightness:1, contrast:1, saturation:1};
+const ED_DEFAULT_ADJ = {
+  black: 0, white: 255, shadows: 0, highlights: 0,
+  temp: 0, tint: 0, brightness: 1, contrast: 1, saturation: 1
+};
+// Lado mayor del lienzo de trabajo: suficiente para encuadrar y ajustar sin
+// que cada movimiento de slider tenga que recorrer millones de píxeles
+const ED_WORK_MAX = 1600;
 
 const editorEl = document.getElementById("editor");
 const edCanvas = document.getElementById("ed-canvas");
-const edCtx = edCanvas.getContext("2d");
+const edCtx = edCanvas.getContext("2d", {willReadFrequently: true});
 let edFile = null;
 let edImg = null;
 let edOrient = 1;
-let edCrop = null;          // {x,y,w,h} en fracciones del lienzo ya girado
+let edCrop = null;            // {x,y,w,h} en fracciones del lienzo ya girado
 let edAdj = Object.assign({}, ED_DEFAULT_ADJ);
-let edAspect = 0;           // 0 = libre
+let edAspect = 0;             // 0 = libre
 let edTab = "rot";
 let edSaving = false;
+let edBaseData = null;        // píxeles ya girados, sin ajustes
+let edOutData = null;
+let edRenderPending = false;
+let edRealSize = null;        // tamaño real de la foto (para informar del recorte)
+let edWb = null;              // rangos por canal del equilibrio de color
 
 // Las miniaturas se sirven con cache "immutable"; tras editar hay que forzar
 // que el navegador vuelva a pedirlas
@@ -2816,8 +2880,8 @@ function bust(url, path) {
 function edIsRaw(f) { return f && RAW_EXTS.includes(f.ext || ""); }
 
 function edAdjChanged() {
-  return edAdj.temp !== 0 || edAdj.brightness !== 1 ||
-         edAdj.contrast !== 1 || edAdj.saturation !== 1;
+  if (edWb) return true;
+  return Object.keys(ED_DEFAULT_ADJ).some(k => edAdj[k] !== ED_DEFAULT_ADJ[k]);
 }
 // Un recuadro que abarca la foto entera no es un recorte
 function edEffectiveCrop() {
@@ -2827,73 +2891,145 @@ function edEffectiveCrop() {
 }
 function edHasPixelEdits() { return !!edEffectiveCrop() || edAdjChanged(); }
 function edHasChanges() { return edOrient !== 1 || edHasPixelEdits(); }
-
 function edUpdateSaveBtn() {
   document.getElementById("ed-save").disabled = !edHasChanges() || edSaving;
 }
 
-// ── Dibujo del lienzo ────────────────────────────────────────────────────────
-function edDrawCanvas() {
+// ── Cadena de ajustes (idéntica a la del servidor) ───────────────────────────
+function edBuildLuts() {
+  const a = edAdj;
+  const black = Math.max(0, Math.min(240, a.black));
+  const white = Math.max(black + 1, Math.min(255, a.white));
+  const pSh = 1 / (1 + 0.9 * a.shadows / 100);
+  const pHi = 1 + 0.9 * a.highlights / 100;
+  const gains = [1 + a.temp / 400, 1 - a.tint / 400, 1 - a.temp / 400];
+  // Equilibrio de color: cada canal con su propio rango, delante de todo
+  const wb = edWb ? [edWb.r, edWb.g, edWb.b] : null;
+  return gains.map((gain, ch) => {
+    const lut = new Uint8ClampedArray(256);
+    for (let v = 0; v < 256; v++) {
+      let x = v;
+      if (wb) {
+        const lo = wb[ch][0], hi = Math.max(wb[ch][0] + 1, wb[ch][1]);
+        x = 255 * (x - lo) / (hi - lo);
+        x = Math.max(0, Math.min(255, x));
+      }
+      x = (x - black) / (white - black);
+      x = Math.max(0, Math.min(1, x)) * gain;
+      x = Math.max(0, Math.min(1, x));
+      if (a.shadows) x = Math.pow(x, pSh);
+      if (a.highlights) x = 1 - Math.pow(1 - x, pHi);
+      x = x * a.brightness;
+      x = (x - 0.5) * a.contrast + 0.5;
+      lut[v] = Math.round(x * 255);
+    }
+    return lut;
+  });
+}
+
+function edRender() {
+  if (!edBaseData) return;
+  const src = edBaseData.data;
+  if (!edOutData || edOutData.data.length !== src.length) {
+    edOutData = edCtx.createImageData(edCanvas.width, edCanvas.height);
+  }
+  const dst = edOutData.data;
+  const s = edAdj.saturation;
+  const [lr, lg, lb] = edBuildLuts();
+  for (let i = 0; i < src.length; i += 4) {
+    let r = lr[src[i]], g = lg[src[i + 1]], b = lb[src[i + 2]];
+    if (s !== 1) {
+      const L = 0.213 * r + 0.715 * g + 0.072 * b;
+      r = L + (r - L) * s;
+      g = L + (g - L) * s;
+      b = L + (b - L) * s;
+    }
+    dst[i] = r; dst[i + 1] = g; dst[i + 2] = b; dst[i + 3] = src[i + 3];
+  }
+  edCtx.putImageData(edOutData, 0, 0);
+}
+
+function edRequestRender() {
+  if (edRenderPending) return;
+  edRenderPending = true;
+  requestAnimationFrame(() => { edRenderPending = false; edRender(); });
+}
+
+// ── Lienzo: giro/volteo y encaje en pantalla ─────────────────────────────────
+// El tamaño en CSS se fija aquí conservando la proporción. Con max-width y
+// max-height a la vez el navegador deformaba la caja del canvas y la capa del
+// recorte dejaba de coincidir con la foto (recortaba más de lo que se veía).
+function edFitCanvas() {
+  const stage = document.getElementById("ed-stage");
+  const availW = Math.max(60, stage.clientWidth - 28);
+  const availH = Math.max(60, stage.clientHeight - 28);
+  const k = Math.min(availW / edCanvas.width, availH / edCanvas.height);
+  edCanvas.style.width = Math.round(edCanvas.width * k) + "px";
+  edCanvas.style.height = Math.round(edCanvas.height * k) + "px";
+}
+
+function edBuildBase() {
   if (!edImg) return;
   const o = ED_ORIENT_PARAMS[edOrient];
   const swap = o.rotate === 90 || o.rotate === 270;
-  const w = edImg.naturalWidth, h = edImg.naturalHeight;
+  const iw = edImg.naturalWidth, ih = edImg.naturalHeight;
+  const long = Math.max(iw, ih);
+  const k = long > ED_WORK_MAX ? ED_WORK_MAX / long : 1;
+  const w = Math.max(1, Math.round(iw * k)), h = Math.max(1, Math.round(ih * k));
+
   edCanvas.width = swap ? h : w;
   edCanvas.height = swap ? w : h;
-
   edCtx.setTransform(1, 0, 0, 1, 0, 0);
   edCtx.clearRect(0, 0, edCanvas.width, edCanvas.height);
   edCtx.save();
   edCtx.translate(edCanvas.width / 2, edCanvas.height / 2);
   // Ojo al orden: la última transformación es la primera que se aplica a lo
-  // dibujado, así que esto equivale a "girar y luego voltear", igual que el
-  // servidor.
+  // dibujado, así que esto equivale a "girar y luego voltear", como el servidor
   edCtx.scale(o.flip_h ? -1 : 1, o.flip_v ? -1 : 1);
   edCtx.rotate(o.rotate * Math.PI / 180);
-  edCtx.drawImage(edImg, -w / 2, -h / 2);
+  edCtx.drawImage(edImg, -w / 2, -h / 2, w, h);
   edCtx.restore();
 
-  // Temperatura: atenúa el azul (cálido) o el rojo (frío), igual que el LUT
-  // del servidor
-  const t = edAdj.temp;
-  if (t) {
-    const kr = t >= 0 ? 1 : 1 + t / 300;
-    const kb = t >= 0 ? 1 - t / 300 : 1;
-    edCtx.globalCompositeOperation = "multiply";
-    edCtx.fillStyle = "rgb(" + Math.round(kr * 255) + ",255," + Math.round(kb * 255) + ")";
-    edCtx.fillRect(0, 0, edCanvas.width, edCanvas.height);
-    edCtx.globalCompositeOperation = "source-over";
-  }
-  edApplyFilter();
+  edBaseData = edCtx.getImageData(0, 0, edCanvas.width, edCanvas.height);
+  edOutData = null;
+  edFitCanvas();
+  edRender();
   edSyncCropBox();
 }
 
-function edApplyFilter() {
-  edCanvas.style.filter =
-    "brightness(" + edAdj.brightness + ") contrast(" + edAdj.contrast + ") saturate(" + edAdj.saturation + ")";
-}
-
 // ── Recorte ──────────────────────────────────────────────────────────────────
-function edCropLayerOn() {
+function edSyncCropBox() {
   const layer = document.getElementById("ed-crop-layer");
   layer.classList.toggle("on", edTab === "crop" || !!edEffectiveCrop());
   layer.style.pointerEvents = edTab === "crop" ? "auto" : "none";
-}
 
-function edSyncCropBox() {
-  edCropLayerOn();
+  // La capa se coloca sobre la caja REAL del lienzo, no sobre el marco: así no
+  // puede volver a desalinearse con la foto
+  const frame = document.getElementById("ed-frame");
+  const cr = edCanvas.getBoundingClientRect();
+  const fr = frame.getBoundingClientRect();
+  layer.style.left = (cr.left - fr.left) + "px";
+  layer.style.top = (cr.top - fr.top) + "px";
+  layer.style.width = cr.width + "px";
+  layer.style.height = cr.height + "px";
+
   const box = document.getElementById("ed-crop-box");
   const c = edCrop || {x:0, y:0, w:1, h:1};
   box.style.left   = (c.x * 100) + "%";
   box.style.top    = (c.y * 100) + "%";
   box.style.width  = (c.w * 100) + "%";
   box.style.height = (c.h * 100) + "%";
+
   const info = document.getElementById("ed-crop-size");
-  if (edCrop) {
-    const pw = Math.round(edCrop.w * edCanvas.width);
-    const ph = Math.round(edCrop.h * edCanvas.height);
-    info.textContent = "Recorte de la vista previa: " + pw + " × " + ph +
-      " px (en el original se aplica a resolución completa)";
+  const eff = edEffectiveCrop();
+  if (eff && edRealSize) {
+    const pw = Math.round(eff.w * edRealSize.width);
+    const ph = Math.round(eff.h * edRealSize.height);
+    info.textContent = "Recorte: " + pw + " × " + ph + " px  (original " +
+      edRealSize.width + " × " + edRealSize.height + ")";
+  } else if (eff) {
+    info.textContent = "Recorte: " + Math.round(eff.w * 100) + "% × " +
+      Math.round(eff.h * 100) + "% de la foto";
   } else {
     info.textContent = "Arrastra el recuadro o sus esquinas para elegir el encuadre.";
   }
@@ -2927,7 +3063,7 @@ function edSetAspectChips(ar) {
 function edSetAspect(ar) {
   edAspect = ar;
   edSetAspectChips(ar);
-  // "Libre" no inventa un encuadre: solo suelta la proporcion
+  // "Libre" no inventa un encuadre: solo suelta la proporción
   if (ar && !edCrop) edCrop = {x:0, y:0, w:1, h:1};
   if (ar && edCrop) edCrop = edFitAspect(edCrop, ar);
   edSyncCropBox();
@@ -2937,7 +3073,6 @@ function edSetAspect(ar) {
 // Arrastre del recuadro y de sus esquinas (ratón y táctil)
 (function edCropDrag() {
   const layer = document.getElementById("ed-crop-layer");
-  const box = document.getElementById("ed-crop-box");
   let mode = null, startX = 0, startY = 0, start = null;
 
   function frac(e) {
@@ -2995,21 +3130,23 @@ function edSetAspect(ar) {
   ["pointerup", "pointercancel"].forEach(ev => layer.addEventListener(ev, () => {
     if (!mode) return;
     mode = null;
-    // Un recorte que abarca todo no es un recorte
     edSyncCropBox();
     edUpdateSaveBtn();
   }));
 })();
 
 // ── Pestañas ─────────────────────────────────────────────────────────────────
+const ED_PANES = {rot: "ed-pane-rot", crop: "ed-pane-crop",
+                  light: "ed-pane-light", color: "ed-pane-color"};
+
 function edSetTab(tab) {
   edTab = tab;
   document.querySelectorAll(".ed-tab").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
-  document.getElementById("ed-pane-rot").style.display   = tab === "rot"   ? "block" : "none";
-  document.getElementById("ed-pane-crop").style.display  = tab === "crop"  ? "block" : "none";
-  document.getElementById("ed-pane-light").style.display = tab === "light" ? "block" : "none";
-  // El recuadro arranca abarcando toda la foto: mirar la pestana no recorta nada
-  if (tab === "crop" && !edCrop) { edCrop = {x:0, y:0, w:1, h:1}; }
+  Object.keys(ED_PANES).forEach(k => {
+    document.getElementById(ED_PANES[k]).style.display = k === tab ? "block" : "none";
+  });
+  // El recuadro arranca abarcando toda la foto: mirar la pestaña no recorta nada
+  if (tab === "crop" && !edCrop) edCrop = {x:0, y:0, w:1, h:1};
   edSyncCropBox();
   edUpdateSaveBtn();
 }
@@ -3027,7 +3164,7 @@ function edApplyOrientOp(op) {
     else if (op === "fliph") edCrop = {x: 1 - (c.x + c.w), y: c.y, w: c.w, h: c.h};
     else if (op === "flipv") edCrop = {x: c.x, y: 1 - (c.y + c.h), w: c.w, h: c.h};
   }
-  edDrawCanvas();
+  edBuildBase();
   edUpdateSaveBtn();
 }
 document.getElementById("ed-cw").addEventListener("click", () => edApplyOrientOp("cw"));
@@ -3046,43 +3183,95 @@ document.getElementById("ed-crop-clear").addEventListener("click", () => {
   edUpdateSaveBtn();
 });
 
-// ── Luz y color ──────────────────────────────────────────────────────────────
+// ── Sliders de luz y color ───────────────────────────────────────────────────
+// scale 100 => el slider va en porcentaje y el ajuste es un multiplicador
 const ED_SLIDERS = [
-  {id: "ed-temp",     key: "temp",       toVal: v => v,       toSlider: v => v},
-  {id: "ed-bright",   key: "brightness", toVal: v => v / 100, toSlider: v => Math.round(v * 100)},
-  {id: "ed-contrast", key: "contrast",   toVal: v => v / 100, toSlider: v => Math.round(v * 100)},
-  {id: "ed-sat",      key: "saturation", toVal: v => v / 100, toSlider: v => Math.round(v * 100)}
+  {id: "ed-bright",   key: "brightness",  scale: 100, signed: true},
+  {id: "ed-contrast", key: "contrast",    scale: 100, signed: true},
+  {id: "ed-shadows",  key: "shadows",     scale: 1,   signed: true},
+  {id: "ed-high",     key: "highlights",  scale: 1,   signed: true},
+  {id: "ed-black",    key: "black",       scale: 1,   signed: false},
+  {id: "ed-white",    key: "white",       scale: 1,   signed: false},
+  {id: "ed-temp",     key: "temp",        scale: 1,   signed: true},
+  {id: "ed-tint",     key: "tint",        scale: 1,   signed: true},
+  {id: "ed-sat",      key: "saturation",  scale: 100, signed: true}
 ];
 
 function edSyncSliders() {
   ED_SLIDERS.forEach(sl => {
-    const el = document.getElementById(sl.id);
-    el.value = sl.toSlider(edAdj[sl.key]);
-    const shown = sl.key === "temp" ? Math.round(edAdj.temp) : Math.round(edAdj[sl.key] * 100 - 100);
-    document.getElementById(sl.id + "-v").textContent = (shown > 0 ? "+" : "") + shown;
+    const raw = edAdj[sl.key] * sl.scale;
+    document.getElementById(sl.id).value = Math.round(raw);
+    let shown = Math.round(sl.scale === 100 ? raw - 100 : raw);
+    document.getElementById(sl.id + "-v").textContent =
+      (sl.signed && shown > 0 ? "+" : "") + shown;
   });
 }
 
 ED_SLIDERS.forEach(sl => {
   document.getElementById(sl.id).addEventListener("input", (e) => {
-    edAdj[sl.key] = sl.toVal(parseFloat(e.target.value));
+    edAdj[sl.key] = parseFloat(e.target.value) / sl.scale;
     edSyncSliders();
-    // La temperatura va pintada en el lienzo; el resto son filtros CSS
-    if (sl.key === "temp") edDrawCanvas(); else edApplyFilter();
+    edRequestRender();
     edUpdateSaveBtn();
   });
 });
 
-document.getElementById("ed-light-reset").addEventListener("click", () => {
-  edAdj = Object.assign({}, ED_DEFAULT_ADJ);
+function edSyncWbChip() {
+  document.getElementById("ed-wb").classList.toggle("on", !!edWb);
+}
+
+function edResetAdj(keys) {
+  keys.forEach(k => { edAdj[k] = ED_DEFAULT_ADJ[k]; });
   edSyncSliders();
-  edDrawCanvas();
+  edRequestRender();
+  edUpdateSaveBtn();
+}
+
+// Pide al servidor los rangos por canal y los aplica igual en la vista previa
+async function edToggleWb() {
+  const chip = document.getElementById("ed-wb");
+  if (edWb) {
+    edWb = null;
+    edSyncWbChip();
+    edRequestRender();
+    edUpdateSaveBtn();
+    return;
+  }
+  if (!edFile) return;
+  const orig = chip.textContent;
+  chip.textContent = "Calculando...";
+  chip.disabled = true;
+  try {
+    const res = await fetch("/api/auto_levels?path=" + encodeURIComponent(edFile.path));
+    const d = await res.json();
+    if (!d.error && d.wb) {
+      edWb = d.wb;
+      edSyncWbChip();
+      edRequestRender();
+      edUpdateSaveBtn();
+    }
+  } catch(e) {}
+  chip.textContent = orig;
+  chip.disabled = false;
+}
+document.getElementById("ed-wb").addEventListener("click", edToggleWb);
+document.getElementById("ed-light-reset").addEventListener("click",
+  () => edResetAdj(["brightness", "contrast", "shadows", "highlights", "black", "white"]));
+document.getElementById("ed-color-reset").addEventListener("click", () => {
+  edWb = null;
+  edSyncWbChip();
+  edResetAdj(["temp", "tint", "saturation"]);
+});
+document.getElementById("ed-bw").addEventListener("click", () => {
+  edAdj.saturation = 0;
+  edSyncSliders();
+  edRequestRender();
   edUpdateSaveBtn();
 });
 
-document.getElementById("ed-auto").addEventListener("click", async () => {
+async function edAutoRestore(btnId) {
   if (!edFile) return;
-  const btn = document.getElementById("ed-auto");
+  const btn = document.getElementById(btnId);
   const orig = btn.textContent;
   btn.textContent = "Calculando...";
   btn.disabled = true;
@@ -3090,22 +3279,23 @@ document.getElementById("ed-auto").addEventListener("click", async () => {
     const res = await fetch("/api/auto_levels?path=" + encodeURIComponent(edFile.path));
     const d = await res.json();
     if (!d.error) {
-      // Auto solo mueve los sliders: así la vista previa y lo guardado coinciden
-      edAdj = {
-        temp: d.temp || 0,
-        brightness: d.brightness || 1,
-        contrast: d.contrast || 1,
-        saturation: d.saturation || 1
-      };
+      // Auto solo mueve los sliders: la vista previa y lo guardado coinciden,
+      // y desde ahí se puede retocar a mano
+      Object.keys(ED_DEFAULT_ADJ).forEach(k => {
+        edAdj[k] = (d[k] === undefined || d[k] === null) ? ED_DEFAULT_ADJ[k] : d[k];
+      });
+      edWb = d.wb || null;
+      edSyncWbChip();
       edSyncSliders();
-      edDrawCanvas();
+      edRequestRender();
       edUpdateSaveBtn();
-      edSetTab("light");
     }
   } catch(e) {}
   btn.textContent = orig;
   btn.disabled = false;
-});
+}
+document.getElementById("ed-auto").addEventListener("click", () => edAutoRestore("ed-auto"));
+document.getElementById("ed-auto-color").addEventListener("click", () => edAutoRestore("ed-auto-color"));
 
 // ── Abrir / cerrar ───────────────────────────────────────────────────────────
 function openEditor(f) {
@@ -3115,21 +3305,28 @@ function openEditor(f) {
   edCrop = null;
   edAspect = 0;
   edAdj = Object.assign({}, ED_DEFAULT_ADJ);
+  edWb = null;
   edSaving = false;
+  edBaseData = null;
+  edOutData = null;
+  edRealSize = null;
   document.getElementById("ed-name").textContent = f.name;
   document.getElementById("ed-busy").classList.remove("on");
   editorEl.classList.add("on");
+  edSyncWbChip();
   edSyncSliders();
   edSetAspectChips(0);
   edSetTab("rot");
   edUpdateSaveBtn();
 
   const img = new Image();
-  img.onload = () => {
-    edImg = img;
-    edDrawCanvas();
-  };
+  img.onload = () => { edImg = img; edBuildBase(); };
   img.src = previewUrl(f);
+  // Tamaño real de la foto, para que el recorte informe en píxeles de verdad
+  fetch("/api/imginfo?path=" + encodeURIComponent(f.path))
+    .then(r => r.json())
+    .then(d => { if (!d.error) { edRealSize = d; edSyncCropBox(); } })
+    .catch(() => {});
   document.addEventListener("keydown", edKeys);
 }
 
@@ -3139,11 +3336,19 @@ function closeEditor(force) {
   document.removeEventListener("keydown", edKeys);
   edImg = null;
   edFile = null;
+  edBaseData = null;
+  edOutData = null;
 }
 
 function edKeys(e) {
   if (e.key === "Escape") { e.stopPropagation(); closeEditor(false); }
 }
+
+window.addEventListener("resize", () => {
+  if (!editorEl.classList.contains("on") || !edBaseData) return;
+  edFitCanvas();
+  edSyncCropBox();
+});
 
 document.getElementById("ed-close").addEventListener("click", () => closeEditor(false));
 document.getElementById("ed-reset").addEventListener("click", () => {
@@ -3151,9 +3356,11 @@ document.getElementById("ed-reset").addEventListener("click", () => {
   edCrop = edTab === "crop" ? {x:0, y:0, w:1, h:1} : null;
   edAspect = 0;
   edAdj = Object.assign({}, ED_DEFAULT_ADJ);
+  edWb = null;
+  edSyncWbChip();
   edSetAspectChips(0);
   edSyncSliders();
-  edDrawCanvas();
+  edBuildBase();
   edUpdateSaveBtn();
 });
 
@@ -3193,7 +3400,7 @@ async function edSave() {
     flip_h: o.flip_h,
     flip_v: o.flip_v,
     crop: edEffectiveCrop(),
-    adj: edAdj
+    adj: Object.assign({}, edAdj, {wb: edWb})
   };
   edSaving = true;
   edUpdateSaveBtn();

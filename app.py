@@ -415,21 +415,67 @@ def _rotate_lossless(path, op):
 #   4. saturacion:  matriz de CSS saturate() con luma Rec.709
 LUMA_R, LUMA_G, LUMA_B = 0.213, 0.715, 0.072
 
-def _temp_gains(temp):
-    t = max(-100.0, min(100.0, float(temp or 0))) / 300.0
-    if t >= 0:
-        return 1.0, 1.0, 1.0 - t
-    return 1.0 + t, 1.0, 1.0
+# Orden de la cadena (identico en el editor del navegador):
+#   1. niveles (punto negro / punto blanco)
+#   2. temperatura y tinte (ganancia por canal)
+#   3. sombras y luces (curvas gamma)
+#   4. brillo
+#   5. contraste
+#   6. saturacion (matriz, fuera del LUT porque mezcla canales)
+def _channel_gains(temp, tint):
+    t = max(-100.0, min(100.0, float(temp or 0))) / 400.0
+    n = max(-100.0, min(100.0, float(tint or 0))) / 400.0
+    return 1.0 + t, 1.0 - n, 1.0 - t
 
-def _tone_lut(temp, brightness, contrast):
-    """Tabla de 768 valores (256 por canal) con temperatura, brillo y contraste."""
-    b = float(brightness)
-    c = float(contrast)
+def _wb_ranges(adj):
+    """Rangos por canal del equilibrio de color: [[loR,hiR],[loG,hiG],[loB,hiB]]
+    o None. Estirar cada canal por separado es lo que quita la dominante
+    amarillenta o magenta de una foto vieja, algo que un estirado comun no
+    puede hacer (aplasta el canal que vive en la franja mas baja)."""
+    wb = adj.get("wb")
+    if not wb:
+        return None
+    try:
+        out = []
+        for key in ("r", "g", "b"):
+            lo, hi = wb[key]
+            lo = max(0.0, min(254.0, float(lo)))
+            hi = max(lo + 1.0, min(255.0, float(hi)))
+            out.append((lo, hi))
+        return out
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+
+def _tone_lut(adj):
+    """Tabla de 768 valores (256 por canal) con toda la cadena tonal."""
+    wb = _wb_ranges(adj)
+    black = max(0.0, min(240.0, _adj_value(adj, "black", 0.0)))
+    white = max(black + 1.0, min(255.0, _adj_value(adj, "white", 255.0)))
+    shadows = max(-100.0, min(100.0, _adj_value(adj, "shadows", 0.0)))
+    highlights = max(-100.0, min(100.0, _adj_value(adj, "highlights", 0.0)))
+    brightness = _adj_value(adj, "brightness", 1.0)
+    contrast = _adj_value(adj, "contrast", 1.0)
+    gains = _channel_gains(_adj_value(adj, "temp", 0.0), _adj_value(adj, "tint", 0.0))
+    p_sh = 1.0 / (1.0 + 0.9 * shadows / 100.0)
+    p_hi = 1.0 + 0.9 * highlights / 100.0
+
     lut = []
-    for gain in _temp_gains(temp):
+    for ch, gain in enumerate(gains):
         for v in range(256):
-            x = (v / 255.0) * gain * b
-            x = (x - 0.5) * c + 0.5
+            x = float(v)
+            if wb:
+                lo, hi = wb[ch]
+                x = 255.0 * (x - lo) / (hi - lo)
+                x = max(0.0, min(255.0, x))
+            x = (x - black) / (white - black)
+            x = max(0.0, min(1.0, x)) * gain
+            x = max(0.0, min(1.0, x))
+            if shadows:
+                x = x ** p_sh
+            if highlights:
+                x = 1.0 - (1.0 - x) ** p_hi
+            x = x * brightness
+            x = (x - 0.5) * contrast + 0.5
             lut.append(max(0, min(255, int(round(x * 255.0)))))
     return lut
 
@@ -447,20 +493,29 @@ def _adj_value(adj, key, default):
     except (TypeError, ValueError):
         return default
 
+# Valores neutros: si el ajuste esta en su valor por defecto no se toca nada
+ADJ_NEUTRAL = {"black": 0.0, "white": 255.0, "shadows": 0.0, "highlights": 0.0,
+               "temp": 0.0, "tint": 0.0, "brightness": 1.0, "contrast": 1.0,
+               "saturation": 1.0}
+
+def _adj_is_neutral(adj):
+    if _wb_ranges(adj):
+        return False
+    return all(_adj_value(adj, k, v) == v for k, v in ADJ_NEUTRAL.items())
+
 def _apply_adjustments(img, adj):
-    temp = _adj_value(adj, "temp", 0.0)
-    brightness = _adj_value(adj, "brightness", 1.0)
-    contrast = _adj_value(adj, "contrast", 1.0)
-    saturation = _adj_value(adj, "saturation", 1.0)
-    if temp == 0 and brightness == 1 and contrast == 1 and saturation == 1:
+    if _adj_is_neutral(adj):
         return img
+    saturation = _adj_value(adj, "saturation", 1.0)
+    tonal = any(_adj_value(adj, k, v) != v
+                for k, v in ADJ_NEUTRAL.items() if k != "saturation")
     alpha = None
     if img.mode == "RGBA":
         alpha = img.getchannel("A")
     if img.mode != "RGB":
         img = img.convert("RGB")
-    if temp != 0 or brightness != 1 or contrast != 1:
-        img = img.point(_tone_lut(temp, brightness, contrast))
+    if tonal or _wb_ranges(adj):
+        img = img.point(_tone_lut(adj))
     if saturation != 1:
         img = img.convert("RGB", _saturation_matrix(saturation))
     if alpha is not None:
@@ -475,42 +530,52 @@ def _auto_levels(img):
     if small.mode != "RGB":
         small = small.convert("RGB")
 
-    gray = small.convert("L")
-    hist = gray.histogram()
-    total = sum(hist) or 1
-    lo, hi, acc = 0, 255, 0
-    for v, n in enumerate(hist):
-        acc += n
-        if acc >= total * 0.01:
-            lo = v
-            break
-    acc = 0
-    for v in range(255, -1, -1):
-        acc += hist[v]
-        if acc >= total * 0.01:
-            hi = v
-            break
+    def percentiles(hist, cut=0.005):
+        """Extremos reales de un histograma, ignorando el 0,5% de cada punta
+        (motas de polvo y brillos aislados no deben marcar el rango)."""
+        total = sum(hist) or 1
+        lo, hi, acc = 0, 255, 0
+        for v, n in enumerate(hist):
+            acc += n
+            if acc >= total * cut:
+                lo = v
+                break
+        acc = 0
+        for v in range(255, -1, -1):
+            acc += hist[v]
+            if acc >= total * cut:
+                hi = v
+                break
+        return lo, max(lo + 8, hi)
 
-    spread = max(1, hi - lo) / 255.0
-    contrast = max(1.0, min(1.6, 0.85 / spread))
-    mean = sum(v * n for v, n in enumerate(hist)) / total / 255.0
-    brightness = max(0.8, min(1.4, 0.5 / mean)) if mean > 0.05 else 1.0
+    # Equilibrio de color: cada canal se estira con SU propio rango. Esto
+    # devuelve el contraste y quita la dominante de color a la vez.
+    channels = small.split()[:3]
+    wb = {}
+    for key, ch in zip(("r", "g", "b"), channels):
+        lo, hi = percentiles(ch.histogram())
+        wb[key] = [lo, hi]
 
-    # Balance de blancos tipo "mundo gris", amortiguado para no pasarse
-    r, g, b = [sum(v * n for v, n in enumerate(ch.histogram())) / total
-               for ch in small.split()[:3]]
-    temp = 0.0
-    if r > 1 and b > 1:
-        if r > b:
-            temp = 300.0 * (b / r - 1.0)      # foto calida -> enfriar
-        else:
-            temp = 300.0 * (1.0 - r / b)      # foto fria  -> calentar
-    temp = max(-45.0, min(45.0, temp * 0.6))
+    # Con el estirado ya aplicado, ¿sigue oscura? Entonces levantar sombras
+    gray_hist = small.convert("L").histogram()
+    total = sum(gray_hist) or 1
+    mean = sum(v * n for v, n in enumerate(gray_hist)) / total
+    lo_l, hi_l = percentiles(gray_hist)
+    mean_norm = (mean - lo_l) / max(1.0, hi_l - lo_l)
+    shadows = 0.0
+    if mean_norm < 0.45:
+        shadows = min(65.0, (0.45 - mean_norm) * 220.0)
 
     return {
-        "temp": round(temp, 1),
-        "brightness": round(brightness, 3),
-        "contrast": round(contrast, 3),
+        "wb": wb,
+        "black": 0.0,
+        "white": 255.0,
+        "shadows": round(shadows, 1),
+        "highlights": 0.0,
+        "temp": 0.0,
+        "tint": 0.0,
+        "brightness": 1.0,
+        "contrast": 1.0,
         "saturation": 1.0,
     }
 
@@ -1065,6 +1130,19 @@ def rotate_files():
             errors.append({"file": path.name, "error": str(e)})
     return jsonify({"ok": ok, "errors": errors})
 
+@app.route("/api/imginfo")
+def imginfo():
+    """Dimensiones de la foto tal como se ve (ya orientada). Solo LECTURA."""
+    rel = request.args.get("path", "")
+    abs_path = _resolve_path(rel)
+    if abs_path is None or not abs_path.exists():
+        return jsonify({"error": "no existe"}), 404
+    try:
+        img = _open_for_edit(abs_path)
+        return jsonify({"width": img.size[0], "height": img.size[1]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/api/auto_levels")
 def auto_levels():
     """Ajustes sugeridos para una foto (no modifica nada)."""
@@ -1099,12 +1177,7 @@ def edit_image():
     flip_v = bool(data.get("flip_v"))
     crop = data.get("crop") or None
     adj = data.get("adj") or {}
-    has_adj = any([
-        _adj_value(adj, "temp", 0.0) != 0,
-        _adj_value(adj, "brightness", 1.0) != 1,
-        _adj_value(adj, "contrast", 1.0) != 1,
-        _adj_value(adj, "saturation", 1.0) != 1,
-    ])
+    has_adj = not _adj_is_neutral(adj)
 
     # Via sin perdida: giro y/o volteo, nada mas
     if not crop and not has_adj:
