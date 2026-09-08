@@ -361,6 +361,224 @@ def _write_date_exiftool(path, exif_date=None, shift=None, sync_file=True):
     _evict_thumb_cache(path)
     return path
 
+# =============================================================================
+# EDICION DE IMAGEN
+# Girar/voltear es SIN PERDIDA: solo se reescribe el tag EXIF Orientation, los
+# pixeles no se tocan (funciona hasta en RAW).
+# Recortar y ajustar luz/color obligan a recodificar los pixeles; la interfaz
+# avisa antes de guardar. Los metadatos (GPS, fechas) se copian del original
+# con ExifTool para no perderlos.
+# =============================================================================
+
+# Composicion de operaciones sobre el tag Orientation (1-8). Tablas verificadas
+# contra las transposiciones de Pillow, no de memoria.
+ORIENT_OPS = {
+    "cw":    {1: 6, 2: 7, 3: 8, 4: 5, 5: 2, 6: 3, 7: 4, 8: 1},
+    "ccw":   {1: 8, 2: 5, 3: 6, 4: 7, 5: 4, 6: 1, 7: 2, 8: 3},
+    "180":   {1: 3, 2: 4, 3: 1, 4: 2, 5: 7, 6: 8, 7: 5, 8: 6},
+    "fliph": {1: 2, 2: 1, 3: 4, 4: 3, 5: 6, 6: 5, 7: 8, 8: 7},
+    "flipv": {1: 4, 2: 3, 3: 2, 4: 1, 5: 8, 6: 7, 7: 6, 8: 5},
+}
+
+# Formatos cuyos pixeles se pueden reescribir. Un RAW no: al editarlo se
+# guarda un JPEG derivado junto al original.
+EDITABLE_EXTS = JPG_EXTS | PNG_EXTS | WEBP_EXTS | HEIC_EXTS
+
+def _rotate_lossless(path, op):
+    """Gira/voltea cambiando SOLO el tag EXIF Orientation. No toca los pixeles."""
+    path = sanitize_path(path)
+    table = ORIENT_OPS.get(op)
+    if table is None:
+        raise Exception("operacion no valida")
+    current = _read_orientation(path)
+    if current not in table:
+        current = 1
+    new = table[current]
+    result = subprocess.run(
+        ["exiftool", "-Orientation=" + str(new), "-n", "-overwrite_original", str(path)],
+        capture_output=True, text=True, timeout=30
+    )
+    if result.returncode != 0 or "0 image files updated" in (result.stdout or ""):
+        raise Exception(result.stderr.strip().splitlines()[0] if result.stderr.strip()
+                        else "no se pudo girar")
+    _trigger_reindex(path)
+    _evict_thumb_cache(path)
+    return new
+
+# ── Ajustes de luz y color ───────────────────────────────────────────────────
+# El editor del navegador previsualiza con filtros CSS y un multiply en canvas.
+# Aqui se replica la MISMA formula, en el mismo orden, para que lo que se
+# guarda sea exactamente lo que se veia:
+#   1. temperatura: atenua el azul (calido) o el rojo (frio)
+#   2. brillo:      v * b
+#   3. contraste:   (v - 0.5) * c + 0.5
+#   4. saturacion:  matriz de CSS saturate() con luma Rec.709
+LUMA_R, LUMA_G, LUMA_B = 0.213, 0.715, 0.072
+
+def _temp_gains(temp):
+    t = max(-100.0, min(100.0, float(temp or 0))) / 300.0
+    if t >= 0:
+        return 1.0, 1.0, 1.0 - t
+    return 1.0 + t, 1.0, 1.0
+
+def _tone_lut(temp, brightness, contrast):
+    """Tabla de 768 valores (256 por canal) con temperatura, brillo y contraste."""
+    b = float(brightness)
+    c = float(contrast)
+    lut = []
+    for gain in _temp_gains(temp):
+        for v in range(256):
+            x = (v / 255.0) * gain * b
+            x = (x - 0.5) * c + 0.5
+            lut.append(max(0, min(255, int(round(x * 255.0)))))
+    return lut
+
+def _saturation_matrix(s):
+    s = float(s)
+    return (
+        LUMA_R + (1 - LUMA_R) * s, LUMA_G - LUMA_G * s,       LUMA_B - LUMA_B * s,       0,
+        LUMA_R - LUMA_R * s,       LUMA_G + (1 - LUMA_G) * s, LUMA_B - LUMA_B * s,       0,
+        LUMA_R - LUMA_R * s,       LUMA_G - LUMA_G * s,       LUMA_B + (1 - LUMA_B) * s, 0,
+    )
+
+def _adj_value(adj, key, default):
+    try:
+        return float(adj.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+def _apply_adjustments(img, adj):
+    temp = _adj_value(adj, "temp", 0.0)
+    brightness = _adj_value(adj, "brightness", 1.0)
+    contrast = _adj_value(adj, "contrast", 1.0)
+    saturation = _adj_value(adj, "saturation", 1.0)
+    if temp == 0 and brightness == 1 and contrast == 1 and saturation == 1:
+        return img
+    alpha = None
+    if img.mode == "RGBA":
+        alpha = img.getchannel("A")
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    if temp != 0 or brightness != 1 or contrast != 1:
+        img = img.point(_tone_lut(temp, brightness, contrast))
+    if saturation != 1:
+        img = img.convert("RGB", _saturation_matrix(saturation))
+    if alpha is not None:
+        img.putalpha(alpha)
+    return img
+
+def _auto_levels(img):
+    """Sugiere ajustes a partir del histograma. El cliente los coloca en los
+    sliders, asi la vista previa y el resultado guardado coinciden siempre."""
+    small = img.copy()
+    small.thumbnail((256, 256))
+    if small.mode != "RGB":
+        small = small.convert("RGB")
+
+    gray = small.convert("L")
+    hist = gray.histogram()
+    total = sum(hist) or 1
+    lo, hi, acc = 0, 255, 0
+    for v, n in enumerate(hist):
+        acc += n
+        if acc >= total * 0.01:
+            lo = v
+            break
+    acc = 0
+    for v in range(255, -1, -1):
+        acc += hist[v]
+        if acc >= total * 0.01:
+            hi = v
+            break
+
+    spread = max(1, hi - lo) / 255.0
+    contrast = max(1.0, min(1.6, 0.85 / spread))
+    mean = sum(v * n for v, n in enumerate(hist)) / total / 255.0
+    brightness = max(0.8, min(1.4, 0.5 / mean)) if mean > 0.05 else 1.0
+
+    # Balance de blancos tipo "mundo gris", amortiguado para no pasarse
+    r, g, b = [sum(v * n for v, n in enumerate(ch.histogram())) / total
+               for ch in small.split()[:3]]
+    temp = 0.0
+    if r > 1 and b > 1:
+        if r > b:
+            temp = 300.0 * (b / r - 1.0)      # foto calida -> enfriar
+        else:
+            temp = 300.0 * (1.0 - r / b)      # foto fria  -> calentar
+    temp = max(-45.0, min(45.0, temp * 0.6))
+
+    return {
+        "temp": round(temp, 1),
+        "brightness": round(brightness, 3),
+        "contrast": round(contrast, 3),
+        "saturation": 1.0,
+    }
+
+def _open_for_edit(abs_path):
+    """Abre la imagen ya orientada (como se ve en el visor). Para un RAW usa la
+    vista previa incrustada, que es lo unico editable de ese formato."""
+    ext = abs_path.suffix.lower()
+    if ext in RAW_EXTS:
+        data = _extract_raw_preview(abs_path)
+        if not data:
+            raise Exception("no se pudo leer la vista previa del RAW")
+        img = Image.open(io.BytesIO(data))
+        op = ORIENTATION_OPS.get(_read_orientation(abs_path))
+        if op is not None:
+            img = img.transpose(op)
+        return img
+    img = Image.open(str(abs_path))
+    try:
+        img = ImageOps.exif_transpose(img)
+    except Exception:
+        pass
+    return img
+
+def _save_pixels(img, dest, ext):
+    """Guarda la imagen en el formato que corresponde a la extension."""
+    if ext in (".jpg", ".jpeg"):
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        img.save(str(dest), format="JPEG", quality=95, subsampling=0, optimize=True)
+    elif ext == ".png":
+        img.save(str(dest), format="PNG", optimize=True)
+    elif ext == ".webp":
+        img.save(str(dest), format="WEBP", quality=95, method=4)
+    elif ext in (".tif", ".tiff"):
+        # LZW es sin perdida y evita TIFF enormes sin comprimir
+        img.save(str(dest), format="TIFF", compression="tiff_lzw")
+    elif ext in HEIC_EXTS:
+        img.save(str(dest), format="HEIF", quality=95)
+    else:
+        raise Exception("formato no editable")
+
+def _copy_metadata(src, dest):
+    """Copia los metadatos del original al archivo editado (GPS, fechas, camara)
+    dejando fuera lo que ya no cuadra: orientacion, tamano y miniaturas viejas."""
+    subprocess.run(
+        ["exiftool", "-tagsFromFile", str(src), "-all:all",
+         "--Orientation", "--ThumbnailImage", "--PreviewImage",
+         "--ExifImageWidth", "--ExifImageHeight",
+         "-overwrite_original", str(dest)],
+        capture_output=True, text=True, timeout=60
+    )
+    # La orientacion ya esta aplicada a los pixeles
+    subprocess.run(["exiftool", "-Orientation=1", "-n", "-overwrite_original", str(dest)],
+                   capture_output=True, text=True, timeout=30)
+
+def _edit_destination(path):
+    """Donde se guarda la edicion: sobre el original salvo que el formato no
+    admita reescritura (RAW), en cuyo caso se crea un JPEG derivado."""
+    ext = path.suffix.lower()
+    if ext in EDITABLE_EXTS or ext in (".tif", ".tiff"):
+        return path, False
+    candidate = path.with_name(path.stem + "_edit.jpg")
+    n = 2
+    while candidate.exists():
+        candidate = path.with_name(path.stem + "_edit_" + str(n) + ".jpg")
+        n += 1
+    return candidate, True
+
 def _reverse_geocode(lat, lon):
     try:
         r = requests.get(
@@ -823,6 +1041,143 @@ def write_date():
         except Exception as e:
             errors.append({"file": path.name, "error": str(e)})
     return jsonify({"ok": ok, "errors": errors, "date": exif_date or ""})
+
+@app.route("/api/rotate", methods=["POST"])
+def rotate_files():
+    """Giro/volteo SIN PERDIDA: solo cambia el tag EXIF Orientation."""
+    data = request.json or {}
+    files = data.get("files", [])
+    op = data.get("op", "")
+    if not files:
+        return jsonify({"error": "sin archivos"}), 400
+    if op not in ORIENT_OPS:
+        return jsonify({"error": "operacion no valida"}), 400
+    ok, errors = [], []
+    for rel in files:
+        path = _resolve_path(rel)
+        if path is None or not path.exists():
+            errors.append({"file": rel, "error": "no existe o ruta invalida"})
+            continue
+        try:
+            _rotate_lossless(path, op)
+            ok.append(path.name)
+        except Exception as e:
+            errors.append({"file": path.name, "error": str(e)})
+    return jsonify({"ok": ok, "errors": errors})
+
+@app.route("/api/auto_levels")
+def auto_levels():
+    """Ajustes sugeridos para una foto (no modifica nada)."""
+    rel = request.args.get("path", "")
+    abs_path = _resolve_path(rel)
+    if abs_path is None or not abs_path.exists():
+        return jsonify({"error": "no existe"}), 404
+    try:
+        img = _open_for_edit(abs_path)
+        img.thumbnail((512, 512))
+        return jsonify(_auto_levels(img))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/edit", methods=["POST"])
+def edit_image():
+    """
+    Aplica giro/volteo, recorte y ajustes de luz y color.
+    Si solo hay giro/volteo se usa la via SIN PERDIDA (tag Orientation).
+    En cuanto hay recorte o ajustes hay que recodificar los pixeles: se
+    sobrescribe el original (la interfaz avisa antes), salvo en RAW, que no
+    admite reescritura y genera un JPEG derivado.
+    """
+    data = request.json or {}
+    rel = data.get("path", "")
+    abs_path = _resolve_path(rel)
+    if abs_path is None or not abs_path.exists() or not abs_path.is_file():
+        return jsonify({"error": "la foto no existe"}), 404
+
+    rotate = str(data.get("rotate", "0"))
+    flip_h = bool(data.get("flip_h"))
+    flip_v = bool(data.get("flip_v"))
+    crop = data.get("crop") or None
+    adj = data.get("adj") or {}
+    has_adj = any([
+        _adj_value(adj, "temp", 0.0) != 0,
+        _adj_value(adj, "brightness", 1.0) != 1,
+        _adj_value(adj, "contrast", 1.0) != 1,
+        _adj_value(adj, "saturation", 1.0) != 1,
+    ])
+
+    # Via sin perdida: giro y/o volteo, nada mas
+    if not crop and not has_adj:
+        ops = []
+        if rotate == "90":
+            ops.append("cw")
+        elif rotate == "180":
+            ops.append("180")
+        elif rotate == "270":
+            ops.append("ccw")
+        if flip_h:
+            ops.append("fliph")
+        if flip_v:
+            ops.append("flipv")
+        if not ops:
+            return jsonify({"error": "no hay cambios que guardar"}), 400
+        try:
+            for op in ops:
+                _rotate_lossless(abs_path, op)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+        return jsonify({"ok": True, "lossless": True, "path": rel, "name": abs_path.name})
+
+    # Via con recodificacion
+    dest, derived = _edit_destination(abs_path)
+    tmp = dest.with_name("." + dest.name + ".edit_tmp" + dest.suffix)
+    try:
+        img = _open_for_edit(abs_path)
+        if rotate == "90":
+            img = img.transpose(Image.ROTATE_270)
+        elif rotate == "180":
+            img = img.transpose(Image.ROTATE_180)
+        elif rotate == "270":
+            img = img.transpose(Image.ROTATE_90)
+        if flip_h:
+            img = img.transpose(Image.FLIP_LEFT_RIGHT)
+        if flip_v:
+            img = img.transpose(Image.FLIP_TOP_BOTTOM)
+
+        if crop:
+            w, h = img.size
+            x0 = int(round(max(0.0, min(1.0, float(crop.get("x", 0)))) * w))
+            y0 = int(round(max(0.0, min(1.0, float(crop.get("y", 0)))) * h))
+            x1 = x0 + int(round(max(0.0, min(1.0, float(crop.get("w", 1)))) * w))
+            y1 = y0 + int(round(max(0.0, min(1.0, float(crop.get("h", 1)))) * h))
+            x1 = min(w, max(x0 + 1, x1))
+            y1 = min(h, max(y0 + 1, y1))
+            if (x0, y0, x1, y1) != (0, 0, w, h):
+                img = img.crop((x0, y0, x1, y1))
+
+        img = _apply_adjustments(img, adj)
+        _save_pixels(img, tmp, dest.suffix.lower())
+        _copy_metadata(abs_path, tmp)
+        os.replace(str(tmp), str(dest))
+    except Exception as e:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+        return jsonify({"error": str(e)}), 500
+
+    _trigger_reindex(dest)
+    _evict_thumb_cache(dest)
+    _evict_thumb_cache(abs_path)
+    root = _work_root()
+    return jsonify({
+        "ok": True,
+        "lossless": False,
+        "derived": derived,
+        "name": dest.name,
+        "path": str(dest.relative_to(root)),
+    })
 
 @app.route("/api/missing_gps")
 def missing_gps():

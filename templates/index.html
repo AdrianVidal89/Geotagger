@@ -640,6 +640,141 @@ header .spacer{flex:1}
   .vw-nav{display:none}
 }
 
+/* ── EDITOR DE IMAGEN ────────────────────────── */
+.editor{
+  display:none;position:fixed;inset:0;z-index:450;
+  background:#121212;color:#fff;flex-direction:column;
+}
+.editor.on{display:flex}
+.ed-top{
+  display:flex;align-items:center;gap:12px;
+  padding:10px 12px;flex-shrink:0;border-bottom:1px solid rgba(255,255,255,.1);
+}
+.ed-name{
+  flex:1;min-width:0;font-size:.85rem;font-weight:500;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.ed-icon-btn{
+  width:38px;height:38px;border-radius:50%;border:none;flex-shrink:0;
+  background:rgba(255,255,255,.12);color:#fff;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+}
+.ed-icon-btn:hover{background:rgba(255,255,255,.22)}
+.ed-icon-btn svg{width:20px;height:20px;fill:currentColor}
+.ed-save{
+  border:none;border-radius:20px;padding:9px 18px;flex-shrink:0;
+  background:var(--primary);color:#fff;font-size:.85rem;font-weight:500;cursor:pointer;
+  display:flex;align-items:center;gap:7px;min-height:38px;
+}
+.ed-save:hover{background:var(--primary-dk)}
+.ed-save:disabled{opacity:.45;cursor:not-allowed}
+.ed-save svg{width:16px;height:16px;fill:currentColor}
+.ed-stage{
+  flex:1;min-height:0;display:flex;align-items:center;justify-content:center;
+  padding:14px;overflow:hidden;
+}
+.ed-frame{position:relative;display:flex;max-width:100%;max-height:100%}
+#ed-canvas{display:block;max-width:100%;max-height:100%;object-fit:contain}
+.ed-crop-layer{position:absolute;inset:0;display:none;touch-action:none}
+.ed-crop-layer.on{display:block}
+.ed-crop-box{
+  position:absolute;box-sizing:border-box;
+  border:1px solid rgba(255,255,255,.95);
+  box-shadow:0 0 0 9999px rgba(0,0,0,.55);
+  cursor:move;
+}
+/* rejilla de tercios */
+.ed-crop-box::before,.ed-crop-box::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background-repeat:no-repeat;opacity:.5;
+}
+.ed-crop-box::before{
+  background-image:linear-gradient(to right,transparent 33.33%,rgba(255,255,255,.6) 33.33%,rgba(255,255,255,.6) calc(33.33% + 1px),transparent calc(33.33% + 1px),transparent 66.66%,rgba(255,255,255,.6) 66.66%,rgba(255,255,255,.6) calc(66.66% + 1px),transparent calc(66.66% + 1px));
+}
+.ed-crop-box::after{
+  background-image:linear-gradient(to bottom,transparent 33.33%,rgba(255,255,255,.6) 33.33%,rgba(255,255,255,.6) calc(33.33% + 1px),transparent calc(33.33% + 1px),transparent 66.66%,rgba(255,255,255,.6) 66.66%,rgba(255,255,255,.6) calc(66.66% + 1px),transparent calc(66.66% + 1px));
+}
+.ed-h{position:absolute;width:26px;height:26px;touch-action:none}
+.ed-h::after{
+  content:"";position:absolute;width:14px;height:14px;
+  border:2px solid #fff;border-radius:2px;
+}
+.ed-h[data-h="nw"]{top:-13px;left:-13px;cursor:nwse-resize}
+.ed-h[data-h="ne"]{top:-13px;right:-13px;cursor:nesw-resize}
+.ed-h[data-h="sw"]{bottom:-13px;left:-13px;cursor:nesw-resize}
+.ed-h[data-h="se"]{bottom:-13px;right:-13px;cursor:nwse-resize}
+.ed-h[data-h="nw"]::after{top:6px;left:6px;border-width:2px 0 0 2px}
+.ed-h[data-h="ne"]::after{top:6px;right:6px;border-width:2px 2px 0 0}
+.ed-h[data-h="sw"]::after{bottom:6px;left:6px;border-width:0 0 2px 2px}
+.ed-h[data-h="se"]::after{bottom:6px;right:6px;border-width:0 2px 2px 0}
+.ed-tabs{
+  display:flex;gap:4px;padding:8px 12px 0;flex-shrink:0;
+  justify-content:center;
+}
+.ed-tab{
+  border:none;background:transparent;color:rgba(255,255,255,.6);
+  padding:9px 16px;border-radius:18px;font-size:.82rem;font-weight:500;
+  cursor:pointer;display:flex;align-items:center;gap:7px;
+}
+.ed-tab svg{width:16px;height:16px;fill:currentColor}
+.ed-tab.on{background:rgba(255,255,255,.14);color:#fff}
+.ed-panel{
+  flex-shrink:0;padding:12px 18px 20px;min-height:132px;
+  max-height:38vh;overflow-y:auto;
+  width:100%;max-width:640px;margin:0 auto;
+}
+.ed-row{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.ed-btn{
+  border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);
+  color:#fff;border-radius:10px;padding:10px 14px;font-size:.78rem;
+  cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:6px;
+  min-width:74px;
+}
+.ed-btn:hover{background:rgba(255,255,255,.14)}
+.ed-btn svg{width:20px;height:20px;fill:currentColor}
+.ed-chip{
+  border:1px solid rgba(255,255,255,.2);background:transparent;color:#fff;
+  border-radius:16px;padding:7px 14px;font-size:.78rem;cursor:pointer;
+}
+.ed-chip.on{background:#fff;color:#121212;border-color:#fff}
+.ed-slider{display:flex;align-items:center;gap:12px;margin:10px 0}
+.ed-slider label{width:96px;font-size:.78rem;color:rgba(255,255,255,.75);flex-shrink:0}
+.ed-slider input[type=range]{
+  flex:1;accent-color:var(--primary);height:22px;
+}
+.ed-slider .ed-val{
+  width:44px;text-align:right;font-size:.75rem;
+  color:rgba(255,255,255,.6);font-variant-numeric:tabular-nums;flex-shrink:0;
+}
+.ed-hint{
+  font-size:.72rem;color:rgba(255,255,255,.45);
+  text-align:center;margin-top:10px;line-height:1.45;
+}
+.ed-busy{
+  position:absolute;inset:0;display:none;z-index:5;
+  align-items:center;justify-content:center;gap:10px;
+  background:rgba(0,0,0,.55);color:#fff;font-size:.85rem;
+}
+.ed-busy.on{display:flex}
+@media(max-width:768px){
+  .ed-slider label{width:76px;font-size:.74rem}
+  .ed-panel{padding:10px 12px 18px}
+  .ed-tab{padding:9px 12px}
+  .ed-tab span{display:none}
+  .ed-tab.on span{display:inline}
+}
+
+/* aviso de recompresion al guardar: el editor va en z-index 450 */
+#modal-edit{z-index:500}
+.edit-warn{
+  display:flex;align-items:flex-start;gap:10px;
+  background:#fef7e0;border-radius:var(--radius);
+  padding:12px 14px;margin-bottom:14px;
+}
+.edit-warn svg{width:20px;height:20px;fill:var(--yellow);flex-shrink:0;margin-top:1px}
+.edit-warn strong{display:block;font-size:.9rem;margin-bottom:2px;color:#7a5300}
+.edit-warn p{font-size:.85rem;color:#7a5300;line-height:1.45}
+
 /* ── MOBILE GPS BOTTOM SHEET ─────────────────── */
 .drawer-bd{
   display:none;position:fixed;inset:0;
@@ -969,6 +1104,9 @@ header .spacer{flex:1}
       <span class="vw-name" id="vw-name"></span>
       <span class="vw-meta"><span id="vw-count"></span><span class="vw-ext" id="vw-ext"></span><span id="vw-date"></span></span>
     </div>
+    <button class="vw-btn" id="vw-edit-btn" title="Editar foto (girar, recortar, luz y color)">
+      <svg viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
+    </button>
     <button class="vw-btn" id="vw-date-btn" title="Modificar fecha de esta foto">
       <svg viewBox="0 0 24 24"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>
     </button>
@@ -985,6 +1123,137 @@ header .spacer{flex:1}
   <button class="vw-nav next" id="vw-next" title="Siguiente (→)">
     <svg viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
   </button>
+</div>
+
+<!-- IMAGE EDITOR -->
+<div class="editor" id="editor">
+  <div class="ed-top">
+    <button class="ed-icon-btn" id="ed-close" title="Cerrar sin guardar">
+      <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+    </button>
+    <span class="ed-name" id="ed-name"></span>
+    <button class="ed-icon-btn" id="ed-reset" title="Deshacer todos los cambios">
+      <svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+    </button>
+    <button class="ed-save" id="ed-save" disabled>
+      <svg viewBox="0 0 24 24"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
+      Guardar
+    </button>
+  </div>
+
+  <div class="ed-stage" id="ed-stage">
+    <div class="ed-frame" id="ed-frame">
+      <canvas id="ed-canvas"></canvas>
+      <div class="ed-crop-layer" id="ed-crop-layer">
+        <div class="ed-crop-box" id="ed-crop-box">
+          <div class="ed-h" data-h="nw"></div>
+          <div class="ed-h" data-h="ne"></div>
+          <div class="ed-h" data-h="sw"></div>
+          <div class="ed-h" data-h="se"></div>
+        </div>
+      </div>
+    </div>
+    <div class="ed-busy" id="ed-busy"><div class="spinner"></div><span id="ed-busy-txt">Guardando...</span></div>
+  </div>
+
+  <div class="ed-tabs">
+    <button class="ed-tab on" data-tab="rot">
+      <svg viewBox="0 0 24 24"><path d="M15.55 5.55L11 1v3.07C7.06 4.56 4 7.92 4 12s3.05 7.44 7 7.93v-2.02c-2.84-.48-5-2.94-5-5.91s2.16-5.43 5-5.91V10l4.55-4.45zM19.93 11c-.17-1.39-.72-2.73-1.62-3.89l-1.42 1.42c.54.75.88 1.6 1.02 2.47h2.02zM13 17.9v2.02c1.39-.17 2.74-.71 3.9-1.61l-1.44-1.44c-.75.54-1.59.89-2.46 1.03zm3.89-2.42l1.42 1.41c.9-1.16 1.45-2.5 1.62-3.89h-2.02c-.14.87-.48 1.72-1.02 2.48z"/></svg>
+      <span>Girar</span>
+    </button>
+    <button class="ed-tab" data-tab="crop">
+      <svg viewBox="0 0 24 24"><path d="M17 15h2V7c0-1.1-.9-2-2-2H9v2h8v8zM7 17V1H5v4H1v2h4v10c0 1.1.9 2 2 2h10v4h2v-4h4v-2H7z"/></svg>
+      <span>Recortar</span>
+    </button>
+    <button class="ed-tab" data-tab="light">
+      <svg viewBox="0 0 24 24"><path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zm0 8c-1.65 0-3-1.35-3-3s1.35-3 3-3 3 1.35 3 3-1.35 3-3 3zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58a.996.996 0 0 0-1.41 0 .996.996 0 0 0 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37a.996.996 0 0 0-1.41 0 .996.996 0 0 0 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0a.996.996 0 0 0 0-1.41l-1.06-1.06zm1.06-10.96a.996.996 0 0 0 0-1.41.996.996 0 0 0-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36a.996.996 0 0 0 0-1.41.996.996 0 0 0-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/></svg>
+      <span>Luz y color</span>
+    </button>
+  </div>
+
+  <div class="ed-panel">
+    <!-- GIRAR: sin pérdida mientras no se toque nada más -->
+    <div id="ed-pane-rot">
+      <div class="ed-row">
+        <button class="ed-btn" id="ed-ccw">
+          <svg viewBox="0 0 24 24"><path d="M7.11 8.53L5.7 7.11C4.8 8.27 4.24 9.61 4.07 11h2.02c.14-.87.49-1.72 1.02-2.47zM6.09 13H4.07c.17 1.39.72 2.73 1.62 3.89l1.41-1.42c-.52-.75-.87-1.59-1.01-2.47zm1.01 5.32c1.16.9 2.51 1.44 3.9 1.61V17.9c-.87-.15-1.71-.49-2.46-1.03L7.1 18.32zM13 4.07V1L8.45 5.55 13 10V6.09c2.84.48 5 2.94 5 5.91s-2.16 5.43-5 5.91v2.02c3.95-.49 7-3.85 7-7.93s-3.05-7.44-7-7.93z"/></svg>
+          Izquierda
+        </button>
+        <button class="ed-btn" id="ed-cw">
+          <svg viewBox="0 0 24 24"><path d="M15.55 5.55L11 1v3.07C7.06 4.56 4 7.92 4 12s3.05 7.44 7 7.93v-2.02c-2.84-.48-5-2.94-5-5.91s2.16-5.43 5-5.91V10l4.55-4.45zM19.93 11c-.17-1.39-.72-2.73-1.62-3.89l-1.42 1.42c.54.75.88 1.6 1.02 2.47h2.02zM13 17.9v2.02c1.39-.17 2.74-.71 3.9-1.61l-1.44-1.44c-.75.54-1.59.89-2.46 1.03zm3.89-2.42l1.42 1.41c.9-1.16 1.45-2.5 1.62-3.89h-2.02c-.14.87-.48 1.72-1.02 2.48z"/></svg>
+          Derecha
+        </button>
+        <button class="ed-btn" id="ed-fliph">
+          <svg viewBox="0 0 24 24"><path d="M15 21h2v-2h-2v2zm4-12h2V7h-2v2zM3 5v14c0 1.1.9 2 2 2h4v-2H5V5h4V3H5c-1.1 0-2 .9-2 2zm16-2v2h2c0-1.1-.9-2-2-2zm-8 20h2V1h-2v22zm8-6h2v-2h-2v2zM15 5h2V3h-2v2zm4 8h2v-2h-2v2zm0 8c1.1 0 2-.9 2-2h-2v2z"/></svg>
+          Espejo H
+        </button>
+        <button class="ed-btn" id="ed-flipv">
+          <svg viewBox="0 0 24 24"><path d="M3 15v2h2v-2H3zm12 6h2v-2h-2v2zM3 5v2h2V5H3zm16-2H5c-1.1 0-2 .9-2 2v4h2V5h14v4h2V5c0-1.1-.9-2-2-2zM1 11v2h22v-2H1zm18 8h2v-2h-2v2zm-8 2h2V3h-2v18zM7 21h2v-2H7v2zm0-16h2V3H7v2zm12 12h2v-2h-2v2z"/></svg>
+          Espejo V
+        </button>
+      </div>
+      <div class="ed-hint">Girar y voltear no toca los píxeles: solo cambia la orientación en los metadatos. Sin pérdida de calidad.</div>
+    </div>
+
+    <!-- RECORTAR -->
+    <div id="ed-pane-crop" style="display:none">
+      <div class="ed-row">
+        <button class="ed-chip on" data-ar="0">Libre</button>
+        <button class="ed-chip" data-ar="1">1:1</button>
+        <button class="ed-chip" data-ar="1.3333">4:3</button>
+        <button class="ed-chip" data-ar="1.5">3:2</button>
+        <button class="ed-chip" data-ar="1.7778">16:9</button>
+        <button class="ed-chip" id="ed-crop-clear">Quitar recorte</button>
+      </div>
+      <div class="ed-hint" id="ed-crop-size">Arrastra el recuadro o sus esquinas para elegir el encuadre.</div>
+    </div>
+
+    <!-- LUZ Y COLOR -->
+    <div id="ed-pane-light" style="display:none">
+      <div class="ed-slider">
+        <label for="ed-temp">Temperatura</label>
+        <input type="range" id="ed-temp" min="-100" max="100" step="1" value="0">
+        <span class="ed-val" id="ed-temp-v">0</span>
+      </div>
+      <div class="ed-slider">
+        <label for="ed-bright">Exposición</label>
+        <input type="range" id="ed-bright" min="50" max="180" step="1" value="100">
+        <span class="ed-val" id="ed-bright-v">0</span>
+      </div>
+      <div class="ed-slider">
+        <label for="ed-contrast">Contraste</label>
+        <input type="range" id="ed-contrast" min="50" max="200" step="1" value="100">
+        <span class="ed-val" id="ed-contrast-v">0</span>
+      </div>
+      <div class="ed-slider">
+        <label for="ed-sat">Saturación</label>
+        <input type="range" id="ed-sat" min="0" max="200" step="1" value="100">
+        <span class="ed-val" id="ed-sat-v">0</span>
+      </div>
+      <div class="ed-row" style="margin-top:12px">
+        <button class="ed-chip" id="ed-auto">✨ Auto</button>
+        <button class="ed-chip" id="ed-light-reset">Restablecer luz</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT SAVE CONFIRMATION MODAL -->
+<div class="modal-overlay" id="modal-edit">
+  <div class="modal">
+    <div class="modal-title">Guardar cambios</div>
+    <div class="edit-warn">
+      <svg viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
+      <div>
+        <strong>La foto se volverá a comprimir</strong>
+        <p id="edit-warn-text"></p>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="btn-edit-cancel">Cancelar</button>
+      <button class="btn btn-primary" id="btn-edit-confirm">Sobrescribir original</button>
+    </div>
+  </div>
 </div>
 
 <!-- DELETE CONFIRMATION MODAL -->
@@ -1303,7 +1572,7 @@ function makeCard(f, i) {
   const card = document.createElement("div");
   card.className = "fc" + (selectedFiles.has(f.path) ? " sel" : "");
   card.dataset.index = i;
-  card.dataset.src = "/api/thumb?path=" + encodeURIComponent(f.path);
+  card.dataset.src = bust("/api/thumb?path=" + encodeURIComponent(f.path), f.path);
   const isRaw = RAW_EXTS.includes(f.ext);
   const folderHtml = f.folder && f.folder !== "." ? '<br><small style="opacity:.7">' + f.folder + '</small>' : '';
   card.innerHTML =
@@ -2325,8 +2594,8 @@ const vwImg = document.getElementById("vw-img");
 let viewerIndex = -1;
 let vwZoomed = false;
 
-function previewUrl(f) { return "/api/preview?path=" + encodeURIComponent(f.path); }
-function thumbUrl(f)   { return "/api/thumb?path=" + encodeURIComponent(f.path); }
+function previewUrl(f) { return bust("/api/preview?path=" + encodeURIComponent(f.path), f.path); }
+function thumbUrl(f)   { return bust("/api/thumb?path=" + encodeURIComponent(f.path), f.path); }
 
 function openViewer(i) {
   if (i < 0 || i >= currentFiles.length) return;
@@ -2355,6 +2624,7 @@ function closeViewer() {
 }
 
 function viewerKeys(e) {
+  if (editorEl.classList.contains("on")) return;   // manda el editor
   if (e.key === "Escape") closeViewer();
   else if (e.key === "ArrowLeft") viewerNav(-1);
   else if (e.key === "ArrowRight") viewerNav(1);
@@ -2495,6 +2765,490 @@ viewerEl.addEventListener("touchend", (e) => {
   if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) viewerNav(dx < 0 ? 1 : -1);
   else if (dy > 70 && Math.abs(dy) > Math.abs(dx) * 1.5) closeViewer();
 }, { passive: true });
+
+// ── Editor de imagen ─────────────────────────────────────────────────────────
+// La vista previa se dibuja en un canvas: giro/volteo se aplican al lienzo y la
+// temperatura con un "multiply"; brillo, contraste y saturación son filtros CSS.
+// El servidor repite EXACTAMENTE la misma fórmula y en el mismo orden, así que
+// lo guardado es lo que se veía.
+//
+// El estado del giro se lleva como una orientación EXIF (1-8) y se compone con
+// las mismas tablas que usa el backend; al guardar se traduce a los parámetros
+// que espera /api/edit. Ambas tablas están verificadas contra Pillow.
+const ED_OPS = {
+  cw:    {1:6, 2:7, 3:8, 4:5, 5:2, 6:3, 7:4, 8:1},
+  ccw:   {1:8, 2:5, 3:6, 4:7, 5:4, 6:1, 7:2, 8:3},
+  fliph: {1:2, 2:1, 3:4, 4:3, 5:6, 6:5, 7:8, 8:7},
+  flipv: {1:4, 2:3, 3:2, 4:1, 5:8, 6:7, 7:6, 8:5}
+};
+const ED_ORIENT_PARAMS = {
+  1: {rotate:0,   flip_h:false, flip_v:false},
+  2: {rotate:0,   flip_h:true,  flip_v:false},
+  3: {rotate:0,   flip_h:true,  flip_v:true},
+  4: {rotate:0,   flip_h:false, flip_v:true},
+  5: {rotate:90,  flip_h:true,  flip_v:false},
+  6: {rotate:90,  flip_h:false, flip_v:false},
+  7: {rotate:90,  flip_h:false, flip_v:true},
+  8: {rotate:90,  flip_h:true,  flip_v:true}
+};
+const ED_DEFAULT_ADJ = {temp:0, brightness:1, contrast:1, saturation:1};
+
+const editorEl = document.getElementById("editor");
+const edCanvas = document.getElementById("ed-canvas");
+const edCtx = edCanvas.getContext("2d");
+let edFile = null;
+let edImg = null;
+let edOrient = 1;
+let edCrop = null;          // {x,y,w,h} en fracciones del lienzo ya girado
+let edAdj = Object.assign({}, ED_DEFAULT_ADJ);
+let edAspect = 0;           // 0 = libre
+let edTab = "rot";
+let edSaving = false;
+
+// Las miniaturas se sirven con cache "immutable"; tras editar hay que forzar
+// que el navegador vuelva a pedirlas
+const editedStamps = {};
+function bust(url, path) {
+  const v = editedStamps[path];
+  return v ? url + "&v=" + v : url;
+}
+
+function edIsRaw(f) { return f && RAW_EXTS.includes(f.ext || ""); }
+
+function edAdjChanged() {
+  return edAdj.temp !== 0 || edAdj.brightness !== 1 ||
+         edAdj.contrast !== 1 || edAdj.saturation !== 1;
+}
+// Un recuadro que abarca la foto entera no es un recorte
+function edEffectiveCrop() {
+  if (!edCrop) return null;
+  if (edCrop.w > 0.995 && edCrop.h > 0.995) return null;
+  return edCrop;
+}
+function edHasPixelEdits() { return !!edEffectiveCrop() || edAdjChanged(); }
+function edHasChanges() { return edOrient !== 1 || edHasPixelEdits(); }
+
+function edUpdateSaveBtn() {
+  document.getElementById("ed-save").disabled = !edHasChanges() || edSaving;
+}
+
+// ── Dibujo del lienzo ────────────────────────────────────────────────────────
+function edDrawCanvas() {
+  if (!edImg) return;
+  const o = ED_ORIENT_PARAMS[edOrient];
+  const swap = o.rotate === 90 || o.rotate === 270;
+  const w = edImg.naturalWidth, h = edImg.naturalHeight;
+  edCanvas.width = swap ? h : w;
+  edCanvas.height = swap ? w : h;
+
+  edCtx.setTransform(1, 0, 0, 1, 0, 0);
+  edCtx.clearRect(0, 0, edCanvas.width, edCanvas.height);
+  edCtx.save();
+  edCtx.translate(edCanvas.width / 2, edCanvas.height / 2);
+  // Ojo al orden: la última transformación es la primera que se aplica a lo
+  // dibujado, así que esto equivale a "girar y luego voltear", igual que el
+  // servidor.
+  edCtx.scale(o.flip_h ? -1 : 1, o.flip_v ? -1 : 1);
+  edCtx.rotate(o.rotate * Math.PI / 180);
+  edCtx.drawImage(edImg, -w / 2, -h / 2);
+  edCtx.restore();
+
+  // Temperatura: atenúa el azul (cálido) o el rojo (frío), igual que el LUT
+  // del servidor
+  const t = edAdj.temp;
+  if (t) {
+    const kr = t >= 0 ? 1 : 1 + t / 300;
+    const kb = t >= 0 ? 1 - t / 300 : 1;
+    edCtx.globalCompositeOperation = "multiply";
+    edCtx.fillStyle = "rgb(" + Math.round(kr * 255) + ",255," + Math.round(kb * 255) + ")";
+    edCtx.fillRect(0, 0, edCanvas.width, edCanvas.height);
+    edCtx.globalCompositeOperation = "source-over";
+  }
+  edApplyFilter();
+  edSyncCropBox();
+}
+
+function edApplyFilter() {
+  edCanvas.style.filter =
+    "brightness(" + edAdj.brightness + ") contrast(" + edAdj.contrast + ") saturate(" + edAdj.saturation + ")";
+}
+
+// ── Recorte ──────────────────────────────────────────────────────────────────
+function edCropLayerOn() {
+  const layer = document.getElementById("ed-crop-layer");
+  layer.classList.toggle("on", edTab === "crop" || !!edEffectiveCrop());
+  layer.style.pointerEvents = edTab === "crop" ? "auto" : "none";
+}
+
+function edSyncCropBox() {
+  edCropLayerOn();
+  const box = document.getElementById("ed-crop-box");
+  const c = edCrop || {x:0, y:0, w:1, h:1};
+  box.style.left   = (c.x * 100) + "%";
+  box.style.top    = (c.y * 100) + "%";
+  box.style.width  = (c.w * 100) + "%";
+  box.style.height = (c.h * 100) + "%";
+  const info = document.getElementById("ed-crop-size");
+  if (edCrop) {
+    const pw = Math.round(edCrop.w * edCanvas.width);
+    const ph = Math.round(edCrop.h * edCanvas.height);
+    info.textContent = "Recorte de la vista previa: " + pw + " × " + ph +
+      " px (en el original se aplica a resolución completa)";
+  } else {
+    info.textContent = "Arrastra el recuadro o sus esquinas para elegir el encuadre.";
+  }
+}
+
+function edClampCrop(c) {
+  c.w = Math.max(0.05, Math.min(1, c.w));
+  c.h = Math.max(0.05, Math.min(1, c.h));
+  c.x = Math.max(0, Math.min(1 - c.w, c.x));
+  c.y = Math.max(0, Math.min(1 - c.h, c.y));
+  return c;
+}
+
+// Encaja el recorte en una proporción dada (en píxeles reales del lienzo)
+function edFitAspect(c, ar) {
+  if (!ar) return c;
+  const cw = edCanvas.width, ch = edCanvas.height;
+  let wpx = c.w * cw, hpx = c.h * ch;
+  if (wpx / hpx > ar) wpx = hpx * ar; else hpx = wpx / ar;
+  const nx = c.x + (c.w * cw - wpx) / 2 / cw;
+  const ny = c.y + (c.h * ch - hpx) / 2 / ch;
+  return edClampCrop({x: nx, y: ny, w: wpx / cw, h: hpx / ch});
+}
+
+function edSetAspectChips(ar) {
+  document.querySelectorAll("#ed-pane-crop .ed-chip[data-ar]").forEach(el => {
+    el.classList.toggle("on", parseFloat(el.dataset.ar) === ar);
+  });
+}
+
+function edSetAspect(ar) {
+  edAspect = ar;
+  edSetAspectChips(ar);
+  // "Libre" no inventa un encuadre: solo suelta la proporcion
+  if (ar && !edCrop) edCrop = {x:0, y:0, w:1, h:1};
+  if (ar && edCrop) edCrop = edFitAspect(edCrop, ar);
+  edSyncCropBox();
+  edUpdateSaveBtn();
+}
+
+// Arrastre del recuadro y de sus esquinas (ratón y táctil)
+(function edCropDrag() {
+  const layer = document.getElementById("ed-crop-layer");
+  const box = document.getElementById("ed-crop-box");
+  let mode = null, startX = 0, startY = 0, start = null;
+
+  function frac(e) {
+    const r = edCanvas.getBoundingClientRect();
+    return {x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height};
+  }
+
+  function begin(e, m) {
+    if (edTab !== "crop") return;
+    mode = m;
+    const f = frac(e);
+    startX = f.x; startY = f.y;
+    if (!edCrop) edCrop = {x:0, y:0, w:1, h:1};
+    start = Object.assign({}, edCrop);
+    layer.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  layer.addEventListener("pointerdown", (e) => {
+    const handle = e.target.closest(".ed-h");
+    if (handle) begin(e, handle.dataset.h);
+    else if (e.target.closest(".ed-crop-box")) begin(e, "move");
+    else begin(e, "new");
+  });
+
+  layer.addEventListener("pointermove", (e) => {
+    if (!mode) return;
+    const f = frac(e);
+    const dx = f.x - startX, dy = f.y - startY;
+    let c;
+    if (mode === "move") {
+      c = {x: start.x + dx, y: start.y + dy, w: start.w, h: start.h};
+      c.x = Math.max(0, Math.min(1 - c.w, c.x));
+      c.y = Math.max(0, Math.min(1 - c.h, c.y));
+    } else if (mode === "new") {
+      c = edClampCrop({
+        x: Math.min(startX, f.x), y: Math.min(startY, f.y),
+        w: Math.abs(f.x - startX), h: Math.abs(f.y - startY)
+      });
+      if (edAspect) c = edFitAspect(c, edAspect);
+    } else {
+      c = Object.assign({}, start);
+      if (mode.indexOf("n") === 0) { c.y = start.y + dy; c.h = start.h - dy; }
+      if (mode.indexOf("s") === 0) { c.h = start.h + dy; }
+      if (mode.indexOf("w") === 1) { c.x = start.x + dx; c.w = start.w - dx; }
+      if (mode.indexOf("e") === 1) { c.w = start.w + dx; }
+      c = edClampCrop(c);
+      if (edAspect) c = edFitAspect(c, edAspect);
+    }
+    edCrop = edClampCrop(c);
+    edSyncCropBox();
+  });
+
+  ["pointerup", "pointercancel"].forEach(ev => layer.addEventListener(ev, () => {
+    if (!mode) return;
+    mode = null;
+    // Un recorte que abarca todo no es un recorte
+    edSyncCropBox();
+    edUpdateSaveBtn();
+  }));
+})();
+
+// ── Pestañas ─────────────────────────────────────────────────────────────────
+function edSetTab(tab) {
+  edTab = tab;
+  document.querySelectorAll(".ed-tab").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
+  document.getElementById("ed-pane-rot").style.display   = tab === "rot"   ? "block" : "none";
+  document.getElementById("ed-pane-crop").style.display  = tab === "crop"  ? "block" : "none";
+  document.getElementById("ed-pane-light").style.display = tab === "light" ? "block" : "none";
+  // El recuadro arranca abarcando toda la foto: mirar la pestana no recorta nada
+  if (tab === "crop" && !edCrop) { edCrop = {x:0, y:0, w:1, h:1}; }
+  edSyncCropBox();
+  edUpdateSaveBtn();
+}
+document.querySelectorAll(".ed-tab").forEach(b => {
+  b.addEventListener("click", () => edSetTab(b.dataset.tab));
+});
+
+// ── Giro y volteo ────────────────────────────────────────────────────────────
+function edApplyOrientOp(op) {
+  edOrient = ED_OPS[op][edOrient];
+  if (edCrop) {
+    const c = edCrop;
+    if (op === "cw")         edCrop = {x: 1 - (c.y + c.h), y: c.x, w: c.h, h: c.w};
+    else if (op === "ccw")   edCrop = {x: c.y, y: 1 - (c.x + c.w), w: c.h, h: c.w};
+    else if (op === "fliph") edCrop = {x: 1 - (c.x + c.w), y: c.y, w: c.w, h: c.h};
+    else if (op === "flipv") edCrop = {x: c.x, y: 1 - (c.y + c.h), w: c.w, h: c.h};
+  }
+  edDrawCanvas();
+  edUpdateSaveBtn();
+}
+document.getElementById("ed-cw").addEventListener("click", () => edApplyOrientOp("cw"));
+document.getElementById("ed-ccw").addEventListener("click", () => edApplyOrientOp("ccw"));
+document.getElementById("ed-fliph").addEventListener("click", () => edApplyOrientOp("fliph"));
+document.getElementById("ed-flipv").addEventListener("click", () => edApplyOrientOp("flipv"));
+
+document.querySelectorAll("#ed-pane-crop .ed-chip[data-ar]").forEach(el => {
+  el.addEventListener("click", () => edSetAspect(parseFloat(el.dataset.ar)));
+});
+document.getElementById("ed-crop-clear").addEventListener("click", () => {
+  edCrop = edTab === "crop" ? {x:0, y:0, w:1, h:1} : null;
+  edAspect = 0;
+  edSetAspectChips(0);
+  edSyncCropBox();
+  edUpdateSaveBtn();
+});
+
+// ── Luz y color ──────────────────────────────────────────────────────────────
+const ED_SLIDERS = [
+  {id: "ed-temp",     key: "temp",       toVal: v => v,       toSlider: v => v},
+  {id: "ed-bright",   key: "brightness", toVal: v => v / 100, toSlider: v => Math.round(v * 100)},
+  {id: "ed-contrast", key: "contrast",   toVal: v => v / 100, toSlider: v => Math.round(v * 100)},
+  {id: "ed-sat",      key: "saturation", toVal: v => v / 100, toSlider: v => Math.round(v * 100)}
+];
+
+function edSyncSliders() {
+  ED_SLIDERS.forEach(sl => {
+    const el = document.getElementById(sl.id);
+    el.value = sl.toSlider(edAdj[sl.key]);
+    const shown = sl.key === "temp" ? Math.round(edAdj.temp) : Math.round(edAdj[sl.key] * 100 - 100);
+    document.getElementById(sl.id + "-v").textContent = (shown > 0 ? "+" : "") + shown;
+  });
+}
+
+ED_SLIDERS.forEach(sl => {
+  document.getElementById(sl.id).addEventListener("input", (e) => {
+    edAdj[sl.key] = sl.toVal(parseFloat(e.target.value));
+    edSyncSliders();
+    // La temperatura va pintada en el lienzo; el resto son filtros CSS
+    if (sl.key === "temp") edDrawCanvas(); else edApplyFilter();
+    edUpdateSaveBtn();
+  });
+});
+
+document.getElementById("ed-light-reset").addEventListener("click", () => {
+  edAdj = Object.assign({}, ED_DEFAULT_ADJ);
+  edSyncSliders();
+  edDrawCanvas();
+  edUpdateSaveBtn();
+});
+
+document.getElementById("ed-auto").addEventListener("click", async () => {
+  if (!edFile) return;
+  const btn = document.getElementById("ed-auto");
+  const orig = btn.textContent;
+  btn.textContent = "Calculando...";
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/auto_levels?path=" + encodeURIComponent(edFile.path));
+    const d = await res.json();
+    if (!d.error) {
+      // Auto solo mueve los sliders: así la vista previa y lo guardado coinciden
+      edAdj = {
+        temp: d.temp || 0,
+        brightness: d.brightness || 1,
+        contrast: d.contrast || 1,
+        saturation: d.saturation || 1
+      };
+      edSyncSliders();
+      edDrawCanvas();
+      edUpdateSaveBtn();
+      edSetTab("light");
+    }
+  } catch(e) {}
+  btn.textContent = orig;
+  btn.disabled = false;
+});
+
+// ── Abrir / cerrar ───────────────────────────────────────────────────────────
+function openEditor(f) {
+  if (!f) return;
+  edFile = f;
+  edOrient = 1;
+  edCrop = null;
+  edAspect = 0;
+  edAdj = Object.assign({}, ED_DEFAULT_ADJ);
+  edSaving = false;
+  document.getElementById("ed-name").textContent = f.name;
+  document.getElementById("ed-busy").classList.remove("on");
+  editorEl.classList.add("on");
+  edSyncSliders();
+  edSetAspectChips(0);
+  edSetTab("rot");
+  edUpdateSaveBtn();
+
+  const img = new Image();
+  img.onload = () => {
+    edImg = img;
+    edDrawCanvas();
+  };
+  img.src = previewUrl(f);
+  document.addEventListener("keydown", edKeys);
+}
+
+function closeEditor(force) {
+  if (!force && edHasChanges() && !confirm("Descartar los cambios sin guardar?")) return;
+  editorEl.classList.remove("on");
+  document.removeEventListener("keydown", edKeys);
+  edImg = null;
+  edFile = null;
+}
+
+function edKeys(e) {
+  if (e.key === "Escape") { e.stopPropagation(); closeEditor(false); }
+}
+
+document.getElementById("ed-close").addEventListener("click", () => closeEditor(false));
+document.getElementById("ed-reset").addEventListener("click", () => {
+  edOrient = 1;
+  edCrop = edTab === "crop" ? {x:0, y:0, w:1, h:1} : null;
+  edAspect = 0;
+  edAdj = Object.assign({}, ED_DEFAULT_ADJ);
+  edSetAspectChips(0);
+  edSyncSliders();
+  edDrawCanvas();
+  edUpdateSaveBtn();
+});
+
+// ── Guardar ──────────────────────────────────────────────────────────────────
+document.getElementById("ed-save").addEventListener("click", () => {
+  if (!edHasChanges()) return;
+  if (!edHasPixelEdits()) { edSave(); return; }   // solo giro: sin pérdida
+  const raw = edIsRaw(edFile);
+  document.getElementById("edit-warn-text").textContent = raw
+    ? "Un RAW no se puede reescribir, así que se guardará un JPEG nuevo junto al original (" +
+      edFile.name.replace(/\.[^.]+$/, "") + "_edit.jpg). El RAW no se toca."
+    : "Se sobrescribirá " + edFile.name + " con la versión editada, recomprimida a calidad 95. " +
+      "Los metadatos (GPS, fecha) se conservan, pero la imagen original no se puede recuperar.";
+  document.getElementById("btn-edit-confirm").textContent = raw ? "Guardar copia JPEG" : "Sobrescribir original";
+  document.getElementById("modal-edit").classList.add("on");
+});
+
+document.getElementById("btn-edit-cancel").addEventListener("click", () => {
+  document.getElementById("modal-edit").classList.remove("on");
+});
+document.getElementById("modal-edit").addEventListener("click", e => {
+  if (e.target === document.getElementById("modal-edit")) {
+    document.getElementById("modal-edit").classList.remove("on");
+  }
+});
+document.getElementById("btn-edit-confirm").addEventListener("click", () => {
+  document.getElementById("modal-edit").classList.remove("on");
+  edSave();
+});
+
+async function edSave() {
+  if (!edFile || edSaving) return;
+  const o = ED_ORIENT_PARAMS[edOrient];
+  const payload = {
+    path: edFile.path,
+    rotate: String(o.rotate),
+    flip_h: o.flip_h,
+    flip_v: o.flip_v,
+    crop: edEffectiveCrop(),
+    adj: edAdj
+  };
+  edSaving = true;
+  edUpdateSaveBtn();
+  const busy = document.getElementById("ed-busy");
+  document.getElementById("ed-busy-txt").textContent = "Guardando...";
+  busy.classList.add("on");
+
+  let data = {};
+  try {
+    const res = await fetch("/api/edit", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    data = await res.json();
+  } catch(e) {
+    data = {error: "Error de conexión"};
+  }
+  busy.classList.remove("on");
+  edSaving = false;
+
+  if (data.error) {
+    edUpdateSaveBtn();
+    alert("No se pudo guardar: " + data.error);
+    return;
+  }
+
+  const editedPath = edFile.path;
+  const derived = !!data.derived;
+  sendReport("Editar foto", 1, 1, 0, []);
+  closeEditor(true);
+
+  if (derived) {
+    // El archivo nuevo no estaba en la galería: hay que recargar la carpeta
+    hideViewer();
+    if (missingMode) loadMissing(currentPath); else navigate(currentPath);
+    return;
+  }
+
+  // Mismo archivo: forzar que se recarguen miniatura y vista previa
+  editedStamps[editedPath] = Date.now();
+  const idx = currentFiles.findIndex(f => f.path === editedPath);
+  if (idx >= 0) {
+    const card = document.querySelector('.fc[data-index="' + idx + '"]');
+    const cardImg = card && card.querySelector("img");
+    if (cardImg) cardImg.src = thumbUrl(currentFiles[idx]);
+  }
+  if (viewerEl.classList.contains("on")) showViewerPhoto();
+}
+
+document.getElementById("vw-edit-btn").addEventListener("click", () => {
+  const f = currentFiles[viewerIndex];
+  if (f) openEditor(f);
+});
+
 
 // ── Email report ──────────────────────────────────────────────────────────────
 async function sendReport(action, total, okCount, errCount, errFiles) {
