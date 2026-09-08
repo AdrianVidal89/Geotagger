@@ -32,6 +32,26 @@ elegir cualquier carpeta como grupo de trabajo. Sin `NAS_ROOT`, y con solo
 `/photos` montado, la app se comporta como antes: la galería se limita a esa
 carpeta.
 
+## Edicion de fotos
+
+Desde el visor (boton de ajustes en la cabecera) se pueden girar, recortar y
+ajustar luz y color las fotos:
+
+- **Girar y voltear** es SIN PERDIDA: solo se reescribe el tag EXIF
+  `Orientation`, los pixeles no se tocan. Funciona incluso en RAW. Si la unica
+  edicion es un giro, se guarda por esta via automaticamente.
+- **Recortar y ajustar** (temperatura, exposicion, contraste, saturacion y el
+  boton Auto) obligan a recodificar los pixeles: se sobrescribe el original a
+  calidad 95, avisando antes. Los metadatos (GPS, fechas, camara) se copian con
+  ExifTool al archivo resultante.
+- **Los RAW no se pueden sobrescribir**: al recortar o ajustar uno se guarda un
+  JPEG nuevo junto al original (`nombre_edit.jpg`) y el RAW se queda intacto.
+
+La vista previa del navegador y el resultado guardado usan la misma formula, en
+el mismo orden (temperatura -> brillo -> contraste -> saturacion), asi que lo
+que se ve es lo que se guarda. El boton Auto no aplica nada por su cuenta: mueve
+los sliders, y desde ahi se puede retocar a mano.
+
 ## Otras variables de entorno
 
 | Variable | Para qué sirve |
