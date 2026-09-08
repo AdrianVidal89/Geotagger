@@ -40,17 +40,28 @@ ajustar luz y color las fotos:
 - **Girar y voltear** es SIN PERDIDA: solo se reescribe el tag EXIF
   `Orientation`, los pixeles no se tocan. Funciona incluso en RAW. Si la unica
   edicion es un giro, se guarda por esta via automaticamente.
-- **Recortar y ajustar** (temperatura, exposicion, contraste, saturacion y el
-  boton Auto) obligan a recodificar los pixeles: se sobrescribe el original a
-  calidad 95, avisando antes. Los metadatos (GPS, fechas, camara) se copian con
-  ExifTool al archivo resultante.
+- **Recortar y ajustar** obligan a recodificar los pixeles: se sobrescribe el
+  original a calidad 95, avisando antes. Los metadatos (GPS, fechas, camara) se
+  copian con ExifTool al archivo resultante.
+- **Herramientas de restauracion** (pensadas para fotos antiguas):
+  - *Equilibrar color*: estira cada canal RGB con su propio rango. Quita de
+    golpe la dominante amarillenta del papel viejo y devuelve el contraste, algo
+    que un estirado comun no puede hacer (aplasta el canal que vive en la franja
+    mas baja).
+  - *Punto negro* y *punto blanco*: niveles manuales para una foto desvaida.
+  - *Sombras* y *luces*: recuperan detalle en las zonas oscuras o quemadas.
+  - *Temperatura* y *tinte*: afinan a mano la dominante (ambar-azul y
+    verde-magenta).
+  - *Auto restaurar*: calcula el equilibrio por canal y el relleno de sombras, y
+    lo deja puesto en los controles para poder retocarlo.
 - **Los RAW no se pueden sobrescribir**: al recortar o ajustar uno se guarda un
   JPEG nuevo junto al original (`nombre_edit.jpg`) y el RAW se queda intacto.
 
-La vista previa del navegador y el resultado guardado usan la misma formula, en
-el mismo orden (temperatura -> brillo -> contraste -> saturacion), asi que lo
-que se ve es lo que se guarda. El boton Auto no aplica nada por su cuenta: mueve
-los sliders, y desde ahi se puede retocar a mano.
+La vista previa del navegador y el resultado guardado usan la misma cadena, en
+el mismo orden (equilibrio por canal -> niveles -> temperatura y tinte ->
+sombras y luces -> exposicion -> contraste -> saturacion), calculada con un LUT
+por canal en ambos lados, asi que lo que se ve es lo que se guarda. El boton
+Auto no aplica nada por su cuenta: deja los valores en los controles.
 
 ## Otras variables de entorno
 
