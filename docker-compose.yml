@@ -1,0 +1,32 @@
+# Despliegue en el NAS (QNAP / Container Station).
+#   docker compose up -d --build
+#
+# Container Station antiguo puede pedir la clave "version"; si se queja,
+# anade   version: "3.8"   como primera linea.
+services:
+  geotagger:
+    build: .
+    image: geotagger:latest
+    container_name: geotagger
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      # Raiz que la app puede recorrer. Tiene que coincidir con el montaje de
+      # abajo: la app solo ve lo que este montado dentro del contenedor.
+      NAS_ROOT: /share
+      # Carpeta de trabajo inicial, relativa a NAS_ROOT (opcional: tambien se
+      # elige desde la interfaz y queda guardada en settings.json).
+      # WORK_ROOT: Multimedia/Fotos
+      # Cuenta desde la que se envian los reportes por email (opcional).
+      # SMTP_USER: tu@gmail.com
+      # SMTP_PASS: contrasena-de-aplicacion
+    volumes:
+      # El share del NAS montado en la MISMA ruta dentro y fuera. En QNAP las
+      # carpetas de /share son symlinks a /share/CACHEDEV1_DATA/..., y solo
+      # resuelven bien si la ruta dentro del contenedor es identica. Montarlo
+      # en otra ruta (p. ej. /share:/nas) hace que las carpetas aparezcan en el
+      # selector pero no se puedan abrir.
+      - /share:/share
+      # Ajustes y cache de miniaturas: que sobrevivan al recrear el contenedor.
+      - /share/Container/geotagger-data:/app/data
