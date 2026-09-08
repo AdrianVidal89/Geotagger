@@ -17,7 +17,24 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-PHOTOS_BASE = "/photos"
+# Raiz del NAS visible DENTRO del contenedor: todo lo que la app puede
+# recorrer cuelga de aqui. Se puede fijar con la variable de entorno NAS_ROOT;
+# si no, se usa el primer punto de montaje que exista.
+# IMPORTANTE: para poder navegar por mas carpetas del NAS hay que montarlas en
+# el contenedor (p. ej. -v /share:/nas) y apuntar NAS_ROOT a ese montaje.
+def _detect_nas_root():
+    env = os.environ.get("NAS_ROOT", "").strip()
+    if env:
+        return env
+    for candidate in ("/nas", "/share", "/photos"):
+        if os.path.isdir(candidate):
+            return candidate
+    return "/photos"
+
+NAS_ROOT = _detect_nas_root()
+# Carpeta de trabajo inicial (relativa a NAS_ROOT) mientras no se elija otra
+DEFAULT_WORK_ROOT = os.environ.get("WORK_ROOT", "").strip().strip("/")
+
 SETTINGS_DIR = "/app/data"
 SETTINGS_FILE = SETTINGS_DIR + "/settings.json"
 THUMB_CACHE_DIR = SETTINGS_DIR + "/thumb_cache"
@@ -68,28 +85,78 @@ SMTP_PASS = os.environ.get("SMTP_PASS", "")
 # altera el contenido del archivo en absoluto.
 # =============================================================================
 
-def _resolve_path(rel, base=PHOTOS_BASE):
+def _safe_join(rel, base):
     """Safely resolve a user-supplied relative path under base.
     Returns None if the resolved path escapes the base directory."""
     base_p = Path(base).resolve()
     try:
-        target = (base_p / rel).resolve()
+        target = (base_p / (rel or "")).resolve()
     except Exception:
         return None
     if not str(target).startswith(str(base_p) + os.sep) and str(target) != str(base_p):
         return None
     return target
 
+def _work_root():
+    """Carpeta de trabajo actual (absoluta). Es la raiz que ve la galeria.
+    Si la guardada ya no existe (montaje caido, carpeta borrada) se vuelve a
+    la raiz del NAS para no dejar la app sin nada que mostrar."""
+    rel = _load_settings().get("work_root", DEFAULT_WORK_ROOT)
+    target = _safe_join(rel, NAS_ROOT)
+    if target is None or not target.is_dir():
+        return Path(NAS_ROOT).resolve()
+    return target
+
+def _work_root_rel():
+    """Carpeta de trabajo relativa a la raiz del NAS ("" = la propia raiz)."""
+    root = _work_root()
+    base = Path(NAS_ROOT).resolve()
+    return "" if root == base else str(root.relative_to(base))
+
+def _work_root_info():
+    rel = _work_root_rel()
+    return {
+        "path": rel,
+        "name": rel.split("/")[-1] if rel else (Path(NAS_ROOT).name or "NAS"),
+        "abs": str(_work_root()),
+        "nas_root": NAS_ROOT,
+        "nas_name": Path(NAS_ROOT).name or "NAS",
+    }
+
+def _resolve_path(rel, base=None):
+    """Resuelve una ruta relativa DENTRO de la carpeta de trabajo actual
+    (o de la base indicada). Devuelve None si se sale de ella."""
+    return _safe_join(rel, base if base is not None else _work_root())
+
+# Los ajustes se leen en casi todas las peticiones (cada miniatura resuelve su
+# ruta), asi que se cachean y solo se releen cuando cambia el fichero.
+_settings_cache = {"mtime": None, "data": None}
+
 def _load_settings():
+    defaults = {"recipient_email": "", "work_root": DEFAULT_WORK_ROOT}
     try:
-        with open(SETTINGS_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {"recipient_email": ""}
+        mtime = os.path.getmtime(SETTINGS_FILE)
+    except OSError:
+        return dict(defaults)
+    if _settings_cache["mtime"] != mtime:
+        try:
+            with open(SETTINGS_FILE, "r") as f:
+                _settings_cache["data"] = json.load(f)
+            _settings_cache["mtime"] = mtime
+        except Exception:
+            return dict(defaults)
+    data = dict(defaults)
+    data.update(_settings_cache["data"] or {})
+    return data
 
 def _save_settings(data):
+    """Guarda mezclando con lo que ya habia: asi guardar el email no borra la
+    carpeta de trabajo (y al reves)."""
+    current = _load_settings()
+    current.update(data or {})
     with open(SETTINGS_FILE, "w") as f:
-        json.dump(data, f)
+        json.dump(current, f)
+    _settings_cache["mtime"] = None
 
 def _send_report(subject, body_html):
     settings = _load_settings()
@@ -198,6 +265,102 @@ def _get_coords(path):
         pass
     return None
 
+# =============================================================================
+# FECHAS DE METADATOS
+# Igual que con el GPS, la escritura de fechas se hace SOLO con ExifTool, que
+# reescribe los segmentos de metadatos y copia los pixeles byte a byte.
+# -AllDates cubre DateTimeOriginal, CreateDate y ModifyDate de una vez.
+# =============================================================================
+
+EXIF_DATE_FMT = "%Y:%m:%d %H:%M:%S"
+# Formato con el que se devuelven las fechas a la interfaz
+UI_DATE_FMT = "%Y-%m-%d %H:%M:%S"
+
+def _parse_user_datetime(value):
+    """Convierte la fecha que manda la interfaz (input datetime-local,
+    'AAAA-MM-DDTHH:MM[:SS]') al formato de ExifTool 'AAAA:MM:DD HH:MM:SS'.
+    Devuelve None si la fecha no es valida."""
+    v = (value or "").strip().replace("T", " ")
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y:%m:%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(v, fmt).strftime(EXIF_DATE_FMT)
+        except ValueError:
+            continue
+    return None
+
+def _build_shift(shift):
+    """Construye el desplazamiento de ExifTool a partir de
+    {sign, days, hours, minutes}. Devuelve (operador, valor) o None.
+    El valor tiene el formato de shift de ExifTool: 'A:M:D h:m:s'."""
+    if not isinstance(shift, dict):
+        return None
+    try:
+        days = abs(int(shift.get("days") or 0))
+        hours = abs(int(shift.get("hours") or 0))
+        minutes = abs(int(shift.get("minutes") or 0))
+    except (TypeError, ValueError):
+        return None
+    if days == 0 and hours == 0 and minutes == 0:
+        return None
+    op = "-=" if str(shift.get("sign", "+")) == "-" else "+="
+    return op, "0:0:" + str(days) + " " + str(hours) + ":" + str(minutes) + ":0"
+
+def _read_dates(path):
+    """Lee (sin modificar) las fechas del archivo: la de la foto (EXIF) y la
+    del propio fichero. Devuelve un dict con las que existan."""
+    out = {}
+    try:
+        result = subprocess.run(
+            ["exiftool", "-json", "-d", UI_DATE_FMT,
+             "-DateTimeOriginal", "-CreateDate", "-ModifyDate", "-FileModifyDate",
+             str(path)],
+            capture_output=True, text=True, timeout=15
+        )
+        data = json.loads(result.stdout)[0]
+    except Exception:
+        return out
+    pairs = (("date", "DateTimeOriginal"), ("create_date", "CreateDate"),
+             ("modify_date", "ModifyDate"), ("file_date", "FileModifyDate"))
+    for key, tag in pairs:
+        val = data.get(tag)
+        if isinstance(val, str) and val.strip() and not val.startswith("0000"):
+            out[key] = val.strip()
+    return out
+
+def _write_date_exiftool(path, exif_date=None, shift=None, sync_file=True):
+    """
+    Escribe la fecha de los metadatos con ExifTool y -overwrite_original.
+    - exif_date: fecha absoluta ya en formato 'AAAA:MM:DD HH:MM:SS'.
+    - shift: tupla (operador, valor) para desplazar las fechas existentes.
+    - sync_file: ademas de los metadatos, ajusta la fecha del archivo para que
+      la galeria (que ordena por fecha de archivo) muestre lo mismo.
+    NO recomprime ni re-codifica la imagen.
+    """
+    path = sanitize_path(path)
+    cmd = ["exiftool"]
+    if shift:
+        op, val = shift
+        cmd.append("-AllDates" + op + val)
+        if sync_file:
+            cmd.append("-FileModifyDate" + op + val)
+    else:
+        cmd.append("-AllDates=" + exif_date)
+        if sync_file:
+            cmd.append("-FileModifyDate=" + exif_date)
+    cmd += ["-overwrite_original", str(path)]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    if result.returncode != 0:
+        raise Exception(result.stderr.strip() or "error de ExifTool")
+    # ExifTool devuelve 0 aunque no escriba nada (p.ej. shift sin fecha previa)
+    if "0 image files updated" in (result.stdout or ""):
+        if shift:
+            raise Exception("la foto no tiene fecha previa que desplazar")
+        raise Exception(result.stderr.strip().splitlines()[0] if result.stderr.strip()
+                        else "no se pudo escribir la fecha")
+    _trigger_reindex(path)
+    _evict_thumb_cache(path)
+    return path
+
 def _reverse_geocode(lat, lon):
     try:
         r = requests.get(
@@ -245,6 +408,82 @@ def settings():
     data = request.json
     _save_settings(data)
     return jsonify({"ok": True})
+
+# Se mira solo una parte de la carpeta: en un NAS con miles de fotos no hace
+# falta contarlas todas para decidir si esa carpeta interesa.
+PHOTO_COUNT_CAP = 99
+PHOTO_SCAN_CAP = 2000
+
+def _count_photos(directory):
+    """Cuenta (a ojo) cuantas fotos hay sueltas en una carpeta."""
+    n = 0
+    try:
+        with os.scandir(directory) as it:
+            for i, entry in enumerate(it):
+                if i >= PHOTO_SCAN_CAP or n >= PHOTO_COUNT_CAP:
+                    break
+                if entry.name.startswith(".") or entry.name.startswith("@"):
+                    continue
+                if entry.is_file() and os.path.splitext(entry.name)[1].lower() in SUPPORTED_EXTS:
+                    n += 1
+    except Exception:
+        return 0
+    return n
+
+@app.route("/api/nas_browse")
+def nas_browse():
+    """Lista SOLO carpetas colgando de la raiz del NAS. Sirve para elegir la
+    carpeta de trabajo, asi que no depende de la que este activa."""
+    rel = (request.args.get("path", "") or "").strip().strip("/")
+    abs_path = _safe_join(rel, NAS_ROOT)
+    if abs_path is None or not abs_path.is_dir():
+        return jsonify({"error": "la carpeta no existe"}), 404
+    try:
+        items = sorted(abs_path.iterdir())
+    except PermissionError:
+        return jsonify({"error": "sin permisos para leer esta carpeta"}), 403
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    dirs = []
+    for item in items:
+        if item.name.startswith("@") or item.name.startswith("."):
+            continue
+        try:
+            if not item.is_dir():
+                continue
+        except OSError:
+            continue
+        dirs.append({
+            "name": item.name,
+            "path": (rel + "/" + item.name) if rel else item.name,
+            "photos": _count_photos(item),
+        })
+
+    parent = "/".join(rel.split("/")[:-1]) if rel else None
+    info = _work_root_info()
+    return jsonify({
+        "current": rel,
+        "parent": parent,
+        "dirs": dirs,
+        "photos": _count_photos(abs_path),
+        "nas_root": NAS_ROOT,
+        "nas_name": info["nas_name"],
+        "work_root": info["path"],
+    })
+
+@app.route("/api/work_root", methods=["GET", "POST"])
+def work_root():
+    """Consulta o cambia la carpeta de trabajo (la raiz de la galeria)."""
+    if request.method == "GET":
+        return jsonify(_work_root_info())
+    data = request.json or {}
+    rel = (data.get("path", "") or "").strip().strip("/")
+    target = _safe_join(rel, NAS_ROOT)
+    if target is None or not target.is_dir():
+        return jsonify({"error": "la carpeta no existe"}), 400
+    _save_settings({"work_root": rel})
+    return jsonify(_work_root_info())
 
 @app.route("/api/browse")
 def browse():
@@ -533,17 +772,70 @@ def gpsinfo():
     except Exception as e:
         return jsonify({"has_gps": False, "error": str(e)})
 
+@app.route("/api/dateinfo")
+def dateinfo():
+    """Fechas actuales de una foto (solo LECTURA)."""
+    rel = request.args.get("path", "")
+    abs_path = _resolve_path(rel)
+    if abs_path is None or not abs_path.exists():
+        return jsonify({"has_date": False, "error": "no existe"}), 404
+    info = _read_dates(abs_path)
+    info["has_date"] = bool(info.get("date") or info.get("create_date"))
+    return jsonify(info)
+
+@app.route("/api/write_date", methods=["POST"])
+def write_date():
+    """
+    Cambia la fecha de los metadatos de las fotos indicadas.
+    mode = "set"   -> fecha absoluta (campo "date")
+    mode = "shift" -> desplaza las fechas existentes (campo "shift")
+    """
+    data = request.json or {}
+    files = data.get("files", [])
+    if not files:
+        return jsonify({"error": "sin archivos"}), 400
+    sync_file = bool(data.get("sync_file", True))
+    mode = data.get("mode", "set")
+
+    exif_date, shift = None, None
+    if mode == "shift":
+        shift = _build_shift(data.get("shift") or {})
+        if not shift:
+            return jsonify({"error": "desplazamiento no valido"}), 400
+    else:
+        exif_date = _parse_user_datetime(data.get("date"))
+        if not exif_date:
+            return jsonify({"error": "fecha no valida"}), 400
+
+    ok, errors = [], []
+    for rel in files:
+        path = _resolve_path(rel)
+        if path is None or not path.exists():
+            errors.append({"file": rel, "error": "no existe o ruta invalida"})
+            continue
+        if path.suffix.lower() not in SUPPORTED_EXTS:
+            errors.append({"file": path.name, "error": "formato no soportado"})
+            continue
+        try:
+            written = _write_date_exiftool(path, exif_date=exif_date,
+                                          shift=shift, sync_file=sync_file)
+            ok.append(written.name)
+        except Exception as e:
+            errors.append({"file": path.name, "error": str(e)})
+    return jsonify({"ok": ok, "errors": errors, "date": exif_date or ""})
+
 @app.route("/api/missing_gps")
 def missing_gps():
     rel = request.args.get("path", "")
     base = _resolve_path(rel)
     if base is None or not base.exists():
         return jsonify({"error": "no existe", "files": []}), 404
+    root = _work_root()
     found = []
     for item in sorted(base.rglob("*")):
         if item.is_dir():
             continue
-        if any(part.startswith("@") or part.startswith(".") for part in item.relative_to(PHOTOS_BASE).parts):
+        if any(part.startswith("@") or part.startswith(".") for part in item.relative_to(root).parts):
             continue
         if item.suffix.lower() not in SUPPORTED_EXTS:
             continue
@@ -554,9 +846,9 @@ def missing_gps():
                 mtime = 0
             found.append({
                 "name": item.name,
-                "path": str(item.relative_to(PHOTOS_BASE)),
+                "path": str(item.relative_to(root)),
                 "ext": item.suffix.lower(),
-                "folder": str(item.parent.relative_to(PHOTOS_BASE)),
+                "folder": str(item.parent.relative_to(root)),
                 "mtime": mtime,
             })
     found.sort(key=lambda f: f["mtime"], reverse=True)

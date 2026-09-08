@@ -71,6 +71,27 @@ header .spacer{flex:1}
   padding:12px 16px 6px;font-size:.7rem;font-weight:600;
   text-transform:uppercase;letter-spacing:.06em;color:var(--text2);
 }
+/* carpeta de trabajo (raíz de la galería) */
+.work-root{
+  display:flex;flex-direction:column;gap:7px;
+  padding:10px 14px 12px;border-bottom:1px solid var(--border);
+}
+.wr-lbl{
+  font-size:.6rem;font-weight:600;text-transform:uppercase;
+  letter-spacing:.06em;color:var(--text2);white-space:nowrap;
+}
+.wr-row{display:flex;align-items:center;gap:8px}
+.wr-row>svg{width:18px;height:18px;fill:var(--primary);flex-shrink:0}
+.wr-name{
+  flex:1;min-width:0;font-size:.85rem;font-weight:500;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.wr-change{
+  border:1px solid var(--border);background:var(--bg);color:var(--primary);
+  border-radius:16px;padding:5px 11px;font-size:.72rem;
+  cursor:pointer;flex-shrink:0;transition:all .15s;
+}
+.wr-change:hover{background:#e8f0fe;border-color:var(--primary)}
 .tree-item{
   display:flex;align-items:center;gap:10px;
   padding:9px 16px;cursor:pointer;font-size:.875rem;color:var(--text);
@@ -504,6 +525,64 @@ header .spacer{flex:1}
 }
 .del-file-list div:last-child{border-bottom:none}
 .del-more{font-size:.75rem;color:var(--text2);padding:4px 0 0;text-align:right}
+/* work-root picker modal */
+#modal-root .modal{max-width:480px}
+.root-help{font-size:.8rem;color:var(--text2);line-height:1.45;margin-bottom:14px}
+.root-crumb{
+  display:flex;align-items:center;gap:5px;flex-wrap:wrap;
+  font-size:.78rem;margin-bottom:10px;
+}
+.rc-item{color:var(--primary);cursor:pointer}
+.rc-item:hover{text-decoration:underline}
+.rc-item.cur{color:var(--text);font-weight:500;cursor:default;text-decoration:none}
+.rc-sep{color:var(--border)}
+.root-list{
+  border:1px solid var(--border);border-radius:var(--radius);
+  max-height:260px;overflow-y:auto;-webkit-overflow-scrolling:touch;
+}
+.root-item{
+  display:flex;align-items:center;gap:10px;padding:11px 12px;
+  border-bottom:1px solid var(--border);cursor:pointer;font-size:.85rem;
+}
+.root-item:last-child{border-bottom:none}
+.root-item:hover{background:var(--surface)}
+.root-item svg{width:18px;height:18px;fill:var(--text2);flex-shrink:0}
+.root-item.up svg{fill:var(--primary)}
+.ri-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ri-count{font-size:.72rem;color:var(--text2);flex-shrink:0}
+.root-empty{padding:20px 14px;text-align:center;font-size:.8rem;color:var(--text2)}
+.root-sel{font-size:.78rem;color:var(--text2);margin-top:12px;line-height:1.45}
+.root-sel strong{color:var(--text);font-weight:500}
+/* date modal specifics */
+/* Se puede abrir desde el visor de fotos, que va en z-index 400 */
+#modal-date{z-index:500}
+.date-target{
+  font-size:.82rem;color:var(--text2);background:var(--surface);
+  border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.date-tabs{
+  display:flex;gap:4px;background:var(--surface);
+  border-radius:var(--radius);padding:4px;margin-bottom:16px;
+}
+.date-tab{
+  flex:1;padding:9px 8px;border:none;background:transparent;
+  border-radius:6px;font-size:.82rem;font-weight:500;
+  color:var(--text2);cursor:pointer;transition:all .15s;
+}
+.date-tab.on{background:var(--bg);color:var(--primary);box-shadow:var(--shadow)}
+.date-current{font-size:.78rem;color:var(--text2);margin-top:8px}
+.date-current strong{color:var(--text);font-weight:500}
+.date-quick{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.date-quick .chip{font-size:.75rem}
+.shift-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.shift-grid label{font-size:.72rem}
+.date-check{
+  display:flex!important;align-items:center;gap:9px;
+  margin:16px 0 0!important;font-size:.8rem;color:var(--text2);cursor:pointer;
+}
+.date-check input{width:18px;height:18px;accent-color:var(--primary);margin:0;flex-shrink:0}
+#date-box{margin-top:14px}
 
 /* ── PHOTO VIEWER (lightbox) ─────────────────── */
 .viewer{
@@ -602,7 +681,12 @@ header .spacer{flex:1}
   }
   .sidebar.open{transform:translateX(0)}
   .panel{display:none!important}
-  .sel-bar{left:12px;right:12px;transform:none;border-radius:12px}
+  .sel-bar{
+    left:12px;right:12px;transform:none;border-radius:12px;
+    padding-left:14px;overflow-x:auto;scrollbar-width:none;
+  }
+  .sel-bar::-webkit-scrollbar{display:none}
+  .sel-bar>*{flex-shrink:0}
   .sel-bar.up{bottom:12px}
   .files-grid{grid-template-columns:repeat(3,1fr);gap:3px}
   /* Evita amontonamiento: los controles superiores scrollean en horizontal */
@@ -617,6 +701,12 @@ header .spacer{flex:1}
   .drawer-bd{display:none!important}
   .sidebar-bd{display:none!important}
   .panel{display:flex!important}
+}
+@media(max-width:560px){
+  /* Con cinco acciones los textos no caben: solo iconos */
+  .sbar-lbl{display:none}
+  .sbar-btn{padding:9px 11px}
+  .sbar-btn svg{width:16px;height:16px}
 }
 @media(max-width:480px){
   .files-grid{grid-template-columns:repeat(3,1fr);gap:2px}
@@ -649,6 +739,14 @@ header .spacer{flex:1}
 
   <!-- SIDEBAR -->
   <div class="sidebar" id="sidebar">
+    <div class="work-root">
+      <span class="wr-lbl">Carpeta de trabajo</span>
+      <div class="wr-row">
+        <svg viewBox="0 0 24 24"><path d="M4 20h16v-4H4v4zm2-3h2v2H6v-2zM4 4v4h16V4H4zm4 3H6V5h2v2zm-4 7h16v-4H4v4zm2-3h2v2H6v-2z"/></svg>
+        <span class="wr-name" id="work-root-name">—</span>
+        <button class="wr-change" id="btn-work-root">Cambiar</button>
+      </div>
+    </div>
     <div class="sidebar-lbl">Carpetas</div>
     <div id="tree"></div>
   </div>
@@ -741,6 +839,18 @@ header .spacer{flex:1}
     </div>
 
     <div class="panel-section">
+      <div class="sec-lbl">Fecha de la foto</div>
+      <div class="gps-status" id="date-status">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>
+        Selecciona una foto
+      </div>
+      <button class="btn btn-secondary" id="btn-date" disabled>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>
+        Modificar fecha
+      </button>
+    </div>
+
+    <div class="panel-section">
       <div class="sec-lbl">Selección</div>
       <div class="sel-info">
         <strong id="sel-count">0</strong>
@@ -791,21 +901,25 @@ header .spacer{flex:1}
 <!-- FLOATING SELECTION BAR (mobile) -->
 <div class="sel-bar" id="sel-bar">
   <span class="sel-bar-count"><span id="sbar-count">0</span> fotos</span>
-  <button class="sbar-btn pri" id="sbar-gps">
+  <button class="sbar-btn pri" id="sbar-gps" title="Aplicar GPS">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>
-    GPS
+    <span class="sbar-lbl">GPS</span>
   </button>
-  <button class="sbar-btn" id="sbar-download">
+  <button class="sbar-btn" id="sbar-download" title="Descargar">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
-    Descargar
+    <span class="sbar-lbl">Descargar</span>
   </button>
-  <button class="sbar-btn" id="sbar-rename">
+  <button class="sbar-btn" id="sbar-date" title="Modificar fecha">
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>
+    <span class="sbar-lbl">Fecha</span>
+  </button>
+  <button class="sbar-btn" id="sbar-rename" title="Renombrar por EXIF">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"/></svg>
-    Renombrar
+    <span class="sbar-lbl">Renombrar</span>
   </button>
-  <button class="sbar-btn danger" id="sbar-delete">
+  <button class="sbar-btn danger" id="sbar-delete" title="Eliminar">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-    Eliminar
+    <span class="sbar-lbl">Eliminar</span>
   </button>
   <button class="sbar-close" id="sbar-close" title="Deseleccionar">✕</button>
 </div>
@@ -853,8 +967,11 @@ header .spacer{flex:1}
     </button>
     <div class="vw-title">
       <span class="vw-name" id="vw-name"></span>
-      <span class="vw-meta"><span id="vw-count"></span><span class="vw-ext" id="vw-ext"></span></span>
+      <span class="vw-meta"><span id="vw-count"></span><span class="vw-ext" id="vw-ext"></span><span id="vw-date"></span></span>
     </div>
+    <button class="vw-btn" id="vw-date-btn" title="Modificar fecha de esta foto">
+      <svg viewBox="0 0 24 24"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>
+    </button>
     <button class="vw-btn" id="vw-select" title="Seleccionar esta foto">
       <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
     </button>
@@ -887,6 +1004,79 @@ header .spacer{flex:1}
       <button class="btn btn-danger" id="btn-delete-confirm">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
         Sí, eliminar permanentemente
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- WORK ROOT PICKER MODAL -->
+<div class="modal-overlay" id="modal-root">
+  <div class="modal">
+    <div class="modal-title">Carpeta de trabajo</div>
+    <p class="root-help">
+      Navega por el NAS y elige desde qué carpeta quieres trabajar. La galería
+      mostrará esa carpeta y todo lo que cuelgue de ella.
+    </p>
+    <div class="root-crumb" id="root-crumb"></div>
+    <div class="root-list" id="root-list"></div>
+    <div class="root-sel" id="root-sel"></div>
+    <div id="root-box" class="res-box" style="display:none"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="btn-root-cancel">Cancelar</button>
+      <button class="btn btn-primary" id="btn-root-apply">Usar esta carpeta</button>
+    </div>
+  </div>
+</div>
+
+<!-- DATE EDIT MODAL -->
+<div class="modal-overlay" id="modal-date">
+  <div class="modal">
+    <div class="modal-title">Modificar fecha</div>
+    <div class="date-target" id="date-target"></div>
+
+    <div class="date-tabs">
+      <button type="button" class="date-tab on" id="date-tab-set">Fecha exacta</button>
+      <button type="button" class="date-tab" id="date-tab-shift">Desplazar</button>
+    </div>
+
+    <!-- Fecha exacta: se aplica tal cual a todas las fotos elegidas -->
+    <div id="date-pane-set">
+      <label for="date-input">Nueva fecha y hora</label>
+      <input type="datetime-local" step="1" class="input-field" id="date-input">
+      <div class="date-quick">
+        <div class="chip" id="date-quick-now">Ahora</div>
+        <div class="chip" id="date-quick-file" style="display:none">Fecha del archivo</div>
+      </div>
+      <div class="date-current" id="date-current"></div>
+    </div>
+
+    <!-- Desplazar: suma o resta tiempo a la fecha que ya tiene cada foto
+         (util cuando la camara tenia la hora mal) -->
+    <div id="date-pane-shift" style="display:none">
+      <label for="shift-sign">Ajuste</label>
+      <select class="input-field" id="shift-sign">
+        <option value="+">Adelantar (+)</option>
+        <option value="-">Atrasar (−)</option>
+      </select>
+      <div class="shift-grid" style="margin-top:12px">
+        <div><label for="shift-days">Días</label><input type="number" min="0" class="input-field" id="shift-days" value="0"></div>
+        <div><label for="shift-hours">Horas</label><input type="number" min="0" class="input-field" id="shift-hours" value="0"></div>
+        <div><label for="shift-mins">Minutos</label><input type="number" min="0" class="input-field" id="shift-mins" value="0"></div>
+      </div>
+    </div>
+
+    <label class="date-check">
+      <input type="checkbox" id="date-sync-file" checked>
+      Cambiar también la fecha del archivo (para que la galería ordene igual)
+    </label>
+
+    <div id="date-box" class="res-box" style="display:none"></div>
+
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="btn-date-cancel">Cancelar</button>
+      <button class="btn btn-primary" id="btn-date-apply">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>
+        Aplicar fecha
       </button>
     </div>
   </div>
@@ -1052,7 +1242,7 @@ function renderBreadcrumb(path) {
   const back = document.getElementById("btn-back");
   back.style.display = parts.length ? "flex" : "none";
   back.dataset.path = parts.slice(0, -1).join("/");
-  let html = '<span class="bc-item' + (parts.length === 0 ? ' cur' : '') + '" data-path="">Fotos</span>';
+  let html = '<span class="bc-item' + (parts.length === 0 ? ' cur' : '') + '" data-path="">' + workRootName + '</span>';
   let acc = "";
   parts.forEach((p, i) => {
     acc += (acc ? "/" : "") + p;
@@ -1073,7 +1263,7 @@ function renderSidebar(dirs, activePath) {
   // Fuera de la raíz, primera entrada: volver a la carpeta superior
   if (activePath) {
     const parent = parentOf(activePath);
-    const parentName = parent ? parent.split("/").pop() : "Fotos";
+    const parentName = parent ? parent.split("/").pop() : workRootName;
     html += '<div class="tree-item tree-up" data-path="' + parent + '">' +
       '<svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>' +
       parentName + '</div>';
@@ -1223,6 +1413,7 @@ function toggleFile(index) {
     selectedFiles.add(f.path);
     card && card.classList.add("sel");
     checkGps(f.path);
+    checkDate(f.path);
   }
   updateSelUI();
 }
@@ -1257,6 +1448,7 @@ function updateSelUI() {
   const hasLoc = currentLat !== null;
   document.getElementById("btn-apply").disabled = n === 0 || !hasLoc;
   document.getElementById("btn-rename").disabled = n === 0;
+  document.getElementById("btn-date").disabled = n === 0;
   document.getElementById("btn-download").disabled = n === 0;
   document.getElementById("btn-delete").disabled = n === 0;
   document.getElementById("mob-btn-apply").disabled = n === 0 || !hasLoc;
@@ -1784,6 +1976,347 @@ document.getElementById("modal-delete").addEventListener("click", e => {
 });
 
 
+// ── Carpeta de trabajo (raíz de la galería) ───────────────────────────────────
+// El contenedor ve una raíz del NAS (NAS_ROOT); dentro de ella el usuario elige
+// desde qué carpeta trabajar, y la galería se reinicia ahí.
+const RI_FOLDER = '<svg viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>';
+let rootBrowsePath = "";   // carpeta que se está mirando en el selector
+let workRootName = "Fotos";   // nombre de la carpeta de trabajo (raíz de la galería)
+const NAS_LABEL = "NAS";      // etiqueta de la raíz del NAS en el selector
+
+// Refleja la carpeta de trabajo en el panel lateral y en las migas de pan
+function showWorkRoot(d) {
+  workRootName = d.name || NAS_LABEL;
+  const el = document.getElementById("work-root-name");
+  el.textContent = workRootName;
+  el.title = d.abs || d.path || "";
+}
+
+async function loadWorkRoot() {
+  try {
+    const res = await fetch("/api/work_root");
+    showWorkRoot(await res.json());
+    renderBreadcrumb(currentPath);
+  } catch(e) {}
+}
+
+function renderRootCrumb(path) {
+  const parts = path ? path.split("/").filter(Boolean) : [];
+  let html = '<span class="rc-item' + (parts.length ? '' : ' cur') + '" data-path="">' + NAS_LABEL + '</span>';
+  let acc = "";
+  parts.forEach((seg, i) => {
+    acc += (acc ? "/" : "") + seg;
+    html += '<span class="rc-sep">›</span>';
+    html += '<span class="rc-item' + (i === parts.length - 1 ? ' cur' : '') + '" data-path="' + acc + '">' + seg + '</span>';
+  });
+  const crumb = document.getElementById("root-crumb");
+  crumb.innerHTML = html;
+  crumb.querySelectorAll(".rc-item:not(.cur)").forEach(el => {
+    el.addEventListener("click", () => browseNas(el.dataset.path));
+  });
+}
+
+function photoCountLabel(n) {
+  if (!n) return "";
+  return (n >= 99 ? "99+" : n) + " foto" + (n === 1 ? "" : "s");
+}
+
+async function browseNas(path) {
+  const list = document.getElementById("root-list");
+  list.innerHTML = '<div class="root-empty"><div class="spinner" style="margin:0 auto"></div></div>';
+  document.getElementById("root-box").style.display = "none";
+  let d;
+  try {
+    const res = await fetch("/api/nas_browse?path=" + encodeURIComponent(path || ""));
+    d = await res.json();
+    if (d.error) throw new Error(d.error);
+  } catch(e) {
+    list.innerHTML = '<div class="root-empty">No se pudo abrir la carpeta: ' + e.message + '</div>';
+    return;
+  }
+
+  rootBrowsePath = d.current || "";
+  renderRootCrumb(rootBrowsePath);
+
+  let html = "";
+  if (d.parent !== null && d.parent !== undefined) {
+    html += '<div class="root-item up" data-path="' + d.parent + '">' +
+      '<svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>' +
+      '<span class="ri-name">Subir un nivel</span></div>';
+  }
+  html += d.dirs.map(dir =>
+    '<div class="root-item" data-path="' + dir.path + '">' + RI_FOLDER +
+    '<span class="ri-name">' + dir.name + '</span>' +
+    '<span class="ri-count">' + photoCountLabel(dir.photos) + '</span></div>'
+  ).join("");
+  if (!d.dirs.length && (d.parent === null || d.parent === undefined)) {
+    html += '<div class="root-empty">Esta carpeta no tiene subcarpetas</div>';
+  } else if (!d.dirs.length) {
+    html += '<div class="root-empty">Sin subcarpetas aquí</div>';
+  }
+  list.innerHTML = html;
+  list.querySelectorAll(".root-item").forEach(el => {
+    el.addEventListener("click", () => browseNas(el.dataset.path));
+  });
+
+  const here = rootBrowsePath || "la raíz del NAS (" + d.nas_root + ")";
+  const count = d.photos ? " (" + photoCountLabel(d.photos) + " sueltas aquí)" : "";
+  document.getElementById("root-sel").innerHTML =
+    "Se usará <strong>" + here + "</strong>" + count +
+    (d.work_root === rootBrowsePath ? " — es la carpeta de trabajo actual" : "");
+}
+
+async function applyWorkRoot() {
+  const btn = document.getElementById("btn-root-apply");
+  const box = document.getElementById("root-box");
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Cambiando...';
+  try {
+    const res = await fetch("/api/work_root", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ path: rootBrowsePath })
+    });
+    const d = await res.json();
+    if (d.error) {
+      box.style.display = "flex";
+      box.className = "res-box res-err";
+      box.innerHTML = '<span>' + d.error + '</span>';
+    } else {
+      showWorkRoot(d);
+      document.getElementById("modal-root").classList.remove("on");
+      selectedFiles.clear();
+      // La galería arranca de cero en la nueva raíz
+      navigate("", { replace: true });
+    }
+  } catch(e) {
+    box.style.display = "flex";
+    box.className = "res-box res-err";
+    box.innerHTML = '<span>Error de conexión</span>';
+  }
+  btn.disabled = false;
+  btn.innerHTML = orig;
+}
+
+document.getElementById("btn-work-root").addEventListener("click", async () => {
+  document.getElementById("modal-root").classList.add("on");
+  let start = "";
+  try {
+    const res = await fetch("/api/work_root");
+    const d = await res.json();
+    start = d.path || "";
+  } catch(e) {}
+  browseNas(start);
+});
+document.getElementById("btn-root-apply").addEventListener("click", applyWorkRoot);
+document.getElementById("btn-root-cancel").addEventListener("click", () => {
+  document.getElementById("modal-root").classList.remove("on");
+});
+document.getElementById("modal-root").addEventListener("click", e => {
+  if (e.target === document.getElementById("modal-root")) {
+    document.getElementById("modal-root").classList.remove("on");
+  }
+});
+
+
+// ── Fecha de los metadatos ────────────────────────────────────────────────────
+// Lee y escribe la fecha EXIF (DateTimeOriginal / CreateDate / ModifyDate) de
+// las fotos elegidas. El servidor lo hace con ExifTool, sin recomprimir nada.
+const CAL_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>';
+let dateTargets = [];      // rutas sobre las que actúa el modal
+let dateMode = "set";      // "set" (fecha exacta) | "shift" (desplazar)
+let dateFileDate = "";     // fecha del archivo de la primera foto elegida
+
+function pad2(n) { return (n < 10 ? "0" : "") + n; }
+
+// Date -> valor de <input type="datetime-local">
+function dateToInput(d) {
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) +
+    "T" + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
+}
+// "AAAA-MM-DD HH:MM:SS" (servidor) -> valor del input
+function exifToInput(s) { return s ? s.replace(" ", "T") : ""; }
+// "AAAA-MM-DD HH:MM:SS" -> "DD/MM/AAAA HH:MM"
+function humanDate(s) {
+  const m = (s || "").match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  return m ? m[3] + "/" + m[2] + "/" + m[1] + " " + m[4] + ":" + m[5] : (s || "");
+}
+
+async function fetchDates(path) {
+  try {
+    const res = await fetch("/api/dateinfo?path=" + encodeURIComponent(path));
+    return await res.json();
+  } catch(e) { return {}; }
+}
+
+// Panel de escritorio: muestra la fecha de la última foto seleccionada
+async function checkDate(path) {
+  const box = document.getElementById("date-status");
+  box.className = "gps-status";
+  box.innerHTML = '<div class="spinner"></div> Leyendo fecha...';
+  const d = await fetchDates(path);
+  const shot = d.date || d.create_date;
+  if (shot) {
+    box.className = "gps-status has";
+    box.innerHTML = CAL_ICON + humanDate(shot);
+  } else if (d.file_date) {
+    box.className = "gps-status no";
+    box.innerHTML = CAL_ICON + "Sin fecha EXIF (archivo: " + humanDate(d.file_date) + ")";
+  } else {
+    box.className = "gps-status no";
+    box.innerHTML = CAL_ICON + "Sin fecha";
+  }
+}
+
+function setDateMode(mode) {
+  dateMode = mode;
+  document.getElementById("date-tab-set").classList.toggle("on", mode === "set");
+  document.getElementById("date-tab-shift").classList.toggle("on", mode === "shift");
+  document.getElementById("date-pane-set").style.display = mode === "set" ? "block" : "none";
+  document.getElementById("date-pane-shift").style.display = mode === "shift" ? "block" : "none";
+}
+
+function showDateBox(cls, iconPath, text) {
+  const box = document.getElementById("date-box");
+  box.style.display = "flex";
+  box.className = "res-box " + cls;
+  box.innerHTML = (iconPath
+    ? '<svg viewBox="0 0 24 24" fill="currentColor"><path d="' + iconPath + '"/></svg>'
+    : '<div class="spinner"></div>') + '<span>' + text + '</span>';
+}
+
+function closeDateModal() {
+  document.getElementById("modal-date").classList.remove("on");
+}
+
+// targets: rutas de las fotos a modificar (selección o foto del visor)
+async function openDateModal(targets) {
+  if (!targets || !targets.length) return;
+  dateTargets = targets.slice();
+  dateFileDate = "";
+  document.getElementById("date-target").textContent = targets.length === 1
+    ? targets[0].split("/").pop()
+    : targets.length + " fotos seleccionadas";
+  document.getElementById("date-box").style.display = "none";
+  document.getElementById("date-current").textContent = "";
+  document.getElementById("date-quick-file").style.display = "none";
+  setDateMode("set");
+  document.getElementById("modal-date").classList.add("on");
+
+  // Precarga la fecha actual de la primera foto para editarla en vez de
+  // escribirla desde cero
+  const inp = document.getElementById("date-input");
+  inp.value = dateToInput(new Date());
+  const d = await fetchDates(targets[0]);
+  const shot = d.date || d.create_date;
+  if (shot) inp.value = exifToInput(shot);
+  else if (d.file_date) inp.value = exifToInput(d.file_date);
+  if (d.file_date) {
+    dateFileDate = d.file_date;
+    document.getElementById("date-quick-file").style.display = "inline-flex";
+  }
+  const name = targets[0].split("/").pop();
+  document.getElementById("date-current").innerHTML = shot
+    ? "Fecha actual de <strong>" + name + "</strong>: " + humanDate(shot)
+    : "<strong>" + name + "</strong> no tiene fecha en los metadatos";
+}
+
+async function applyDate() {
+  const files = dateTargets.slice();
+  if (!files.length) return;
+
+  const payload = {
+    files: files,
+    mode: dateMode,
+    sync_file: document.getElementById("date-sync-file").checked
+  };
+  if (dateMode === "shift") {
+    payload.shift = {
+      sign:    document.getElementById("shift-sign").value,
+      days:    parseInt(document.getElementById("shift-days").value, 10) || 0,
+      hours:   parseInt(document.getElementById("shift-hours").value, 10) || 0,
+      minutes: parseInt(document.getElementById("shift-mins").value, 10) || 0
+    };
+    if (!payload.shift.days && !payload.shift.hours && !payload.shift.minutes) {
+      showDateBox("res-err", ICON_WARN, "Indica cuánto quieres desplazar la fecha");
+      return;
+    }
+  } else {
+    payload.date = document.getElementById("date-input").value;
+    if (!payload.date) {
+      showDateBox("res-err", ICON_WARN, "Elige una fecha");
+      return;
+    }
+  }
+
+  const btn = document.getElementById("btn-date-apply");
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Aplicando...';
+  showDateBox("res-progress", null, "Cambiando la fecha de " + files.length + " foto(s)...");
+
+  let done = false;
+  try {
+    const res = await fetch("/api/write_date", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.error) {
+      showDateBox("res-err", ICON_WARN, data.error);
+    } else {
+      const ok = data.ok.length, err = data.errors.length;
+      if (err === 0) {
+        showDateBox("res-ok", ICON_CHECK, ok + " foto(s) con la fecha actualizada");
+        done = true;
+      } else {
+        showDateBox("res-err", ICON_WARN, ok + " OK, " + err + " con error: " +
+          data.errors.slice(0, 3).map(e => e.file).join(", "));
+        done = ok > 0;
+      }
+      sendReport("Modificar fecha", files.length, ok, err, data.errors.map(e => e.file));
+    }
+  } catch(e) {
+    showDateBox("res-err", ICON_WARN, "Error de conexión");
+  }
+  btn.disabled = false;
+  btn.innerHTML = orig;
+
+  if (done) {
+    setTimeout(() => {
+      closeDateModal();
+      // Con el visor abierto solo se refresca su cabecera; recargar la carpeta
+      // lo cerraría a media vista
+      if (viewerEl.classList.contains("on")) {
+        showViewerDate(currentFiles[viewerIndex]);
+      } else if (missingMode) {
+        loadMissing(currentPath);
+      } else {
+        navigate(currentPath);
+      }
+    }, 900);
+  }
+}
+
+document.getElementById("btn-date").addEventListener("click", () => openDateModal(Array.from(selectedFiles)));
+document.getElementById("sbar-date").addEventListener("click", () => openDateModal(Array.from(selectedFiles)));
+document.getElementById("date-tab-set").addEventListener("click", () => setDateMode("set"));
+document.getElementById("date-tab-shift").addEventListener("click", () => setDateMode("shift"));
+document.getElementById("date-quick-now").addEventListener("click", () => {
+  document.getElementById("date-input").value = dateToInput(new Date());
+});
+document.getElementById("date-quick-file").addEventListener("click", () => {
+  if (dateFileDate) document.getElementById("date-input").value = exifToInput(dateFileDate);
+});
+document.getElementById("btn-date-apply").addEventListener("click", applyDate);
+document.getElementById("btn-date-cancel").addEventListener("click", closeDateModal);
+document.getElementById("modal-date").addEventListener("click", e => {
+  if (e.target === document.getElementById("modal-date")) closeDateModal();
+});
+
+
 // ── Photo viewer (lightbox) ───────────────────────────────────────────────────
 // Muestra la foto a tamaño grande vía /api/preview, que convierte cualquier
 // formato soportado (RAW, TIFF, HEIC, WebP...) a JPEG/WebP en el servidor.
@@ -1855,6 +2388,7 @@ function showViewerPhoto() {
   document.getElementById("vw-prev").classList.toggle("hidden", viewerIndex === 0);
   document.getElementById("vw-next").classList.toggle("hidden", viewerIndex === currentFiles.length - 1);
   updateViewerSelBtn();
+  showViewerDate(f);
 
   const spinner = document.getElementById("vw-spinner");
   spinner.style.display = "block";
@@ -1883,6 +2417,22 @@ function showViewerPhoto() {
     if (n >= 0 && n < currentFiles.length) { const p = new Image(); p.src = previewUrl(currentFiles[n]); }
   });
 }
+
+// Fecha de la foto abierta en el visor (lectura asíncrona: la imagen no espera)
+async function showViewerDate(f) {
+  const el = document.getElementById("vw-date");
+  if (!f) { el.textContent = ""; return; }
+  el.textContent = "";
+  const d = await fetchDates(f.path);
+  if (currentFiles[viewerIndex] !== f) return;   // el usuario ya pasó a otra foto
+  const shot = d.date || d.create_date || d.file_date;
+  el.textContent = shot ? humanDate(shot) : "Sin fecha";
+}
+
+document.getElementById("vw-date-btn").addEventListener("click", () => {
+  const f = currentFiles[viewerIndex];
+  if (f) openDateModal([f.path]);
+});
 
 document.getElementById("vw-close").addEventListener("click", closeViewer);
 document.getElementById("vw-prev").addEventListener("click", () => viewerNav(-1));
@@ -2104,6 +2654,7 @@ function uploadPhotos(files) {
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 // Restaura la carpeta indicada en la URL (permite recargar o compartir enlace
 // sin perder el sitio); con URL limpia arranca en la raíz.
+loadWorkRoot();
 navigate(pathFromHash(), { replace: true });
 </script>
 </body>
