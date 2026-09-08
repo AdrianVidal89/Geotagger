@@ -1169,6 +1169,10 @@ header .spacer{flex:1}
       <svg viewBox="0 0 24 24"><path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zm0 8c-1.65 0-3-1.35-3-3s1.35-3 3-3 3 1.35 3 3-1.35 3-3 3zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58a.996.996 0 0 0-1.41 0 .996.996 0 0 0 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37a.996.996 0 0 0-1.41 0 .996.996 0 0 0 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0a.996.996 0 0 0 0-1.41l-1.06-1.06zm1.06-10.96a.996.996 0 0 0 0-1.41.996.996 0 0 0-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36a.996.996 0 0 0 0-1.41.996.996 0 0 0-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/></svg>
       <span>Luz</span>
     </button>
+    <button class="ed-tab" data-tab="detail">
+      <svg viewBox="0 0 24 24"><path d="M12 2l-5.5 9h11L12 2zm0 3.84L13.93 9h-3.87L12 5.84zM17.5 13c-2.49 0-4.5 2.01-4.5 4.5s2.01 4.5 4.5 4.5 4.5-2.01 4.5-4.5-2.01-4.5-4.5-4.5zm0 7c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5zM3 21.5h8v-8H3v8zm2-6h4v4H5v-4z"/></svg>
+      <span>Detalle</span>
+    </button>
     <button class="ed-tab" data-tab="color">
       <svg viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
       <span>Color</span>
@@ -1208,6 +1212,11 @@ header .spacer{flex:1}
         <button class="ed-chip" data-ar="1.5">3:2</button>
         <button class="ed-chip" data-ar="1.7778">16:9</button>
         <button class="ed-chip" id="ed-crop-clear">Quitar recorte</button>
+      </div>
+      <div class="ed-slider" style="margin-top:14px">
+        <label for="ed-angle">Enderezar</label>
+        <input type="range" id="ed-angle" min="-15" max="15" step="0.1" value="0">
+        <span class="ed-val" id="ed-angle-v">0°</span>
       </div>
       <div class="ed-hint" id="ed-crop-size">Arrastra el recuadro o sus esquinas para elegir el encuadre.</div>
     </div>
@@ -1251,6 +1260,25 @@ header .spacer{flex:1}
       <div class="ed-hint">
         Punto negro y punto blanco devuelven el contraste a una foto desvaída;
         sombras y luces recuperan detalle sin quemar el resto.
+      </div>
+    </div>
+
+    <!-- DETALLE -->
+    <div id="ed-pane-detail" style="display:none">
+      <div class="ed-slider">
+        <label for="ed-sharpen">Nitidez</label>
+        <input type="range" id="ed-sharpen" min="-100" max="150" step="1" value="0">
+        <span class="ed-val" id="ed-sharpen-v">0</span>
+      </div>
+      <div class="ed-row" style="margin-top:12px">
+        <button class="ed-chip" data-sharpen="60">Enfocar escaneado</button>
+        <button class="ed-chip" data-sharpen="-45">Quitar grano</button>
+        <button class="ed-chip" id="ed-detail-reset">Restablecer</button>
+      </div>
+      <div class="ed-hint">
+        A la derecha realza el detalle (útil en escaneados y fotos blandas); a la
+        izquierda suaviza el grano y el ruido. El radio se ajusta al tamaño de la
+        foto, así que la vista previa muestra el mismo efecto que el archivo final.
       </div>
     </div>
 
@@ -2846,11 +2874,21 @@ const ED_ORIENT_PARAMS = {
 };
 const ED_DEFAULT_ADJ = {
   black: 0, white: 255, shadows: 0, highlights: 0,
-  temp: 0, tint: 0, brightness: 1, contrast: 1, saturation: 1
+  temp: 0, tint: 0, brightness: 1, contrast: 1, saturation: 1,
+  straighten: 0, sharpen: 0
 };
 // Lado mayor del lienzo de trabajo: suficiente para encuadrar y ajustar sin
-// que cada movimiento de slider tenga que recorrer millones de píxeles
+// que cada movimiento de slider tenga que recorrer millones de píxeles.
+// Mientras se arrastra un control que obliga a rehacer geometría o a pasar el
+// desenfoque, se trabaja en BORRADOR (menos resolución) y al soltar se vuelve
+// a la resolución completa: así los sliders no pierden fluidez.
 const ED_WORK_MAX = 1600;
+const ED_WORK_MIN = 520;
+// Mientras se arrastra se trabaja a esta fracción de la resolución normal
+const ED_DRAFT_FACTOR = 0.5;
+// Radio del desenfoque proporcional al tamaño, igual que en el servidor
+const ED_SHARPEN_RADIUS_DIV = 700;
+const ED_SHARPEN_PASSES = 1;
 
 const editorEl = document.getElementById("editor");
 const edCanvas = document.getElementById("ed-canvas");
@@ -2863,8 +2901,12 @@ let edAdj = Object.assign({}, ED_DEFAULT_ADJ);
 let edAspect = 0;             // 0 = libre
 let edTab = "rot";
 let edSaving = false;
-let edBaseData = null;        // píxeles ya girados, sin ajustes
+let edSrcCanvas = null;       // imagen ya girada/volteada (sin enderezar)
+let edBaseData = null;        // píxeles del lienzo (girados y enderezados), sin ajustes
 let edOutData = null;
+let edDraft = false;          // vista previa en borrador mientras se arrastra
+let edSharpData = null;       // base con la nitidez ya aplicada (se reutiliza)
+let edSharpAmount = null;     // cantidad con la que se calculó esa base
 let edRenderPending = false;
 let edRealSize = null;        // tamaño real de la foto (para informar del recorte)
 let edWb = null;              // rangos por canal del equilibrio de color
@@ -2927,9 +2969,164 @@ function edBuildLuts() {
   });
 }
 
+// Caja separable H->V con bordes repetidos y redondeo hacia arriba,
+// cuantizando a 8 bits entre pasadas: replica ImageFilter.BoxBlur de Pillow
+// (comprobado contra su salida, desvío 0).
+//
+// Se trabaja con un plano por canal en vez de sobre el RGBA entrelazado: la
+// memoria va contigua y cada pasada se parte en tres tramos (borde izquierdo,
+// centro sin recortes, borde derecho) para que el bucle interior sea un par de
+// sumas. Sin esto, la nitidez costaba 377 ms por fotograma.
+let edPlanes = null;      // [r, g, b] del origen
+let edPlaneA = null, edPlaneB = null, edAccV = null;
+
+let edBlurred = null;
+
+function edEnsurePlanes(n) {
+  if (!edPlaneA || edPlaneA.length !== n) {
+    edPlanes = [new Uint8Array(n), new Uint8Array(n), new Uint8Array(n)];
+    edBlurred = [new Uint8Array(n), new Uint8Array(n), new Uint8Array(n)];
+    edPlaneA = new Uint8Array(n);
+    edPlaneB = new Uint8Array(n);
+  }
+}
+
+function edBoxH(src, dst, w, h, r) {
+  const win = 2 * r + 1;
+  const inv = 1 / win;
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    const first = src[row], last = src[row + w - 1];
+    let acc = first * (r + 1);
+    for (let k = 1; k <= r; k++) acc += src[row + (k < w ? k : w - 1)];
+    let x = 0;
+    const leftEnd = Math.min(w, r);
+    for (; x < leftEnd; x++) {                       // borde izquierdo
+      dst[row + x] = (acc * inv + 0.5) | 0;
+      acc += (x + r + 1 < w ? src[row + x + r + 1] : last) - first;
+    }
+    const midEnd = Math.max(leftEnd, w - r - 1);
+    for (; x < midEnd; x++) {                        // centro, sin recortes
+      dst[row + x] = (acc * inv + 0.5) | 0;
+      acc += src[row + x + r + 1] - src[row + x - r];
+    }
+    for (; x < w; x++) {                             // borde derecho
+      dst[row + x] = (acc * inv + 0.5) | 0;
+      acc += last - src[row + (x - r > 0 ? x - r : 0)];
+    }
+  }
+}
+
+// La pasada vertical recorre por FILAS llevando un acumulador por columna: así
+// las lecturas y escrituras van seguidas en memoria (recorrer por columnas
+// costaba el triple por fallos de caché)
+function edBoxV(src, dst, w, h, r) {
+  const win = 2 * r + 1;
+  const inv = 1 / win;
+  if (!edAccV || edAccV.length !== w) edAccV = new Int32Array(w);
+  const acc = edAccV;
+  const lastRow = (h - 1) * w;
+  for (let x = 0; x < w; x++) {
+    let a = src[x] * (r + 1);
+    for (let k = 1; k <= r; k++) a += src[(k < h ? k : h - 1) * w + x];
+    acc[x] = a;
+  }
+  let y = 0;
+  const topEnd = Math.min(h, r);
+  for (; y < topEnd; y++) {                          // borde superior
+    const row = y * w, add = (y + r + 1 < h ? (y + r + 1) * w : lastRow);
+    for (let x = 0; x < w; x++) {
+      dst[row + x] = (acc[x] * inv + 0.5) | 0;
+      acc[x] += src[add + x] - src[x];
+    }
+  }
+  const midEnd = Math.max(topEnd, h - r - 1);
+  for (; y < midEnd; y++) {                          // centro, sin recortes
+    const row = y * w, add = (y + r + 1) * w, sub = (y - r) * w;
+    for (let x = 0; x < w; x++) {
+      dst[row + x] = (acc[x] * inv + 0.5) | 0;
+      acc[x] += src[add + x] - src[sub + x];
+    }
+  }
+  for (; y < h; y++) {                               // borde inferior
+    const row = y * w, sub = (y - r > 0 ? (y - r) * w : 0);
+    for (let x = 0; x < w; x++) {
+      dst[row + x] = (acc[x] * inv + 0.5) | 0;
+      acc[x] += src[lastRow + x] - src[sub + x];
+    }
+  }
+}
+
+// Desenfoca un plano dejando el resultado en "out"
+function edBlurPlane(plane, out, w, h, r, passes) {
+  let input = plane;
+  for (let p = 0; p < passes; p++) {
+    edBoxH(input, edPlaneA, w, h, r);
+    edBoxV(edPlaneA, p === passes - 1 ? out : edPlaneB, w, h, r);
+    input = edPlaneB;
+  }
+  return out;
+}
+
+// Máscara de enfoque: amount>0 realza la diferencia con el desenfoque,
+// amount<0 acerca la imagen al desenfoque (quita grano). Mismos enteros y
+// mismos redondeos que la versión con ImageChops del servidor.
+function edSharpenInto(data, w, h, amount) {
+  const a = amount / 100;
+  if (!a) return;
+  const n = w * h;
+  const r = Math.max(1, Math.round(Math.max(w, h) / ED_SHARPEN_RADIUS_DIV));
+  edEnsurePlanes(n);
+  const p0 = edPlanes[0], p1 = edPlanes[1], p2 = edPlanes[2];
+  // El array RGBA entrelazado se recorre solo dos veces (extraer y recomponer);
+  // el trabajo pesado va sobre planos contiguos
+  for (let i = 0, j = 0; i < n; i++, j += 4) {
+    p0[i] = data[j]; p1[i] = data[j + 1]; p2[i] = data[j + 2];
+  }
+  const b0 = edBlurPlane(p0, edBlurred[0], w, h, r, ED_SHARPEN_PASSES);
+  const b1 = edBlurPlane(p1, edBlurred[1], w, h, r, ED_SHARPEN_PASSES);
+  const b2 = edBlurPlane(p2, edBlurred[2], w, h, r, ED_SHARPEN_PASSES);
+  const mag = Math.abs(a), pos = a > 0;
+  for (let i = 0, j = 0; i < n; i++, j += 4) {
+    let o = p0[i], d = o - b0[i], tt = Math.min(255, Math.round(mag * (d >= 0 ? d : -d)));
+    data[j] = (d >= 0) === pos ? o + tt : o - tt;
+    o = p1[i]; d = o - b1[i]; tt = Math.min(255, Math.round(mag * (d >= 0 ? d : -d)));
+    data[j + 1] = (d >= 0) === pos ? o + tt : o - tt;
+    o = p2[i]; d = o - b2[i]; tt = Math.min(255, Math.round(mag * (d >= 0 ? d : -d)));
+    data[j + 2] = (d >= 0) === pos ? o + tt : o - tt;
+  }
+}
+
+// La nitidez se aplica sobre la base geométrica y se guarda: mientras no
+// cambien la geometría ni la propia cantidad, los demás sliders no la repiten
+function edEnsureSharp() {
+  const amount = edAdj.sharpen;
+  if (!amount) { edSharpData = null; edSharpAmount = 0; return null; }
+  const src = edBaseData.data;
+  if (edSharpData && edSharpAmount === amount && edSharpData.length === src.length) {
+    return edSharpData;
+  }
+  if (!edSharpData || edSharpData.length !== src.length) {
+    edSharpData = new Uint8ClampedArray(src.length);
+  }
+  edSharpData.set(src);
+  edSharpenInto(edSharpData, edCanvas.width, edCanvas.height, amount);
+  edSharpAmount = amount;
+  return edSharpData;
+}
+
+// Expuesto solo para poder comprobar el desenfoque contra Pillow desde los tests
+function edBlurTest(values, w, h, r, passes) {
+  edEnsurePlanes(w * h);
+  const plane = edPlanes[0];
+  for (let i = 0; i < w * h; i++) plane[i] = values[i];
+  const out = edBlurPlane(plane, edBlurred[0], w, h, r, passes);
+  return Array.from(out.slice(0, w * h));
+}
+
 function edRender() {
   if (!edBaseData) return;
-  const src = edBaseData.data;
+  const src = edEnsureSharp() || edBaseData.data;
   if (!edOutData || edOutData.data.length !== src.length) {
     edOutData = edCtx.createImageData(edCanvas.width, edCanvas.height);
   }
@@ -2968,30 +3165,75 @@ function edFitCanvas() {
   edCanvas.style.height = Math.round(edCanvas.height * k) + "px";
 }
 
-function edBuildBase() {
+// Imagen ya girada/volteada, a resolución de trabajo completa. Solo se rehace
+// al girar o voltear, no al mover sliders.
+// No tiene sentido calcular más píxeles de los que caben en pantalla: la
+// resolución de trabajo se toma del tamaño real del visor (con un tope), lo que
+// hace que los ajustes cuesten lo mismo con una foto de 2 MP que con una de 50
+function edWorkLong() {
+  const stage = document.getElementById("ed-stage");
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+  const long = Math.max(stage.clientWidth || 0, stage.clientHeight || 0) * dpr;
+  return Math.max(ED_WORK_MIN, Math.min(ED_WORK_MAX, Math.round(long) || ED_WORK_MAX));
+}
+
+function edBuildSource() {
   if (!edImg) return;
   const o = ED_ORIENT_PARAMS[edOrient];
   const swap = o.rotate === 90 || o.rotate === 270;
   const iw = edImg.naturalWidth, ih = edImg.naturalHeight;
   const long = Math.max(iw, ih);
-  const k = long > ED_WORK_MAX ? ED_WORK_MAX / long : 1;
+  const workLong = edWorkLong();
+  const k = long > workLong ? workLong / long : 1;
   const w = Math.max(1, Math.round(iw * k)), h = Math.max(1, Math.round(ih * k));
 
-  edCanvas.width = swap ? h : w;
-  edCanvas.height = swap ? w : h;
-  edCtx.setTransform(1, 0, 0, 1, 0, 0);
-  edCtx.clearRect(0, 0, edCanvas.width, edCanvas.height);
-  edCtx.save();
-  edCtx.translate(edCanvas.width / 2, edCanvas.height / 2);
+  if (!edSrcCanvas) edSrcCanvas = document.createElement("canvas");
+  edSrcCanvas.width = swap ? h : w;
+  edSrcCanvas.height = swap ? w : h;
+  const ctx = edSrcCanvas.getContext("2d");
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, edSrcCanvas.width, edSrcCanvas.height);
+  ctx.save();
+  ctx.translate(edSrcCanvas.width / 2, edSrcCanvas.height / 2);
   // Ojo al orden: la última transformación es la primera que se aplica a lo
   // dibujado, así que esto equivale a "girar y luego voltear", como el servidor
-  edCtx.scale(o.flip_h ? -1 : 1, o.flip_v ? -1 : 1);
-  edCtx.rotate(o.rotate * Math.PI / 180);
-  edCtx.drawImage(edImg, -w / 2, -h / 2, w, h);
+  ctx.scale(o.flip_h ? -1 : 1, o.flip_v ? -1 : 1);
+  ctx.rotate(o.rotate * Math.PI / 180);
+  ctx.drawImage(edImg, -w / 2, -h / 2, w, h);
+  ctx.restore();
+}
+
+// Factor de recorte del enderezado: mayor rectángulo centrado con la MISMA
+// proporción que cabe dentro de la imagen girada. Solo depende de la
+// proporción y del ángulo, así que el servidor calcula el mismo encuadre.
+function edStraightenScale(w, h, angle) {
+  const rad = Math.abs(angle) * Math.PI / 180;
+  const c = Math.cos(rad), sn = Math.sin(rad);
+  return Math.min(w / (w * c + h * sn), h / (w * sn + h * c));
+}
+
+function edBuildBase() {
+  if (!edSrcCanvas) return;
+  const sw = edSrcCanvas.width, sh = edSrcCanvas.height;
+  const angle = edAdj.straighten;
+  const k = angle ? edStraightenScale(sw, sh, angle) : 1;
+  const q = edDraft ? ED_DRAFT_FACTOR : 1;
+  const cw = Math.max(1, Math.round(sw * k * q));
+  const ch = Math.max(1, Math.round(sh * k * q));
+
+  edCanvas.width = cw;
+  edCanvas.height = ch;
+  edCtx.setTransform(1, 0, 0, 1, 0, 0);
+  edCtx.clearRect(0, 0, cw, ch);
+  edCtx.save();
+  edCtx.translate(cw / 2, ch / 2);
+  if (angle) edCtx.rotate(angle * Math.PI / 180);
+  edCtx.drawImage(edSrcCanvas, -sw * q / 2, -sh * q / 2, sw * q, sh * q);
   edCtx.restore();
 
-  edBaseData = edCtx.getImageData(0, 0, edCanvas.width, edCanvas.height);
+  edBaseData = edCtx.getImageData(0, 0, cw, ch);
   edOutData = null;
+  edSharpAmount = null;   // la base cambió: hay que rehacer la nitidez
   edFitCanvas();
   edRender();
   edSyncCropBox();
@@ -3137,7 +3379,8 @@ function edSetAspect(ar) {
 
 // ── Pestañas ─────────────────────────────────────────────────────────────────
 const ED_PANES = {rot: "ed-pane-rot", crop: "ed-pane-crop",
-                  light: "ed-pane-light", color: "ed-pane-color"};
+                  light: "ed-pane-light", detail: "ed-pane-detail",
+                  color: "ed-pane-color"};
 
 function edSetTab(tab) {
   edTab = tab;
@@ -3164,6 +3407,7 @@ function edApplyOrientOp(op) {
     else if (op === "fliph") edCrop = {x: 1 - (c.x + c.w), y: c.y, w: c.w, h: c.h};
     else if (op === "flipv") edCrop = {x: c.x, y: 1 - (c.y + c.h), w: c.w, h: c.h};
   }
+  edBuildSource();
   edBuildBase();
   edUpdateSaveBtn();
 }
@@ -3179,7 +3423,10 @@ document.getElementById("ed-crop-clear").addEventListener("click", () => {
   edCrop = edTab === "crop" ? {x:0, y:0, w:1, h:1} : null;
   edAspect = 0;
   edSetAspectChips(0);
-  edSyncCropBox();
+  const hadAngle = edAdj.straighten !== 0;
+  edAdj.straighten = 0;
+  edSyncSliders();
+  if (hadAngle) edBuildBase(); else edSyncCropBox();
   edUpdateSaveBtn();
 });
 
@@ -3194,36 +3441,65 @@ const ED_SLIDERS = [
   {id: "ed-white",    key: "white",       scale: 1,   signed: false},
   {id: "ed-temp",     key: "temp",        scale: 1,   signed: true},
   {id: "ed-tint",     key: "tint",        scale: 1,   signed: true},
-  {id: "ed-sat",      key: "saturation",  scale: 100, signed: true}
+  {id: "ed-sat",      key: "saturation",  scale: 100, signed: true},
+  // geo: obliga a rehacer la geometría en cada movimiento
+  {id: "ed-angle",    key: "straighten",  scale: 1,   signed: true, geo: true, unit: "°", dec: 1},
+  {id: "ed-sharpen",  key: "sharpen",     scale: 1,   signed: true}
 ];
 
 function edSyncSliders() {
   ED_SLIDERS.forEach(sl => {
     const raw = edAdj[sl.key] * sl.scale;
-    document.getElementById(sl.id).value = Math.round(raw);
-    let shown = Math.round(sl.scale === 100 ? raw - 100 : raw);
+    document.getElementById(sl.id).value = sl.dec ? raw.toFixed(sl.dec) : Math.round(raw);
+    const val = sl.scale === 100 ? raw - 100 : raw;
+    const shown = sl.dec ? val.toFixed(sl.dec) : String(Math.round(val));
     document.getElementById(sl.id + "-v").textContent =
-      (sl.signed && shown > 0 ? "+" : "") + shown;
+      (sl.signed && val > 0 ? "+" : "") + shown + (sl.unit || "");
   });
 }
 
+// Rehacer la geometría o pasar el desenfoque cuesta bastante más que un LUT:
+// en esos casos se trabaja en borrador mientras se arrastra
+function edNeedsDraft(sl) { return !!sl.geo || sl.key === "sharpen"; }
+
 ED_SLIDERS.forEach(sl => {
-  document.getElementById(sl.id).addEventListener("input", (e) => {
+  const el = document.getElementById(sl.id);
+  el.addEventListener("input", (e) => {
     edAdj[sl.key] = parseFloat(e.target.value) / sl.scale;
+    edSyncSliders();
+    edUpdateSaveBtn();
+    const draftNow = edNeedsDraft(sl);
+    if (draftNow && !edDraft) { edDraft = true; edBuildBase(); return; }
+    if (sl.geo) edBuildBase(); else edRequestRender();
+  });
+  // Al soltar, vista previa a resolución completa
+  el.addEventListener("change", () => {
+    if (!edDraft) return;
+    edDraft = false;
+    edBuildBase();
+  });
+});
+
+document.querySelectorAll("#ed-pane-detail .ed-chip[data-sharpen]").forEach(el => {
+  el.addEventListener("click", () => {
+    edAdj.sharpen = parseFloat(el.dataset.sharpen);
     edSyncSliders();
     edRequestRender();
     edUpdateSaveBtn();
   });
 });
+document.getElementById("ed-detail-reset").addEventListener("click",
+  () => edResetAdj(["sharpen"]));
 
 function edSyncWbChip() {
   document.getElementById("ed-wb").classList.toggle("on", !!edWb);
 }
 
 function edResetAdj(keys) {
+  const geo = keys.indexOf("straighten") >= 0;
   keys.forEach(k => { edAdj[k] = ED_DEFAULT_ADJ[k]; });
   edSyncSliders();
-  edRequestRender();
+  if (geo) edBuildBase(); else edRequestRender();
   edUpdateSaveBtn();
 }
 
@@ -3319,8 +3595,9 @@ function openEditor(f) {
   edSetTab("rot");
   edUpdateSaveBtn();
 
+  edDraft = false;
   const img = new Image();
-  img.onload = () => { edImg = img; edBuildBase(); };
+  img.onload = () => { edImg = img; edBuildSource(); edBuildBase(); };
   img.src = previewUrl(f);
   // Tamaño real de la foto, para que el recorte informe en píxeles de verdad
   fetch("/api/imginfo?path=" + encodeURIComponent(f.path))
@@ -3338,6 +3615,12 @@ function closeEditor(force) {
   edFile = null;
   edBaseData = null;
   edOutData = null;
+  edSharpData = null;
+  edSharpAmount = null;
+  edPlanes = null;
+  edBlurred = null;
+  edPlaneA = null;
+  edPlaneB = null;
 }
 
 function edKeys(e) {
@@ -3360,6 +3643,7 @@ document.getElementById("ed-reset").addEventListener("click", () => {
   edSyncWbChip();
   edSetAspectChips(0);
   edSyncSliders();
+  edBuildSource();
   edBuildBase();
   edUpdateSaveBtn();
 });
@@ -3399,6 +3683,8 @@ async function edSave() {
     rotate: String(o.rotate),
     flip_h: o.flip_h,
     flip_v: o.flip_v,
+    straighten: edAdj.straighten,
+    sharpen: edAdj.sharpen,
     crop: edEffectiveCrop(),
     adj: Object.assign({}, edAdj, {wb: edWb})
   };
