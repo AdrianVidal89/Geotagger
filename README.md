@@ -63,6 +63,50 @@ de datos) que se mantiene en segundo plano:
 Ademas del mapa, el filtro **Sin GPS** se sirve del indice. Antes lanzaba un
 proceso de ExifTool POR FOTO; con 3.000 fotos de prueba pasa de minutos a 0,09 s.
 
+## Rendimiento en carpetas grandes
+
+Con miles de fotos indexandose de fondo, la app se habia vuelto lenta. Lo que
+la frenaba no era el repaso en si, sino cuatro cosas que se hacian por foto:
+
+- **Un proceso de ExifTool por foto en cada lote.** Cambiar la fecha o el GPS de
+  una seleccion arrancaba un proceso por archivo. Ahora se manda un solo
+  comando con todas las fotos del lote (de 200 en 200). Solo si el lote no
+  actualiza exactamente los archivos esperados se repite una a una, para poder
+  decir cual fallo. Un desplazamiento de fecha NO se reintenta nunca: se
+  releen las fechas del lote y se compara, porque repetirlo desplazaria dos
+  veces las que si funcionaron.
+- **La cache de miniaturas no se limpiaba.** El nombre del fichero era
+  `md5(ruta + fecha + formato)` pero al borrar se buscaba por `md5(ruta)`: no
+  coincidia nunca, asi que no se borraba nada y la carpeta crecia sin limite;
+  encima se recorria entera en cada operacion (21 ms por foto con 8.000
+  ficheros). Ahora el nombre empieza por el hash de la RUTA, las miniaturas se
+  reparten en 256 subcarpetas y borrar las de una foto mira solo la suya.
+- **Se releia con ExifTool lo que el indice ya sabia.** Abrir una foto o
+  renombrar lanzaba procesos para leer GPS y fecha. Ahora se sirven del indice
+  siempre que la foto no haya cambiado (misma fecha y tamano), y las
+  operaciones anotan en el indice lo que acaban de escribir en vez de marcar la
+  foto para releerla.
+- **Los nombres de lugar se consultaban una y otra vez.** Nominatim obliga a
+  esperar un segundo entre peticiones, y se agrupaba por 11 metros: casi una
+  consulta por foto. Ahora se agrupa por ~1,1 km (a ese zoom el nombre es el
+  del pueblo o barrio) y se guardan en la base para siempre. Si la red falla,
+  se deja de intentar en el resto del lote en vez de esperar por cada foto.
+
+Ademas, cada hilo de Flask (uno por peticion) abria su propia conexion SQLite;
+ahora se comparte una sola. El repaso de fondo lee con `-fast2` (corta en
+cuanto tiene los metadatos, sin leerse el archivo entero) y descansa entre
+lotes para no comerse el disco mientras se trabaja.
+
+Medido sobre una carpeta de 2.700 fotos:
+
+| Operacion | Antes | Ahora |
+|---|---|---|
+| Abrir una foto (GPS y fecha) | 0,19 s | 0,00 s |
+| Cambiar la fecha a 20 fotos | 5,79 s | 0,33 s |
+| Poner GPS a 20 fotos | 4,6 s | 0,25 s |
+| Renombrar 20 fotos por EXIF | 39 s | 0,01 s |
+| Filtro Sin GPS | minutos | 0,01 s |
+
 ## Favoritos
 
 La estrella del panel de carpetas marca la carpeta que se esta viendo. Los
@@ -117,6 +161,26 @@ ajustar luz y color las fotos:
     vista previa muestra el mismo efecto relativo que el archivo final.
 - **Los RAW no se pueden sobrescribir**: al recortar o ajustar uno se guarda un
   JPEG nuevo junto al original (`nombre_edit.jpg`) y el RAW se queda intacto.
+
+### Coste de guardar
+
+Escribir metadatos con ExifTool obliga a reescribir el archivo entero, y en PNG
+sale caro: casi 3 s en uno de 23 MB (unas 3 veces mas por MB que en JPEG),
+mientras que LEERLOS cuesta centesimas. Por eso al guardar:
+
+- El bloque EXIF del original (fechas, GPS, camara) se incrusta al escribir el
+  archivo, con Orientation puesto a 1 porque el giro ya va en los pixeles.
+- Solo se pasa por ExifTool cuando de verdad hace falta: si el original lleva
+  XMP o IPTC, que no caben en el EXIF, o si no se pudo leer su EXIF (un RAW).
+  Un PNG sin metadatos no necesita ninguna pasada.
+- En PNG no se usa `optimize`: prueba varias estrategias para ahorrar un 2% de
+  tamano y con archivos grandes no compensa.
+- La miniatura y la vista previa del archivo editado se dejan hechas en la
+  cache, porque el navegador las pide justo despues y regenerarlas obliga a
+  decodificar otra vez la foto entera.
+
+Con un PNG de 23 MB, un recorte pasa de 3,9 s a 1,6 s, y la vista previa
+posterior de 0,22 s a 0,01 s.
 
 La vista previa del navegador y el resultado guardado usan la misma cadena, en
 el mismo orden (giro y volteo -> enderezado -> recorte -> nitidez -> equilibrio

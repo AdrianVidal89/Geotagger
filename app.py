@@ -244,16 +244,77 @@ def _write_gps_exiftool(path, lat, lon, alt=None):
     _evict_thumb_cache(path)
     _index_set_gps(path, lat, lon)
 
-def _evict_thumb_cache(abs_path):
-    """Remove all cached thumbnails (JPEG + WebP) for a given file."""
+def _cache_key(abs_path):
+    return hashlib.md5(str(abs_path).encode()).hexdigest()
+
+def _cache_dir_for(key):
+    """Las miniaturas van repartidas en 256 subcarpetas por las dos primeras
+    letras del hash: con miles de fotos, buscar en una sola carpeta obligaba a
+    recorrerla entera en cada operacion."""
+    return Path(THUMB_CACHE_DIR) / key[:2]
+
+EXIFTOOL_CHUNK = 200      # fotos por llamada, para no pasarse de linea de comandos
+
+def _chunks(items, n):
+    for i in range(0, len(items), n):
+        yield items[i:i + n]
+
+def _after_write(path):
+    """Lo que toca hacer tras modificar una foto: reindexar en el NAS, tirar sus
+    miniaturas y marcarla para releer en el indice."""
+    _trigger_reindex(path)
+    _evict_thumb_cache(path)
+
+def _exiftool_updated(stdout):
+    """Cuantos archivos dice ExifTool haber actualizado. Ojo con el limite de
+    palabra: "20 image files updated" contiene "0 image files updated"."""
+    m = re.search(r"(?:^|\D)(\d+) image files? updated", stdout or "")
+    return int(m.group(1)) if m else 0
+
+def _exiftool_updated_none(stdout):
+    return _exiftool_updated(stdout) == 0
+
+def _read_dates_batch(paths):
+    """Fechas de un lote con UNA sola llamada. Devuelve por foto la fecha de
+    toma y la primera que haya de las tres que toca -AllDates: si no hay
+    ninguna, un desplazamiento no cambiaria nada."""
+    out = {}
+    if not paths:
+        return out
+    cmd = ["exiftool", "-fast2", "-json", "-q", "-q", "-SourceFile",
+           "-DateTimeOriginal", "-CreateDate", "-ModifyDate"] + [str(p) for p in paths]
     try:
-        # Both formats share the same path prefix so glob both extensions
-        base_key = hashlib.md5(str(abs_path).encode()).hexdigest()[:16]
-        cache_dir = Path(THUMB_CACHE_DIR)
-        for ext in ("*.jpg", "*.webp"):
-            for f in cache_dir.glob(ext):
-                if f.stem.startswith(base_key[:8]):
-                    f.unlink(missing_ok=True)
+        result = subprocess.run(cmd, capture_output=True, text=True,
+                                timeout=max(120, 5 * len(paths)))
+        for row in json.loads(result.stdout or "[]"):
+            origen = row.get("SourceFile")
+            if not origen:
+                continue
+            toma = row.get("DateTimeOriginal") or ""
+            out[os.path.realpath(origen)] = {
+                "toma": toma,
+                "alguna": toma or row.get("CreateDate") or row.get("ModifyDate") or "",
+            }
+    except Exception:
+        pass
+    return out
+
+def _run_exiftool_batch(args, paths, timeout_each=5):
+    """Aplica los MISMOS cambios a varias fotos con una sola llamada. Lanzar un
+    proceso por foto era lo que hacia lentos los lotes."""
+    cmd = ["exiftool"] + args + ["-overwrite_original"] + [str(p) for p in paths]
+    return subprocess.run(cmd, capture_output=True, text=True,
+                          timeout=max(120, timeout_each * len(paths)))
+
+def _evict_thumb_cache(abs_path):
+    """Borra las miniaturas y vistas previas guardadas de una foto.
+    Antes comparaba md5(ruta) contra nombres que son md5(ruta+fecha+formato):
+    no coincidian nunca, asi que no borraba nada y encima recorria toda la
+    carpeta de cache en cada llamada."""
+    try:
+        key = _cache_key(abs_path)
+        for f in _cache_dir_for(key).glob(key[:16] + "_*"):
+            f.unlink(missing_ok=True)
     except Exception:
         pass
 
@@ -370,7 +431,7 @@ def _write_date_exiftool(path, exif_date=None, shift=None, sync_file=True):
     if result.returncode != 0:
         raise Exception(result.stderr.strip() or "error de ExifTool")
     # ExifTool devuelve 0 aunque no escriba nada (p.ej. shift sin fecha previa)
-    if "0 image files updated" in (result.stdout or ""):
+    if _exiftool_updated_none(result.stdout):
         if shift:
             raise Exception("la foto no tiene fecha previa que desplazar")
         raise Exception(result.stderr.strip().splitlines()[0] if result.stderr.strip()
@@ -417,7 +478,7 @@ def _rotate_lossless(path, op):
         ["exiftool", "-Orientation=" + str(new), "-n", "-overwrite_original", str(path)],
         capture_output=True, text=True, timeout=30
     )
-    if result.returncode != 0 or "0 image files updated" in (result.stdout or ""):
+    if result.returncode != 0 or _exiftool_updated_none(result.stdout):
         raise Exception(result.stderr.strip().splitlines()[0] if result.stderr.strip()
                         else "no se pudo girar")
     _trigger_reindex(path)
@@ -675,16 +736,24 @@ def _open_for_edit(abs_path):
         pass
     return img
 
-def _save_pixels(img, dest, ext):
-    """Guarda la imagen en el formato que corresponde a la extension."""
+def _save_pixels(img, dest, ext, exif=None):
+    """
+    Guarda la imagen en el formato que corresponde a la extension.
+    Si se pasa el bloque EXIF del original, va incrustado DE UNA VEZ: escribir
+    los metadatos despues, con ExifTool, obliga a reescribir el archivo entero
+    (casi 3 s en un PNG de 23 MB).
+    En PNG no se usa optimize: prueba varias estrategias de compresion para
+    ahorrar un 2% de tamano, y con archivos grandes eso se nota y no compensa.
+    """
+    extra = {"exif": exif} if exif else {}
     if ext in (".jpg", ".jpeg"):
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
-        img.save(str(dest), format="JPEG", quality=95, subsampling=0, optimize=True)
+        img.save(str(dest), format="JPEG", quality=95, subsampling=0, optimize=True, **extra)
     elif ext == ".png":
-        img.save(str(dest), format="PNG", optimize=True)
+        img.save(str(dest), format="PNG", compress_level=6, **extra)
     elif ext == ".webp":
-        img.save(str(dest), format="WEBP", quality=95, method=4)
+        img.save(str(dest), format="WEBP", quality=95, method=4, **extra)
     elif ext in (".tif", ".tiff"):
         # LZW es sin perdida y evita TIFF enormes sin comprimir
         img.save(str(dest), format="TIFF", compression="tiff_lzw")
@@ -692,6 +761,40 @@ def _save_pixels(img, dest, ext):
         img.save(str(dest), format="HEIF", quality=95)
     else:
         raise Exception("formato no editable")
+
+def _source_exif(abs_path):
+    """Bloque EXIF del original listo para incrustar en el archivo editado.
+    Se conserva tal cual (GPS y fechas incluidos) y solo se fuerza
+    Orientation=1, porque el giro ya va aplicado a los pixeles."""
+    try:
+        with Image.open(str(abs_path)) as im:      # no decodifica los pixeles
+            exif = im.getexif()
+            if not exif:
+                return None
+            exif[0x0112] = 1
+            data = exif.tobytes()
+        return data or None
+    except Exception:
+        return None
+
+def _needs_metadata_copy(abs_path, exif_embedded):
+    """
+    Decide si hace falta pasar por ExifTool, que es lo caro (reescribe el
+    archivo entero: casi 3 s en un PNG de 23 MB). Leer es barato.
+    - Si ya se incrusto el EXIF al guardar, solo importan XMP e IPTC.
+    - Si no se pudo leer el EXIF (un RAW, por ejemplo), tambien hace falta el.
+    Un PNG sin metadatos -un recorte cualquiera- no necesita nada.
+    """
+    groups = ["-XMP:all", "-IPTC:all"]
+    if not exif_embedded:
+        groups.append("-EXIF:all")
+    try:
+        result = subprocess.run(
+            ["exiftool", "-fast2", "-s3"] + groups + [str(abs_path)],
+            capture_output=True, text=True, timeout=30)
+        return bool(result.stdout.strip())
+    except Exception:
+        return True     # ante la duda, la via segura
 
 def _copy_metadata(src, dest):
     """Copia los metadatos del original al archivo editado (GPS, fechas, camara)
@@ -720,15 +823,39 @@ def _edit_destination(path):
         n += 1
     return candidate, True
 
+def _prewarm_cache(img, dest):
+    """Deja hechas la miniatura y la vista previa del archivo recien guardado.
+    El navegador las pide justo despues de editar y, si no estan, hay que
+    decodificar otra vez la foto entera."""
+    try:
+        preview = img.copy()
+        preview.thumbnail((PREVIEW_MAX, PREVIEW_MAX))
+        if preview.mode not in ("RGB", "RGBA", "L"):
+            preview = preview.convert("RGB")
+        preview.save(str(_thumb_cache_path(dest, "PREVIEW-WEBP")),
+                     format="WEBP", quality=88, method=4)
+        thumb = preview.copy()
+        thumb.thumbnail((300, 300))
+        thumb.save(str(_thumb_cache_path(dest, "WEBP")), format="WEBP", quality=82, method=4)
+    except Exception:
+        pass
+
 def _save_edit(img, abs_path):
-    """Guarda una imagen editada: escribe primero un temporal, le copia los
+    """Guarda una imagen editada: escribe primero un temporal, le pone los
     metadatos del original y solo entonces reemplaza el archivo. Asi un fallo a
-    medias nunca deja el original corrupto. Devuelve (destino, es_derivado)."""
+    medias nunca deja el original corrupto. Devuelve (destino, es_derivado).
+
+    Los metadatos van incrustados al guardar (rapido). Solo se pasa por ExifTool
+    cuando hace falta de verdad: si el original lleva XMP o IPTC, o si no se
+    pudo leer su EXIF (por ejemplo en un RAW, que se guarda como JPEG derivado).
+    """
     dest, derived = _edit_destination(abs_path)
     tmp = dest.with_name("." + dest.name + ".edit_tmp" + dest.suffix)
+    exif = _source_exif(abs_path)
     try:
-        _save_pixels(img, tmp, dest.suffix.lower())
-        _copy_metadata(abs_path, tmp)
+        _save_pixels(img, tmp, dest.suffix.lower(), exif=exif)
+        if _needs_metadata_copy(abs_path, exif is not None):
+            _copy_metadata(abs_path, tmp)
         os.replace(str(tmp), str(dest))
     except Exception:
         try:
@@ -740,6 +867,7 @@ def _save_edit(img, abs_path):
     _trigger_reindex(dest)
     _evict_thumb_cache(dest)
     _evict_thumb_cache(abs_path)
+    _prewarm_cache(img, dest)
     _index_stale(dest)
     return dest, derived
 
@@ -766,7 +894,7 @@ INDEX_FILE = SETTINGS_DIR + "/index.db"
 INDEX_BATCH = 150          # fotos por llamada a ExifTool
 INDEX_INTERVAL = 900       # repaso periodico del arbol (segundos)
 
-_index_local = threading.local()
+_index_conn = None
 _index_lock = threading.Lock()
 # SQLite admite muchos lectores pero un solo escritor: las escrituras se
 # serializan aqui para no chocar con el repaso de fondo ("database is locked")
@@ -774,10 +902,12 @@ _index_write = threading.Lock()
 _index_state = {"scanning": False, "done": 0, "total": 0, "root": "", "at": 0}
 
 def _index_db():
-    """Conexion propia de cada hilo (Flask atiende varias peticiones a la vez)."""
-    conn = getattr(_index_local, "conn", None)
+    """Una sola conexion compartida. Flask crea un HILO POR PETICION, asi que
+    una conexion por hilo significaba abrir la base en cada peticion."""
+    global _index_conn
+    conn = _index_conn
     if conn is None:
-        conn = sqlite3.connect(INDEX_FILE, timeout=60)
+        conn = sqlite3.connect(INDEX_FILE, timeout=60, check_same_thread=False)
         try:
             conn.execute("PRAGMA busy_timeout=60000")
             conn.execute("PRAGMA journal_mode=WAL")   # lecturas mientras se escribe
@@ -789,8 +919,12 @@ def _index_db():
                 path TEXT PRIMARY KEY,
                 mtime INTEGER, size INTEGER,
                 lat REAL, lon REAL, date TEXT)""")
+            # Nombres de lugar ya consultados: Nominatim obliga a esperar un
+            # segundo entre peticiones, asi que conviene no repetirlas nunca
+            conn.execute("""CREATE TABLE IF NOT EXISTS places (
+                key TEXT PRIMARY KEY, name TEXT, at INTEGER)""")
             conn.commit()
-        _index_local.conn = conn
+        _index_conn = conn
     return conn
 
 def _index_range(base):
@@ -817,7 +951,9 @@ def _index_walk(base):
 
 def _index_read_batch(paths):
     """Lee un lote con UNA sola llamada a ExifTool."""
-    cmd = ["exiftool", "-json", "-n", "-q", "-q",
+    # -fast2 corta la lectura en cuanto tiene los metadatos: en un RAW o un PNG
+    # grande evita leerse el archivo entero
+    cmd = ["exiftool", "-fast2", "-json", "-n", "-q", "-q",
            "-GPSLatitude", "-GPSLongitude", "-DateTimeOriginal", "-SourceFile"] + paths
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
@@ -877,6 +1013,9 @@ def _index_scan(base):
                 "VALUES (?, ?, ?, ?, ?, ?)", rows)
             conn.commit()
         _index_state["done"] += len(batch)
+        # Un respiro entre lotes: el repaso es de fondo y no debe comerse el
+        # disco mientras se esta trabajando con las fotos
+        time.sleep(0.15)
     _index_state["at"] = int(time.time())
 
 def _index_worker(base):
@@ -918,6 +1057,45 @@ def _index_without_gps(base):
         "SELECT path, mtime FROM photos WHERE path >= ? AND path < ? AND lat IS NULL",
         (lo, hi)).fetchall()
 
+# ~1,1 km: el nombre que devuelve Nominatim a este nivel de zoom es el del
+# pueblo o barrio, asi que afinar mas solo multiplica las consultas
+PLACE_PRECISION = 2
+
+def _place_key(lat, lon):
+    return "%.*f,%.*f" % (PLACE_PRECISION, lat, PLACE_PRECISION, lon)
+
+def _place_cached(key):
+    try:
+        row = _index_db().execute("SELECT name FROM places WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+def _place_store(key, name):
+    try:
+        conn = _index_db()
+        with _index_write:
+            conn.execute("INSERT OR REPLACE INTO places (key, name, at) VALUES (?,?,?)",
+                         (key, name, int(time.time())))
+            conn.commit()
+    except Exception:
+        pass
+
+def _index_get(path):
+    """Lo que el indice sabe de una foto, SOLO si sigue al dia (misma fecha y
+    tamano). Evita lanzar ExifTool para algo que ya se leyo una vez."""
+    try:
+        st = os.stat(str(path))
+        row = _index_db().execute(
+            "SELECT mtime, size, lat, lon, date FROM photos WHERE path = ?",
+            (str(path),)).fetchone()
+        if not row or row[0] != int(st.st_mtime) or row[1] != st.st_size:
+            return None
+        return {"lat": row[2], "lon": row[3], "date": row[4] or "",
+                "file_mtime": int(st.st_mtime)}
+    except Exception:
+        return None
+
 def _index_count(base):
     lo, hi = _index_range(base)
     return _index_db().execute(
@@ -936,6 +1114,20 @@ def _index_set_gps(path, lat, lon):
                 "ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, size=excluded.size, "
                 "lat=excluded.lat, lon=excluded.lon",
                 (str(path), int(st.st_mtime), st.st_size, lat, lon, str(path)))
+            conn.commit()
+    except Exception:
+        pass
+
+def _index_set_date(path, exif_date):
+    """Tras fijar una fecha concreta ya la conocemos: se anota en el indice en
+    vez de marcar la foto para releerla."""
+    try:
+        st = os.stat(str(path))
+        conn = _index_db()
+        with _index_write:
+            conn.execute(
+                "UPDATE photos SET mtime = ?, size = ?, date = ? WHERE path = ?",
+                (int(st.st_mtime), st.st_size, exif_date, str(path)))
             conn.commit()
     except Exception:
         pass
@@ -1027,14 +1219,35 @@ def _reverse_geocode(lat, lon):
     return None
 
 def _thumb_cache_path(abs_path, fmt="JPEG"):
-    """Generate a stable cache filename based on file path + mtime + format."""
+    """Nombre estable a partir de ruta + fecha + formato. El prefijo depende
+    SOLO de la ruta, para poder borrar todas las versiones de una foto."""
     try:
         mtime = str(int(os.path.getmtime(abs_path) * 1000))
     except Exception:
         mtime = "0"
-    key = hashlib.md5((str(abs_path) + mtime + fmt).encode()).hexdigest()
+    key = _cache_key(abs_path)
+    stamp = hashlib.md5((mtime + fmt).encode()).hexdigest()[:12]
     ext = ".webp" if "WEBP" in fmt else ".jpg"
-    return Path(THUMB_CACHE_DIR) / (key + ext)
+    folder = _cache_dir_for(key)
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return folder / (key[:16] + "_" + stamp + ext)
+
+def _clean_flat_cache():
+    """Limpieza unica de la cache antigua (todo en una carpeta). Son ficheros
+    regenerables y ocupaban espacio sin poder borrarse nunca."""
+    try:
+        root = Path(THUMB_CACHE_DIR)
+        for f in root.iterdir():
+            if f.is_file() and f.suffix in (".jpg", ".webp"):
+                f.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+# Limpieza unica de la cache antigua, ya con la funcion definida
+_clean_flat_cache()
 
 @app.route("/")
 def index():
@@ -1407,26 +1620,56 @@ def geocode():
 
 @app.route("/api/write", methods=["POST"])
 def write_gps():
+    """Escribe las mismas coordenadas en las fotos elegidas. Se hace por lotes:
+    ExifTool acepta muchos archivos en una sola llamada, y arrancar un proceso
+    por foto era lo que hacia lento aplicar GPS a una seleccion grande."""
     data = request.json
     lat   = float(data["lat"])
     lon   = float(data["lon"])
     alt   = float(data["alt"]) if data.get("alt") else None
     files = data["files"]
-    ok, errors = [], []
+
+    targets, ok, errors = [], [], []
     for rel in files:
         path = _resolve_path(rel)
-        if path is None:
-            errors.append({"file": rel, "error": "ruta invalida"})
+        if path is None or not path.exists():
+            errors.append({"file": rel, "error": "no existe o ruta invalida"})
+            continue
+        if path.suffix.lower() not in SUPPORTED_EXTS:
+            errors.append({"file": path.name, "error": "formato no soportado"})
             continue
         try:
-            ext = path.suffix.lower()
-            if ext in SUPPORTED_EXTS:
-                _write_gps_exiftool(path, lat, lon, alt)
-                ok.append(path.name)
-            else:
-                errors.append({"file": path.name, "error": "formato no soportado"})
+            targets.append(sanitize_path(path))
         except Exception as e:
             errors.append({"file": path.name, "error": str(e)})
+
+    args = ["-GPSLatitude=" + str(abs(lat)), "-GPSLatitudeRef=" + ("N" if lat >= 0 else "S"),
+            "-GPSLongitude=" + str(abs(lon)), "-GPSLongitudeRef=" + ("E" if lon >= 0 else "W")]
+    if alt is not None:
+        args += ["-GPSAltitude=" + str(abs(alt)), "-GPSAltitudeRef=" + ("0" if alt >= 0 else "1")]
+
+    for chunk in _chunks(targets, EXIFTOOL_CHUNK):
+        try:
+            result = _run_exiftool_batch(args, chunk)
+        except Exception as e:
+            for path in chunk:
+                errors.append({"file": path.name, "error": str(e)})
+            continue
+        escritas = _exiftool_updated(result.stdout) if result.returncode == 0 else 0
+        if escritas != len(chunk):
+            # Alguna se quedo fuera: escribir las mismas coordenadas otra vez no
+            # tiene efecto, asi que se repite una a una para saber cual fallo
+            for path in chunk:
+                try:
+                    _write_gps_exiftool(path, lat, lon, alt)
+                    ok.append(path.name)
+                except Exception as e:
+                    errors.append({"file": path.name, "error": str(e)})
+            continue
+        for path in chunk:
+            _after_write(path)
+            _index_set_gps(path, lat, lon)
+            ok.append(path.name)
     return jsonify({"ok": ok, "errors": errors})
 
 @app.route("/api/gpsinfo")
@@ -1435,9 +1678,15 @@ def gpsinfo():
     abs_path = _resolve_path(rel)
     if abs_path is None or not abs_path.exists():
         return jsonify({"has_gps": False, "error": "no existe"})
+    # Si el indice ya sabe de esta foto y sigue al dia, no hace falta ExifTool
+    known = _index_get(abs_path)
+    if known is not None:
+        if known["lat"] is None:
+            return jsonify({"has_gps": False})
+        return jsonify({"has_gps": True, "lat": str(known["lat"]), "lon": str(known["lon"])})
     try:
         result = subprocess.run(
-            ["exiftool", "-n", "-GPSLatitude", "-GPSLongitude", "-s", "-s", "-s", str(abs_path)],
+            ["exiftool", "-fast2", "-n", "-GPSLatitude", "-GPSLongitude", "-s", "-s", "-s", str(abs_path)],
             capture_output=True, text=True, timeout=10
         )
         out = result.stdout.strip()
@@ -1455,6 +1704,14 @@ def dateinfo():
     abs_path = _resolve_path(rel)
     if abs_path is None or not abs_path.exists():
         return jsonify({"has_date": False, "error": "no existe"}), 404
+    # Igual que con el GPS: si el indice lo sabe, nos ahorramos el proceso
+    known = _index_get(abs_path)
+    if known is not None and known["date"]:
+        return jsonify({
+            "date": known["date"].replace(":", "-", 2),
+            "file_date": datetime.fromtimestamp(known["file_mtime"]).strftime(UI_DATE_FMT),
+            "has_date": True,
+        })
     info = _read_dates(abs_path)
     info["has_date"] = bool(info.get("date") or info.get("create_date"))
     return jsonify(info)
@@ -1483,7 +1740,7 @@ def write_date():
         if not exif_date:
             return jsonify({"error": "fecha no valida"}), 400
 
-    ok, errors = [], []
+    targets, ok, errors = [], [], []
     for rel in files:
         path = _resolve_path(rel)
         if path is None or not path.exists():
@@ -1493,11 +1750,82 @@ def write_date():
             errors.append({"file": path.name, "error": "formato no soportado"})
             continue
         try:
-            written = _write_date_exiftool(path, exif_date=exif_date,
-                                          shift=shift, sync_file=sync_file)
-            ok.append(written.name)
+            targets.append(sanitize_path(path))
         except Exception as e:
             errors.append({"file": path.name, "error": str(e)})
+
+    # Mismo cambio para todas: una sola llamada a ExifTool por lote
+    if shift:
+        op, val = shift
+        args = ["-AllDates" + op + val]
+        if sync_file:
+            args.append("-FileModifyDate" + op + val)
+    else:
+        args = ["-AllDates=" + exif_date]
+        if sync_file:
+            args.append("-FileModifyDate=" + exif_date)
+
+    def _done(path, fecha):
+        _after_write(path)
+        if fecha:
+            _index_set_date(path, fecha)
+        else:
+            _index_stale(path)
+        ok.append(path.name)
+
+    # Un desplazamiento deja INTACTAS las fotos sin fecha previa, y ExifTool no
+    # dice cuales fueron: hay que saberlo de antemano
+    before = _read_dates_batch(targets) if shift else {}
+    if shift:
+        con_fecha = []
+        for path in targets:
+            previa = before.get(os.path.realpath(str(path))) or {}
+            if previa.get("alguna"):
+                con_fecha.append(path)
+            else:
+                errors.append({"file": path.name,
+                               "error": "la foto no tiene fecha previa que desplazar"})
+        targets = con_fecha
+
+    for chunk in _chunks(targets, EXIFTOOL_CHUNK):
+        try:
+            result = _run_exiftool_batch(args, chunk)
+        except Exception as e:
+            for path in chunk:
+                errors.append({"file": path.name, "error": str(e)})
+            continue
+        escritas = _exiftool_updated(result.stdout) if result.returncode == 0 else 0
+        if shift:
+            # Un desplazamiento NO se puede repetir (desplazaria dos veces las
+            # que si funcionaron), asi que en vez de reintentar se releen las
+            # fechas del lote: dice cual cambio de verdad y ademas deja el
+            # indice al dia, que es lo que evita releer foto a foto despues
+            after = _read_dates_batch(chunk)
+            for path in chunk:
+                key = os.path.realpath(str(path))
+                nueva = after.get(key) or {}
+                previa = before.get(key) or {}
+                if nueva.get("alguna") and nueva["alguna"] != previa.get("alguna"):
+                    # Solo se anota en el indice la fecha de TOMA, que es la que
+                    # usan la galeria y el renombrado
+                    _done(path, nueva["toma"])
+                else:
+                    errors.append({"file": path.name,
+                                   "error": "no se pudo desplazar la fecha"})
+            continue
+        if escritas == len(chunk):
+            for path in chunk:
+                _done(path, exif_date)
+            continue
+        # Poner una fecha concreta se puede repetir sin efectos: se reintenta una
+        # a una para decir exactamente cual fallo
+        for path in chunk:
+            try:
+                written = _write_date_exiftool(path, exif_date=exif_date,
+                                               shift=shift, sync_file=sync_file)
+                ok.append(written.name)
+            except Exception as e:
+                errors.append({"file": path.name, "error": str(e)})
     return jsonify({"ok": ok, "errors": errors, "date": exif_date or ""})
 
 @app.route("/api/rotate", methods=["POST"])
@@ -1845,6 +2173,7 @@ def rename_files():
     ok, errors = [], []
     seen = {}
     geocode_cache = {}
+    geo_down = False
     for rel in files:
         path = _resolve_path(rel)
         if path is None or not path.exists():
@@ -1852,28 +2181,46 @@ def rename_files():
             continue
         try:
             location_name = ""
-            coords = _get_coords(path)
+            # El indice ya tiene coordenadas y fecha de casi todas las fotos:
+            # antes se lanzaban DOS ExifTool por foto solo para leerlas
+            known = _index_get(path)
+            coords = None
+            if known is not None:
+                coords = (known["lat"], known["lon"]) if known["lat"] is not None else None
+            else:
+                coords = _get_coords(path)
             if coords:
-                cache_key = (round(coords[0], 4), round(coords[1], 4))
-                if cache_key in geocode_cache:
-                    location_name = geocode_cache[cache_key]
-                else:
+                # El nombre del lugar se guarda para siempre: consultarlo cuesta
+                # una peticion de red MAS un segundo de espera obligatoria, y
+                # antes se repetia por cada coordenada distinta (a 11 m, casi
+                # una por foto)
+                cache_key = _place_key(coords[0], coords[1])
+                name = geocode_cache.get(cache_key) or _place_cached(cache_key)
+                if name is None and not geo_down:
                     rev = _reverse_geocode(coords[0], coords[1])
                     if rev:
-                        location_name = rev
-                        geocode_cache[cache_key] = rev
-                        time.sleep(1)
+                        name = rev
+                        _place_store(cache_key, rev)
+                        time.sleep(1)      # limite de uso de Nominatim
+                    else:
+                        geo_down = True    # sin red: no insistir con el resto
+                if name:
+                    location_name = name
+                    geocode_cache[cache_key] = name
             if not location_name and fallback_name:
                 location_name = fallback_name
             if not location_name:
                 location_name = "sin-ubicacion"
             location_name = re.sub(r'[^\w\s-]', '', location_name).strip()
             location_name = re.sub(r'\s+', '_', location_name)
-            result = subprocess.run(
-                ["exiftool", "-DateTimeOriginal", "-s", "-s", "-s", str(path)],
-                capture_output=True, text=True, timeout=10
-            )
-            dt_raw = result.stdout.strip()
+            if known is not None:
+                dt_raw = known["date"]
+            else:
+                result = subprocess.run(
+                    ["exiftool", "-fast2", "-DateTimeOriginal", "-s", "-s", "-s", str(path)],
+                    capture_output=True, text=True, timeout=10
+                )
+                dt_raw = result.stdout.strip()
             if dt_raw:
                 dt = dt_raw.replace(":", "-", 2).replace(" ", "_").replace(":", "-")
             else:
