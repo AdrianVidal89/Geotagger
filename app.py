@@ -1,4 +1,5 @@
 import os
+import math
 import subprocess
 import re
 import io
@@ -11,7 +12,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from flask import Flask, jsonify, request, render_template, send_file
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageChops, ImageFilter
 import requests
 from datetime import datetime
 
@@ -578,6 +579,62 @@ def _auto_levels(img):
         "contrast": 1.0,
         "saturation": 1.0,
     }
+
+# ── Enderezado ───────────────────────────────────────────────────────────────
+# Al enderezar quedarian esquinas vacias, asi que se recorta al mayor
+# rectangulo centrado con la MISMA proporcion que quepa dentro de la imagen
+# girada. El factor solo depende de la proporcion y del angulo, asi que el
+# editor del navegador calcula exactamente el mismo encuadre.
+def _straighten_scale(w, h, angle):
+    rad = math.radians(abs(float(angle)))
+    c, sn = math.cos(rad), math.sin(rad)
+    return min(w / (w * c + h * sn), h / (w * sn + h * c))
+
+def _straighten(img, angle):
+    angle = float(angle)
+    if not angle:
+        return img
+    w, h = img.size
+    k = _straighten_scale(w, h, angle)
+    # Angulo positivo = sentido horario (Pillow gira antihorario)
+    rot = img.rotate(-angle, resample=Image.BICUBIC, expand=False)
+    nw = max(1, int(round(w * k)))
+    nh = max(1, int(round(h * k)))
+    x0 = (w - nw) // 2
+    y0 = (h - nh) // 2
+    return rot.crop((x0, y0, x0 + nw, y0 + nh))
+
+# ── Nitidez y suavizado ──────────────────────────────────────────────────────
+# Una sola mascara de enfoque sirve para las dos direcciones:
+#   amount > 0  ->  enfocar    (realza la diferencia con el desenfoque)
+#   amount < 0  ->  suavizar   (acerca la imagen al desenfoque: quita grano)
+# El radio va con la resolucion, de modo que la vista previa (mas pequena)
+# muestra el mismo efecto relativo que el archivo final.
+SHARPEN_RADIUS_DIV = 700
+# Una sola pasada de caja: dos pasadas quedaban algo mas suaves pero doblaban
+# el coste en el navegador, y con estos radios la diferencia no se aprecia
+SHARPEN_PASSES = 1
+
+def _blur_radius(w, h):
+    return max(1, int(round(max(w, h) / SHARPEN_RADIUS_DIV)))
+
+def _apply_sharpen(img, amount):
+    a = max(-100.0, min(150.0, float(amount or 0))) / 100.0
+    if a == 0:
+        return img
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    r = _blur_radius(*img.size)
+    blurred = img
+    for _ in range(SHARPEN_PASSES):
+        blurred = blurred.filter(ImageFilter.BoxBlur(r))
+    mag = abs(a)
+    scale = lambda v: min(255, int(mag * v + 0.5))
+    hi = ImageChops.subtract(img, blurred).point(scale)   # donde la imagen supera al desenfoque
+    lo = ImageChops.subtract(blurred, img).point(scale)   # donde queda por debajo
+    if a > 0:
+        return ImageChops.subtract(ImageChops.add(img, hi), lo)
+    return ImageChops.add(ImageChops.subtract(img, hi), lo)
 
 def _open_for_edit(abs_path):
     """Abre la imagen ya orientada (como se ve en el visor). Para un RAW usa la
@@ -1177,7 +1234,15 @@ def edit_image():
     flip_v = bool(data.get("flip_v"))
     crop = data.get("crop") or None
     adj = data.get("adj") or {}
-    has_adj = not _adj_is_neutral(adj)
+    try:
+        angle = max(-15.0, min(15.0, float(data.get("straighten") or 0)))
+    except (TypeError, ValueError):
+        angle = 0.0
+    try:
+        sharpen = max(-100.0, min(150.0, float(data.get("sharpen") or 0)))
+    except (TypeError, ValueError):
+        sharpen = 0.0
+    has_adj = not _adj_is_neutral(adj) or angle != 0 or sharpen != 0
 
     # Via sin perdida: giro y/o volteo, nada mas
     if not crop and not has_adj:
@@ -1217,6 +1282,8 @@ def edit_image():
         if flip_v:
             img = img.transpose(Image.FLIP_TOP_BOTTOM)
 
+        img = _straighten(img, angle)
+
         if crop:
             w, h = img.size
             x0 = int(round(max(0.0, min(1.0, float(crop.get("x", 0)))) * w))
@@ -1228,6 +1295,11 @@ def edit_image():
             if (x0, y0, x1, y1) != (0, 0, w, h):
                 img = img.crop((x0, y0, x1, y1))
 
+        # La nitidez va ANTES de los ajustes tonales: asi el editor puede
+        # cachear su resultado y los sliders de luz y color siguen costando
+        # solo el LUT (ademas de ser el orden habitual, enfocar el escaneado y
+        # graduarlo despues)
+        img = _apply_sharpen(img, sharpen)
         img = _apply_adjustments(img, adj)
         _save_pixels(img, tmp, dest.suffix.lower())
         _copy_metadata(abs_path, tmp)

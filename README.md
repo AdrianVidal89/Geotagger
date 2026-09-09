@@ -54,14 +54,36 @@ ajustar luz y color las fotos:
     verde-magenta).
   - *Auto restaurar*: calcula el equilibrio por canal y el relleno de sombras, y
     lo deja puesto en los controles para poder retocarlo.
+  - *Enderezar*: rota +-15 grados y recorta al mayor rectangulo centrado con la
+    misma proporcion, de modo que no quedan esquinas vacias. El factor depende
+    solo de la proporcion y del angulo, asi que el editor calcula exactamente el
+    mismo encuadre que el servidor.
+  - *Nitidez*: una sola mascara de enfoque cubre las dos direcciones. Hacia la
+    derecha realza el detalle (escaneados, fotos blandas); hacia la izquierda
+    suaviza el grano. El radio del desenfoque va con la resolucion, asi que la
+    vista previa muestra el mismo efecto relativo que el archivo final.
 - **Los RAW no se pueden sobrescribir**: al recortar o ajustar uno se guarda un
   JPEG nuevo junto al original (`nombre_edit.jpg`) y el RAW se queda intacto.
 
 La vista previa del navegador y el resultado guardado usan la misma cadena, en
-el mismo orden (equilibrio por canal -> niveles -> temperatura y tinte ->
-sombras y luces -> exposicion -> contraste -> saturacion), calculada con un LUT
-por canal en ambos lados, asi que lo que se ve es lo que se guarda. El boton
-Auto no aplica nada por su cuenta: deja los valores en los controles.
+el mismo orden (giro y volteo -> enderezado -> recorte -> nitidez -> equilibrio
+por canal -> niveles -> temperatura y tinte -> sombras y luces -> exposicion ->
+contraste -> saturacion). Los ajustes tonales se calculan con un LUT por canal
+en ambos lados, y el desenfoque de la nitidez replica ImageFilter.BoxBlur de
+Pillow (bordes repetidos, redondeo hacia arriba y cuantizacion entre pasadas),
+comprobado bit a bit contra su salida. Lo que se ve es lo que se guarda; la
+unica diferencia son unas pocas unidades en bordes muy marcados, porque la
+vista previa parte de una version recomprimida de la foto.
+
+El boton Auto no aplica nada por su cuenta: deja los valores en los controles.
+
+La nitidez se aplica ANTES de los ajustes tonales. Ademas de ser el orden
+habitual (enfocar el escaneado y graduarlo despues), permite al editor guardar
+su resultado: mover exposicion, contraste o color no repite el desenfoque, y
+los controles siguen respondiendo igual de rapido con la nitidez activada.
+Mientras se arrastra un control que si obliga a recalcular (enderezar o la
+propia nitidez) la vista previa baja de resolucion, y al soltar se vuelve a la
+resolucion completa.
 
 ## Otras variables de entorno
 
