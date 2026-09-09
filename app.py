@@ -18,6 +18,7 @@ from flask import Flask, jsonify, request, render_template, send_file
 from PIL import Image, ImageOps, ImageChops, ImageFilter
 import requests
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
 
@@ -299,12 +300,52 @@ def _read_dates_batch(paths):
         pass
     return out
 
-def _run_exiftool_batch(args, paths, timeout_each=5):
-    """Aplica los MISMOS cambios a varias fotos con una sola llamada. Lanzar un
-    proceso por foto era lo que hacia lentos los lotes."""
+# Escribir metadatos en un PNG grande no es cuestion de disco: ExifTool recorre
+# el archivo entero en Perl (unos 10 MB/s), asi que un PNG de 18 MB cuesta 1,8 s
+# frente a 0,3 s de un JPEG de 30 MB. Es tiempo de CPU, y eso si se reparte:
+# los mismos 8 PNG pasan de 13,1 s a 3,5 s en 4 procesos.
+EXIFTOOL_WORKERS = min(4, os.cpu_count() or 1)
+# Repartir solo cuando compensa: con fotos normales una sola llamada ya va en
+# decimas y no vale la pena arrancar mas procesos.
+EXIFTOOL_PARALLEL_BYTES = 24 * 1024 * 1024
+
+class _Lote:
+    """Resultado de escribir un lote, venga de uno o de varios procesos."""
+    def __init__(self, returncode=0, updated=0, stderr=""):
+        self.returncode, self.updated, self.stderr = returncode, updated, stderr
+
+def _exiftool_write(args, paths):
     cmd = ["exiftool"] + args + ["-overwrite_original"] + [str(p) for p in paths]
-    return subprocess.run(cmd, capture_output=True, text=True,
-                          timeout=max(120, timeout_each * len(paths)))
+    r = subprocess.run(cmd, capture_output=True, text=True,
+                       timeout=max(120, 20 * len(paths)))
+    return _Lote(r.returncode, _exiftool_updated(r.stdout), (r.stderr or "").strip())
+
+def _total_bytes(paths):
+    total = 0
+    for p in paths:
+        try:
+            total += os.path.getsize(str(p))
+        except OSError:
+            pass
+    return total
+
+def _run_exiftool_batch(args, paths):
+    """Aplica los MISMOS cambios a varias fotos. Lanzar un proceso por foto era
+    lo que hacia lentos los lotes; con archivos grandes, al reves, un solo
+    proceso deja los demas nucleos parados."""
+    paths = list(paths)
+    trozos = [paths]
+    if len(paths) > 1 and EXIFTOOL_WORKERS > 1 and \
+       _total_bytes(paths) >= EXIFTOOL_PARALLEL_BYTES:
+        n = min(EXIFTOOL_WORKERS, len(paths))
+        trozos = [t for t in (paths[i::n] for i in range(n)) if t]
+    if len(trozos) == 1:
+        return _exiftool_write(args, paths)
+    with ThreadPoolExecutor(max_workers=len(trozos)) as ex:
+        partes = list(ex.map(lambda t: _exiftool_write(args, t), trozos))
+    return _Lote(max(p.returncode for p in partes),
+                 sum(p.updated for p in partes),
+                 "\n".join(p.stderr for p in partes if p.stderr))
 
 def _evict_thumb_cache(abs_path):
     """Borra las miniaturas y vistas previas guardadas de una foto.
@@ -1046,7 +1087,7 @@ def _index_photos(base):
     """Fotos CON coordenadas bajo base, tal como las conoce el indice."""
     lo, hi = _index_range(base)
     return _index_db().execute(
-        "SELECT path, lat, lon, date FROM photos "
+        "SELECT path, lat, lon, date, mtime FROM photos "
         "WHERE path >= ? AND path < ? AND lat IS NOT NULL AND lon IS NOT NULL",
         (lo, hi)).fetchall()
 
@@ -1655,7 +1696,7 @@ def write_gps():
             for path in chunk:
                 errors.append({"file": path.name, "error": str(e)})
             continue
-        escritas = _exiftool_updated(result.stdout) if result.returncode == 0 else 0
+        escritas = result.updated if result.returncode == 0 else 0
         if escritas != len(chunk):
             # Alguna se quedo fuera: escribir las mismas coordenadas otra vez no
             # tiene efecto, asi que se repite una a una para saber cual fallo
@@ -1794,7 +1835,7 @@ def write_date():
             for path in chunk:
                 errors.append({"file": path.name, "error": str(e)})
             continue
-        escritas = _exiftool_updated(result.stdout) if result.returncode == 0 else 0
+        escritas = result.updated if result.returncode == 0 else 0
         if shift:
             # Un desplazamiento NO se puede repetir (desplazaria dos veces las
             # que si funcionaron), asi que en vez de reintentar se releen las
@@ -2064,7 +2105,7 @@ def gps_map():
     # repaso en segundo plano: la interfaz va completando el mapa sola
     _index_request(root)
     photos = []
-    for path, lat, lon, date in _index_photos(base):
+    for path, lat, lon, date, mtime in _index_photos(base):
         try:
             relative = Path(path).relative_to(root)
         except Exception:
@@ -2077,6 +2118,10 @@ def gps_map():
             "lat": round(lat, 6),
             "lon": round(lon, 6),
             "date": date or "",
+            # La galeria ordena y filtra por fecha de archivo: asi un grupo del
+            # mapa se puede abrir como un album sin volver a leer nada
+            "mtime": mtime or 0,
+            "ext": os.path.splitext(path)[1].lower(),
         })
     return jsonify({
         "photos": photos,
