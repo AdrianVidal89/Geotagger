@@ -86,6 +86,34 @@ header .spacer{flex:1}
   flex:1;min-width:0;font-size:.85rem;font-weight:500;color:var(--text);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
+.wr-star{
+  border:1px solid var(--border);background:var(--bg);
+  border-radius:50%;width:30px;height:30px;flex-shrink:0;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;padding:0;
+}
+.wr-star svg{width:15px;height:15px;fill:var(--text2)}
+.wr-star.on svg{fill:var(--yellow)}
+.wr-star:hover{background:#e8f0fe;border-color:var(--primary)}
+.fav-item{
+  display:flex;align-items:center;gap:8px;padding:7px 16px;
+  cursor:pointer;font-size:.83rem;color:var(--text);
+}
+.fav-item:hover{background:var(--surface)}
+.fav-item.cur{background:#e8f0fe;color:var(--primary);font-weight:500}
+.fav-item svg{width:15px;height:15px;fill:var(--yellow);flex-shrink:0}
+.fav-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fav-del{
+  border:none;background:none;color:var(--text2);cursor:pointer;
+  font-size:15px;line-height:1;padding:2px 4px;border-radius:4px;opacity:0;
+}
+.fav-item:hover .fav-del{opacity:1}
+.fav-del:hover{background:var(--border);color:var(--accent)}
+.fav-empty{padding:4px 16px 8px;font-size:.72rem;color:var(--text2);line-height:1.4}
+.index-note{
+  display:flex;align-items:center;gap:9px;
+  background:#e8f0fe;color:var(--primary);
+  border-radius:var(--radius);padding:9px 13px;margin-bottom:10px;font-size:.8rem;
+}
 .wr-change{
   border:1px solid var(--border);background:var(--bg);color:var(--primary);
   border-radius:16px;padding:5px 11px;font-size:.72rem;
@@ -969,9 +997,14 @@ header .spacer{flex:1}
       <div class="wr-row">
         <svg viewBox="0 0 24 24"><path d="M4 20h16v-4H4v4zm2-3h2v2H6v-2zM4 4v4h16V4H4zm4 3H6V5h2v2zm-4 7h16v-4H4v4zm2-3h2v2H6v-2z"/></svg>
         <span class="wr-name" id="work-root-name">—</span>
+        <button class="wr-star" id="btn-fav-add" title="Añadir esta carpeta a favoritos">
+          <svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+        </button>
         <button class="wr-change" id="btn-work-root">Cambiar</button>
       </div>
     </div>
+    <div class="sidebar-lbl">Favoritos</div>
+    <div id="fav-list"></div>
     <div class="sidebar-lbl">Carpetas</div>
     <div id="tree"></div>
   </div>
@@ -1641,6 +1674,7 @@ let currentLat = null, currentLon = null, currentLocationName = "";
 let allFiles = [];      // todo lo que devuelve el servidor para la carpeta actual
 let currentFiles = [];  // lo que se muestra tras aplicar filtros/orden
 let missingMode = false;
+let indexNote = "";        // aviso mientras el índice está trabajando
 let searchTimer = null;
 const RAW_EXTS = [".cr3",".cr2",".nef",".arw",".raf",".dng",".jpr"];
 
@@ -1752,6 +1786,7 @@ async function navigate(path, opts) {
   }
   currentPath = path;
   selectedFiles.clear();
+  indexNote = "";
   allFiles = [];
   currentFiles = [];
   missingMode = false;
@@ -1765,6 +1800,7 @@ async function navigate(path, opts) {
     const data = await res.json();
     renderBreadcrumb(path);
     renderSidebar(data.dirs, path);
+    if (typeof renderFavorites === "function") renderFavorites();
     allFiles = data.files;
     applyFilters();
   } catch(e) {
@@ -1918,6 +1954,12 @@ async function renderFiles(files) {
   const grid = document.createElement("div");
   grid.className = "files-grid";
   c.innerHTML = "";
+  if (indexNote) {
+    const note = document.createElement("div");
+    note.className = "index-note";
+    note.innerHTML = '<div class="spinner"></div><span>' + indexNote + '</span>';
+    c.appendChild(note);
+  }
   c.appendChild(grid);
 
   // Render first chunk immediately so the user sees photos right away
@@ -2038,6 +2080,10 @@ async function loadMissing(path) {
     const res = await fetch("/api/missing_gps?path=" + encodeURIComponent(path));
     const data = await res.json();
     allFiles = data.files;
+    indexNote = data.index && data.index.scanning
+      ? "Aún se están leyendo las coordenadas (" + data.index.done + " de " + data.index.total +
+        "): puede faltar alguna foto en esta lista."
+      : "";
     if (data.files.length === 0) {
       currentFiles = [];
       c.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24" fill="currentColor" style="width:48px;height:48px;fill:var(--green);opacity:.6"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg><p>¡Todas las fotos tienen GPS!</p></div>';
@@ -2527,9 +2573,11 @@ const NAS_LABEL = "NAS";      // etiqueta de la raíz del NAS en el selector
 // Refleja la carpeta de trabajo en el panel lateral y en las migas de pan
 function showWorkRoot(d) {
   workRootName = d.name || NAS_LABEL;
+  workRootPath = d.path || "";
   const el = document.getElementById("work-root-name");
   el.textContent = workRootName;
   el.title = d.abs || d.path || "";
+  if (typeof renderFavorites === "function") renderFavorites();
 }
 
 async function loadWorkRoot() {
@@ -3077,10 +3125,16 @@ function mapHidePop() { document.getElementById("map-pop").classList.remove("on"
 
 // Aviso que NO tapa el mapa: si fallan los mosaicos, los marcadores siguen
 // viéndose y pudiéndose pulsar
-function mapNotice(html) {
+let mapIndexNote = "", mapTileNote = "";
+function mapNotice(html) {   // aviso de los mosaicos
+  mapTileNote = html || "";
+  mapUpdateNotice();
+}
+function mapUpdateNotice() {
   const el = document.getElementById("map-notice");
-  if (!html) { el.classList.remove("on"); return; }
-  el.innerHTML = html;
+  const txt = mapIndexNote || mapTileNote;
+  if (!txt) { el.classList.remove("on"); return; }
+  el.innerHTML = txt;
   el.classList.add("on");
 }
 
@@ -3310,6 +3364,51 @@ async function openPhotoFromMap(ph) {
 }
 
 // ── Abrir y cerrar ───────────────────────────────────────────────────────────
+// Mientras el índice trabaja, el mapa se va completando solo
+let mapPollTimer = null;
+
+function mapStopPoll() {
+  if (mapPollTimer) { clearTimeout(mapPollTimer); mapPollTimer = null; }
+}
+
+async function mapLoadPhotos(fit) {
+  let d;
+  try {
+    const res = await fetch("/api/gps_map?path=" + encodeURIComponent(currentPath));
+    d = await res.json();
+  } catch(e) { return null; }
+  if (d.error) return null;
+  mapPhotos = d.photos || [];
+  document.getElementById("map-meta").textContent =
+    mapPhotos.length + " de " + d.total + " fotos tienen ubicación";
+  if (fit && mapPhotos.length) mapFit(); else mapRender();
+  return d;
+}
+
+async function mapPoll() {
+  mapPollTimer = null;
+  let st;
+  try {
+    st = await (await fetch("/api/index_status")).json();
+  } catch(e) { return; }
+  if (!mapView.classList.contains("on")) return;
+  const antes = mapPhotos.length;
+  const d = await mapLoadPhotos(antes === 0);
+  if (st.scanning) {
+    mapIndexNote = "Leyendo las coordenadas de las fotos nuevas… " +
+      st.done + " de " + st.total + ". El mapa se va completando solo.";
+    mapUpdateNotice();
+    mapPollTimer = setTimeout(mapPoll, 2500);
+  } else {
+    mapIndexNote = "";
+    mapUpdateNotice();
+    if (d && !mapPhotos.length) {
+      mapMsg("Ninguna de las " + d.total + " fotos de esta carpeta tiene coordenadas.<br>" +
+             "<span style='font-size:.8em'>Selecciona fotos y usa <strong>Aplicar GPS</strong> para situarlas.</span>");
+    }
+  }
+}
+
 async function openMap() {
   mapView.classList.add("on");
   mapPhotos = [];
@@ -3321,33 +3420,29 @@ async function openMap() {
   document.getElementById("map-folder").textContent =
     "Fotos en el mapa · " + (currentPath || workRootName);
   document.getElementById("map-meta").textContent = "Buscando coordenadas...";
-  mapMsg('<div class="spinner"></div>Leyendo las coordenadas de las fotos...');
+  mapIndexNote = "";
+  mapStopPoll();
+  mapMsg('<div class="spinner"></div>Abriendo el mapa...');
   document.addEventListener("keydown", mapKeys);
 
-  let d;
-  try {
-    const res = await fetch("/api/gps_map?path=" + encodeURIComponent(currentPath));
-    d = await res.json();
-  } catch(e) {
-    mapMsg("No se pudieron leer las coordenadas.");
-    return;
-  }
-  if (d.error) { mapMsg(d.error); return; }
-
-  mapPhotos = d.photos || [];
-  document.getElementById("map-meta").textContent =
-    mapPhotos.length + " de " + d.total + " fotos tienen ubicación";
-  if (!mapPhotos.length) {
+  const d = await mapLoadPhotos(true);
+  if (!d) { mapMsg("No se pudieron leer las coordenadas."); return; }
+  mapMsg("");
+  if (!mapPhotos.length && !(d.index && d.index.scanning)) {
     mapMsg("Ninguna de las " + d.total + " fotos de esta carpeta tiene coordenadas.<br>" +
            "<span style='font-size:.8em'>Selecciona fotos y usa <strong>Aplicar GPS</strong> para situarlas.</span>");
-    mapRender();
-    return;
   }
-  mapMsg("");
-  mapFit();
+  // Si el índice sigue trabajando, el mapa se completa solo
+  if (d.index && d.index.scanning) {
+    mapIndexNote = "Leyendo las coordenadas de las fotos nuevas… " +
+      d.index.done + " de " + d.index.total + ". El mapa se va completando solo.";
+    mapUpdateNotice();
+    mapPollTimer = setTimeout(mapPoll, 2000);
+  }
 }
 
 function closeMap() {
+  mapStopPoll();
   mapView.classList.remove("on");
   document.removeEventListener("keydown", mapKeys);
   mapHidePop();
@@ -3361,6 +3456,95 @@ document.getElementById("map-fit").addEventListener("click", () => { mapHidePop(
 document.getElementById("map-in").addEventListener("click", () => mapSetZoom(mapZoom + 1));
 document.getElementById("map-out").addEventListener("click", () => mapSetZoom(mapZoom - 1));
 window.addEventListener("resize", () => { if (mapView.classList.contains("on")) mapRender(); });
+
+
+// ── Favoritos ────────────────────────────────────────────────────────────────
+// Un favorito guarda la ruta completa dentro del NAS; al pulsarlo se cambia la
+// carpeta de trabajo a esa ruta y la galería arranca allí.
+const FAV_STAR = '<svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>';
+let favorites = [];
+let workRootPath = "";      // carpeta de trabajo, relativa a la raíz del NAS
+
+function favCurrentFull() {
+  return [workRootPath, currentPath].filter(Boolean).join("/");
+}
+
+function renderFavorites() {
+  const list = document.getElementById("fav-list");
+  if (!favorites.length) {
+    list.innerHTML = '<div class="fav-empty">Marca una carpeta con la estrella para volver a ella de un clic.</div>';
+  } else {
+    const here = favCurrentFull();
+    list.innerHTML = favorites.map(f =>
+      '<div class="fav-item' + (f.path === here ? ' cur' : '') + '" data-path="' + f.path + '">' +
+      FAV_STAR + '<span class="fav-name" title="' + (f.path || "NAS") + '">' + f.name + '</span>' +
+      '<button class="fav-del" title="Quitar de favoritos">✕</button></div>'
+    ).join("");
+    list.querySelectorAll(".fav-item").forEach(el => {
+      el.addEventListener("click", (e) => {
+        if (e.target.closest(".fav-del")) { removeFavorite(el.dataset.path); return; }
+        goToFavorite(el.dataset.path);
+      });
+    });
+  }
+  // La estrella se enciende si la carpeta que se está viendo ya es favorita
+  const here = favCurrentFull();
+  document.getElementById("btn-fav-add").classList.toggle("on", favorites.some(f => f.path === here));
+}
+
+async function loadFavorites() {
+  try {
+    const res = await fetch("/api/favorites");
+    favorites = (await res.json()).favorites || [];
+  } catch(e) { favorites = []; }
+  renderFavorites();
+}
+
+async function addFavorite() {
+  const here = favCurrentFull();
+  if (favorites.some(f => f.path === here)) { removeFavorite(here); return; }
+  try {
+    const res = await fetch("/api/favorites", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ action: "add", path: currentPath })
+    });
+    const d = await res.json();
+    if (!d.error) { favorites = d.favorites || []; renderFavorites(); }
+  } catch(e) {}
+}
+
+async function removeFavorite(path) {
+  try {
+    const res = await fetch("/api/favorites", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ action: "remove", path: path })
+    });
+    const d = await res.json();
+    favorites = d.favorites || [];
+    renderFavorites();
+  } catch(e) {}
+}
+
+async function goToFavorite(path) {
+  try {
+    const res = await fetch("/api/work_root", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ path: path })
+    });
+    const d = await res.json();
+    if (d.error) return;
+    showWorkRoot(d);
+    selectedFiles.clear();
+    await navigate("", { replace: true });
+    renderFavorites();
+  } catch(e) {}
+  closeSidebar();
+}
+
+document.getElementById("btn-fav-add").addEventListener("click", addFavorite);
 
 
 // ── Carpetas nuevas, mover y copiar ──────────────────────────────────────────
@@ -4674,6 +4858,7 @@ function uploadPhotos(files) {
 // Restaura la carpeta indicada en la URL (permite recargar o compartir enlace
 // sin perder el sitio); con URL limpia arranca en la raíz.
 loadWorkRoot();
+loadFavorites();
 navigate(pathFromHash(), { replace: true });
 </script>
 </body>
