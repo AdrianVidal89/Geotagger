@@ -18,6 +18,7 @@ from flask import Flask, jsonify, request, render_template, send_file
 from PIL import Image, ImageOps, ImageChops, ImageFilter
 import requests
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
 
@@ -274,6 +275,12 @@ def _exiftool_updated(stdout):
 def _exiftool_updated_none(stdout):
     return _exiftool_updated(stdout) == 0
 
+def _ui_date(raw):
+    """De "2005:06:15 10:00:00" (ExifTool) a "2005-06-15 10:00:00"."""
+    if not raw:
+        return ""
+    return re.sub(r"^(\d{4}):(\d{2}):(\d{2})", r"\1-\2-\3", raw)
+
 def _read_dates_batch(paths):
     """Fechas de un lote con UNA sola llamada. Devuelve por foto la fecha de
     toma y la primera que haya de las tres que toca -AllDates: si no hay
@@ -299,12 +306,52 @@ def _read_dates_batch(paths):
         pass
     return out
 
-def _run_exiftool_batch(args, paths, timeout_each=5):
-    """Aplica los MISMOS cambios a varias fotos con una sola llamada. Lanzar un
-    proceso por foto era lo que hacia lentos los lotes."""
+# Escribir metadatos en un PNG grande no es cuestion de disco: ExifTool recorre
+# el archivo entero en Perl (unos 10 MB/s), asi que un PNG de 18 MB cuesta 1,8 s
+# frente a 0,3 s de un JPEG de 30 MB. Es tiempo de CPU, y eso si se reparte:
+# los mismos 8 PNG pasan de 13,1 s a 3,5 s en 4 procesos.
+EXIFTOOL_WORKERS = min(4, os.cpu_count() or 1)
+# Repartir solo cuando compensa: con fotos normales una sola llamada ya va en
+# decimas y no vale la pena arrancar mas procesos.
+EXIFTOOL_PARALLEL_BYTES = 24 * 1024 * 1024
+
+class _Lote:
+    """Resultado de escribir un lote, venga de uno o de varios procesos."""
+    def __init__(self, returncode=0, updated=0, stderr=""):
+        self.returncode, self.updated, self.stderr = returncode, updated, stderr
+
+def _exiftool_write(args, paths):
     cmd = ["exiftool"] + args + ["-overwrite_original"] + [str(p) for p in paths]
-    return subprocess.run(cmd, capture_output=True, text=True,
-                          timeout=max(120, timeout_each * len(paths)))
+    r = subprocess.run(cmd, capture_output=True, text=True,
+                       timeout=max(120, 20 * len(paths)))
+    return _Lote(r.returncode, _exiftool_updated(r.stdout), (r.stderr or "").strip())
+
+def _total_bytes(paths):
+    total = 0
+    for p in paths:
+        try:
+            total += os.path.getsize(str(p))
+        except OSError:
+            pass
+    return total
+
+def _run_exiftool_batch(args, paths):
+    """Aplica los MISMOS cambios a varias fotos. Lanzar un proceso por foto era
+    lo que hacia lentos los lotes; con archivos grandes, al reves, un solo
+    proceso deja los demas nucleos parados."""
+    paths = list(paths)
+    trozos = [paths]
+    if len(paths) > 1 and EXIFTOOL_WORKERS > 1 and \
+       _total_bytes(paths) >= EXIFTOOL_PARALLEL_BYTES:
+        n = min(EXIFTOOL_WORKERS, len(paths))
+        trozos = [t for t in (paths[i::n] for i in range(n)) if t]
+    if len(trozos) == 1:
+        return _exiftool_write(args, paths)
+    with ThreadPoolExecutor(max_workers=len(trozos)) as ex:
+        partes = list(ex.map(lambda t: _exiftool_write(args, t), trozos))
+    return _Lote(max(p.returncode for p in partes),
+                 sum(p.updated for p in partes),
+                 "\n".join(p.stderr for p in partes if p.stderr))
 
 def _evict_thumb_cache(abs_path):
     """Borra las miniaturas y vistas previas guardadas de una foto.
@@ -1046,15 +1093,30 @@ def _index_photos(base):
     """Fotos CON coordenadas bajo base, tal como las conoce el indice."""
     lo, hi = _index_range(base)
     return _index_db().execute(
-        "SELECT path, lat, lon, date FROM photos "
+        "SELECT path, lat, lon, date, mtime FROM photos "
         "WHERE path >= ? AND path < ? AND lat IS NOT NULL AND lon IS NOT NULL",
         (lo, hi)).fetchall()
+
+def _index_dates(folder):
+    """Fecha de metadatos de las fotos bajo una carpeta, tal como la conoce el
+    indice, con su fecha y tamano para poder comprobar que sigue al dia."""
+    out = {}
+    try:
+        lo, hi = _index_range(folder)
+        for path, mtime, size, date in _index_db().execute(
+                "SELECT path, mtime, size, date FROM photos "
+                "WHERE path >= ? AND path < ? AND date IS NOT NULL AND date != ''",
+                (lo, hi)).fetchall():
+            out[path] = (mtime, size, date)
+    except Exception:
+        pass
+    return out
 
 def _index_without_gps(base):
     """Fotos que el indice sabe que NO tienen coordenadas."""
     lo, hi = _index_range(base)
     return _index_db().execute(
-        "SELECT path, mtime FROM photos WHERE path >= ? AND path < ? AND lat IS NULL",
+        "SELECT path, mtime, date FROM photos WHERE path >= ? AND path < ? AND lat IS NULL",
         (lo, hi)).fetchall()
 
 # ~1,1 km: el nombre que devuelve Nominatim a este nivel de zoom es el del
@@ -1381,6 +1443,10 @@ def browse():
     if abs_path is None or not abs_path.exists():
         return jsonify({"error": "Ruta no existe"}), 404
     dirs, files = [], []
+    # La fecha que importa al filtrar y ordenar es la de la FOTO, no la del
+    # archivo: una foto de 2005 copiada al NAS tiene fecha de archivo de hoy.
+    # El indice ya la sabe, asi que no cuesta nada acompanarla.
+    fechas = _index_dates(abs_path)
     for item in sorted(abs_path.iterdir()):
         if item.name.startswith("@") or item.name.startswith("."):
             continue
@@ -1388,14 +1454,19 @@ def browse():
             dirs.append({"name": item.name, "path": str(Path(rel) / item.name)})
         elif item.suffix.lower() in SUPPORTED_EXTS:
             try:
-                mtime = int(item.stat().st_mtime)
+                st = item.stat()
+                mtime, size = int(st.st_mtime), st.st_size
             except Exception:
-                mtime = 0
+                mtime, size = 0, -1
+            fila = fechas.get(str(item))
+            # Solo vale si la foto no ha cambiado desde que se indexo
+            al_dia = fila and fila[0] == mtime and fila[1] == size
             files.append({
                 "name": item.name,
                 "path": str(Path(rel) / item.name),
                 "ext": item.suffix.lower(),
                 "mtime": mtime,
+                "date": _ui_date(fila[2]) if al_dia else "",
             })
     # Las fotos mas recientes primero (por fecha de modificacion del archivo).
     files.sort(key=lambda f: f["mtime"], reverse=True)
@@ -1655,7 +1726,7 @@ def write_gps():
             for path in chunk:
                 errors.append({"file": path.name, "error": str(e)})
             continue
-        escritas = _exiftool_updated(result.stdout) if result.returncode == 0 else 0
+        escritas = result.updated if result.returncode == 0 else 0
         if escritas != len(chunk):
             # Alguna se quedo fuera: escribir las mismas coordenadas otra vez no
             # tiene efecto, asi que se repite una a una para saber cual fallo
@@ -1794,7 +1865,7 @@ def write_date():
             for path in chunk:
                 errors.append({"file": path.name, "error": str(e)})
             continue
-        escritas = _exiftool_updated(result.stdout) if result.returncode == 0 else 0
+        escritas = result.updated if result.returncode == 0 else 0
         if shift:
             # Un desplazamiento NO se puede repetir (desplazaria dos veces las
             # que si funcionaron), asi que en vez de reintentar se releen las
@@ -2064,7 +2135,7 @@ def gps_map():
     # repaso en segundo plano: la interfaz va completando el mapa sola
     _index_request(root)
     photos = []
-    for path, lat, lon, date in _index_photos(base):
+    for path, lat, lon, date, mtime in _index_photos(base):
         try:
             relative = Path(path).relative_to(root)
         except Exception:
@@ -2077,6 +2148,10 @@ def gps_map():
             "lat": round(lat, 6),
             "lon": round(lon, 6),
             "date": date or "",
+            # La galeria ordena y filtra por fecha de archivo: asi un grupo del
+            # mapa se puede abrir como un album sin volver a leer nada
+            "mtime": mtime or 0,
+            "ext": os.path.splitext(path)[1].lower(),
         })
     return jsonify({
         "photos": photos,
@@ -2141,7 +2216,7 @@ def missing_gps():
     # Del indice: antes esto lanzaba un ExifTool POR FOTO
     _index_request(root)
     found = []
-    for path, mtime in _index_without_gps(base):
+    for path, mtime, date in _index_without_gps(base):
         item = Path(path)
         if not item.exists():
             continue
@@ -2156,6 +2231,7 @@ def missing_gps():
             "ext": item.suffix.lower(),
             "folder": "" if folder == "." else folder,
             "mtime": mtime if mtime and mtime > 0 else 0,
+            "date": _ui_date(date),
         })
     found.sort(key=lambda f: f["mtime"], reverse=True)
     return jsonify({"files": found, "count": len(found), "index": _index_status_dict()})

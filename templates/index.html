@@ -1790,6 +1790,7 @@ async function navigate(path, opts) {
   allFiles = [];
   currentFiles = [];
   missingMode = false;
+  mapAlbum = null;
   document.getElementById("chip-missing").classList.remove("on");
   resetFilters();
   updateSelUI();
@@ -2067,6 +2068,7 @@ document.getElementById("btn-select-all").addEventListener("click", handleSelect
 // ── Missing GPS filter ────────────────────────────────────────────────────────
 document.getElementById("chip-missing").addEventListener("click", function() {
   missingMode = !missingMode;
+  mapAlbum = null;                     // el filtro manda sobre el album del mapa
   this.classList.toggle("on", missingMode);
   if (missingMode) { loadMissing(currentPath); } else { navigate(currentPath); }
 });
@@ -2125,11 +2127,23 @@ function locationLabel(loc) { return loc === NO_LOC ? "Sin ubicación" : loc; }
 // "Renombrar por EXIF" (AAAA-MM-DD_HH-MM-SS); si no existe, usa la fecha del
 // archivo (mtime). Así el filtro/orden coincide con la fecha que ve el usuario.
 function fileTime(f) {
+  // 1) La fecha de los METADATOS, que es la fecha real de la foto y la que el
+  //    usuario tiene en la cabeza. Antes se usaba la del archivo cuando la foto
+  //    no estaba renombrada, y una foto de 2005 copiada al NAS tiene fecha de
+  //    archivo de hoy: por eso "desde" parecia funcionar (todo es posterior) y
+  //    "hasta" dejaba la galeria vacia.
+  const d = (f.date || "").match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if (d) {
+    const t = new Date(+d[1], +d[2] - 1, +d[3], +d[4], +d[5], +d[6]).getTime();
+    if (!isNaN(t)) return t;
+  }
+  // 2) La fecha del nombre, si se renombro por EXIF
   const m = (f.name || "").match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})_/);
   if (m) {
     const t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
     if (!isNaN(t)) return t;
   }
+  // 3) Y si no se sabe nada de la foto, la del archivo
   return (f.mtime || 0) * 1000;
 }
 
@@ -2411,7 +2425,7 @@ async function doRename() {
     }
     sendReport("Renombrar", data.ok.length + data.errors.length, data.ok.length, data.errors.length, errFiles);
     selectedFiles.clear();
-    navigate(currentPath);
+    refreshCurrentView();
   } catch(e) {
     box.className = "res-box res-err";
     box.innerHTML = "Error de conexión";
@@ -2879,10 +2893,8 @@ async function applyDate() {
       // lo cerraría a media vista
       if (viewerEl.classList.contains("on")) {
         showViewerDate(currentFiles[viewerIndex]);
-      } else if (missingMode) {
-        loadMissing(currentPath);
       } else {
-        navigate(currentPath);
+        refreshCurrentView();
       }
     }, 900);
   }
@@ -3265,7 +3277,11 @@ function mapSetZoom(z, anchorX, anchorY) {
   function activateMark(mark) {
     const c = mapClusters[parseInt(mark.dataset.i, 10)];
     if (!c) return;
-    if (c.items.length > 1) mapSetZoom(mapZoom + 2, c.x, c.y);
+    // Un grupo se abre como un album con solo esas fotos. Acercar sigue estando
+    // a mano (los botones + / -, la rueda y el pellizco), y cuando todas estan
+    // en el mismo punto acercar no separaba nada: por eso pulsar abria y no
+    // pasaba nada visible.
+    if (c.items.length > 1) openMapAlbum(c.items);
     else mapShowPop(c.items[0], c.x, c.y);
   }
 
@@ -3353,6 +3369,80 @@ function mapShowPop(ph, x, y) {
     '</div>';
   pop.classList.add("on");
   pop.querySelector(".map-pop-open").addEventListener("click", () => openPhotoFromMap(ph));
+}
+
+// ── Album de un punto del mapa ───────────────────────────────────────────────
+// Pulsar un grupo abre esas fotos en la galeria, como un album. El album se
+// guarda como el RECUADRO de coordenadas del grupo, no como una lista de
+// rutas: asi sobrevive a renombrar, editar o cambiar fechas, que cambian el
+// nombre del archivo pero no el sitio donde se hizo la foto.
+let mapAlbum = null;
+
+function mapPhotoToFile(ph) {
+  return {name: ph.name, path: ph.path, ext: ph.ext || "", mtime: ph.mtime || 0,
+          date: (ph.date || "").replace(/^(\d{4}):(\d{2}):(\d{2})/, "$1-$2-$3")};
+}
+
+function inMapAlbum(ph) {
+  return mapAlbum && ph.lat >= mapAlbum.lat0 && ph.lat <= mapAlbum.lat1
+                  && ph.lon >= mapAlbum.lon0 && ph.lon <= mapAlbum.lon1;
+}
+
+function openMapAlbum(items) {
+  let lat0 = Infinity, lat1 = -Infinity, lon0 = Infinity, lon1 = -Infinity;
+  items.forEach(p => {      // sin spread: un grupo puede tener miles de fotos
+    if (p.lat < lat0) lat0 = p.lat;
+    if (p.lat > lat1) lat1 = p.lat;
+    if (p.lon < lon0) lon0 = p.lon;
+    if (p.lon > lon1) lon1 = p.lon;
+  });
+  mapAlbum = {lat0: lat0, lat1: lat1, lon0: lon0, lon1: lon1, from: currentPath};
+  closeMap();
+  loadMapAlbum(items);
+}
+
+async function loadMapAlbum(items) {
+  if (!mapAlbum) return;
+  missingMode = false;
+  document.getElementById("chip-missing").classList.remove("on");
+  selectedFiles.clear();
+  indexNote = "";
+  updateSelUI();
+  if (!items) {
+    // Al volver de renombrar, editar o borrar: se relee el mapa y se recogen
+    // las fotos que sigan dentro del recuadro
+    const c = document.getElementById("content");
+    c.innerHTML = '<div class="empty-state"><div class="spinner"></div><p style="margin-top:12px">Cargando...</p></div>';
+    try {
+      const res = await fetch("/api/gps_map?path=" + encodeURIComponent(mapAlbum.from));
+      const d = await res.json();
+      items = (d.photos || []).filter(inMapAlbum);
+    } catch(e) { items = []; }
+  }
+  allFiles = items.map(mapPhotoToFile);
+  renderMapAlbumCrumb(allFiles.length);
+  applyFilters();
+}
+
+function renderMapAlbumCrumb(n) {
+  const back = document.getElementById("btn-back");
+  back.style.display = "flex";
+  back.dataset.path = mapAlbum.from;         // salir del album vuelve a la carpeta
+  const bc = document.getElementById("breadcrumb");
+  bc.innerHTML = '<span class="bc-item" data-back-map="1">Mapa</span>' +
+    '<span class="bc-sep">›</span>' +
+    '<span class="bc-item cur">' + n + (n === 1 ? ' foto aquí' : ' fotos aquí') + '</span>';
+  bc.querySelector("[data-back-map]").addEventListener("click", () => {
+    mapAlbum = null;
+    openMap();
+  });
+}
+
+// Tras cualquier operacion, volver a lo que se estaba viendo
+function refreshCurrentView() {
+  if (mapAlbum) loadMapAlbum();
+  else if (missingMode) loadMissing(currentPath);
+  else navigate(currentPath);
 }
 
 async function openPhotoFromMap(ph) {
@@ -3591,7 +3681,7 @@ async function createFolder() {
     } else {
       document.getElementById("modal-newfolder").classList.remove("on");
       if (newFolderAfter) newFolderAfter(d);
-      else if (!missingMode) navigate(currentPath);
+      else if (!missingMode && !mapAlbum) navigate(currentPath);
     }
   } catch(e) {
     showBox("newfolder-box", "res-err", "Error de conexión");
@@ -3712,7 +3802,7 @@ async function doTransfer(mode) {
     setTimeout(() => {
       document.getElementById("modal-dest").classList.remove("on");
       selectedFiles.clear();
-      if (missingMode) loadMissing(currentPath); else navigate(currentPath);
+      refreshCurrentView();
     }, 900);
   }
 }
@@ -3781,7 +3871,7 @@ async function runAutoEdit() {
     setTimeout(() => {
       document.getElementById("modal-autoedit").classList.remove("on");
       selectedFiles.clear();
-      if (missingMode) loadMissing(currentPath); else navigate(currentPath);
+      refreshCurrentView();
     }, 1200);
   }
 }
@@ -4678,7 +4768,7 @@ async function edSave() {
   if (derived) {
     // El archivo nuevo no estaba en la galería: hay que recargar la carpeta
     hideViewer();
-    if (missingMode) loadMissing(currentPath); else navigate(currentPath);
+    refreshCurrentView();
     return;
   }
 
@@ -4840,7 +4930,7 @@ function uploadPhotos(files) {
       }
       sendReport("Subir fotos", ok + err, ok, err, (data.errors || []).map(e => e.file));
       // Refrescar la galeria para ver las nuevas fotos
-      if (missingMode) { loadMissing(currentPath); } else { navigate(currentPath); }
+      refreshCurrentView();
     } else {
       finishUploadToast("err", ICON_WARN, (data.error || "Error al subir"));
     }

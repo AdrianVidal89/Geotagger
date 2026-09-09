@@ -97,6 +97,21 @@ ahora se comparte una sola. El repaso de fondo lee con `-fast2` (corta en
 cuanto tiene los metadatos, sin leerse el archivo entero) y descansa entre
 lotes para no comerse el disco mientras se trabaja.
 
+### PNG grandes
+
+Escribir metadatos en un PNG grande cuesta mucho mas que en un JPEG, y no es
+por el disco: copiar el archivo entero tarda 0,02 s, pero ExifTool lo recorre
+en Perl a unos 10 MB/s. Un PNG de 18 MB cuesta 1,8 s frente a 0,33 s de un
+JPEG de 30 MB, que es MAS grande. Da igual el modo de escritura
+(`-overwrite_original`, en sitio o a un archivo nuevo): los tres tardan lo
+mismo.
+
+Eso es tiempo de CPU, y el tiempo de CPU si se reparte: un lote grande se
+divide entre varios procesos de ExifTool (uno por nucleo, hasta cuatro). Ocho
+PNG de 18 MB pasan de 14,8 s a 3,6 s. Solo se reparte cuando el lote pesa mas
+de 24 MB; con fotos normales una sola llamada ya va en decimas y arrancar mas
+procesos no aporta nada.
+
 Medido sobre una carpeta de 2.700 fotos:
 
 | Operacion | Antes | Ahora |
@@ -106,6 +121,18 @@ Medido sobre una carpeta de 2.700 fotos:
 | Poner GPS a 20 fotos | 4,6 s | 0,25 s |
 | Renombrar 20 fotos por EXIF | 39 s | 0,01 s |
 | Filtro Sin GPS | minutos | 0,01 s |
+
+## Filtros de fecha
+
+Los filtros **Desde** y **Hasta** (y el orden) van por la fecha de los
+METADATOS, la fecha real en que se hizo la foto, no por la del archivo. La
+diferencia importa: una foto de 2005 copiada al NAS tiene fecha de archivo de
+hoy, asi que filtrando por ella "Desde" parecia funcionar (todo es posterior a
+cualquier fecha que pongas) mientras que "Hasta" vaciaba la galeria. La fecha la
+sirve el indice junto al listado de la carpeta, sin releer nada, y solo se usa
+si la foto no ha cambiado desde que se indexo; si de esa foto aun no se sabe
+nada, se recurre a la del nombre (si se renombro por EXIF) y por ultimo a la
+del archivo.
 
 ## Favoritos
 
@@ -122,8 +149,14 @@ primera apertura tarda lo que tarde el indice en construirse, y a partir de ahi
 es instantanea. El mapa no usa ninguna libreria externa: los mosaicos de OpenStreetMap
 se colocan segun la proyeccion Mercator y los marcadores se agrupan por celdas de
 pantalla, de modo que mil fotos del mismo sitio no tapan el mapa. Pulsando un
-grupo se acerca; pulsando una foto se ve su miniatura y se puede abrir en el
-visor. Las imagenes del mapa las descarga el navegador, asi que el dispositivo
+grupo se abren ESAS fotos como un album: la galeria muestra solo las de ese
+punto (aunque esten en carpetas distintas) con todas las herramientas de
+siempre, y las migas dicen "Mapa > N fotos aqui" para volver. El album se
+guarda como el recuadro de coordenadas del grupo, no como una lista de rutas,
+asi que sobrevive a renombrar, editar o cambiar fechas: cambia el nombre del
+archivo, pero no el sitio donde se hizo la foto. Pulsando una foto suelta se ve
+su miniatura y se puede abrir en el visor; para acercarse estan los botones
++ / -, la rueda y el pellizco. Las imagenes del mapa las descarga el navegador, asi que el dispositivo
 necesita internet; si no lo tiene, avisa pero las fotos siguen situadas y se
 pueden abrir.
 
