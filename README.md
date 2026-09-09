@@ -134,6 +134,23 @@ si la foto no ha cambiado desde que se indexo; si de esa foto aun no se sabe
 nada, se recurre a la del nombre (si se renombro por EXIF) y por ultimo a la
 del archivo.
 
+### Cuando la fecha no es una fecha
+
+Un campo EXIF puede traer texto con un prefijo de codificacion delante
+(`ASCII\0\0\0...`), y ahi ExifTool corta el valor en el byte nulo y devuelve
+literalmente `ASCII`. Un archivo con los metadatos tocados puede devolver
+cualquier otra cosa donde deberia ir la fecha. Por eso la app da por buena una
+fecha solo si tiene forma de fecha; si no la tiene:
+
+- no se guarda en el indice ni se ensena en la interfaz,
+- la fila del indice se marca para releer, asi que una fila envenenada no se
+  queda para siempre,
+- y se vuelve a leer el archivo, que es lo que se hacia antes de que existiera
+  el indice.
+
+Lo mismo con el renombrado: un valor que no es una fecha no puede acabar en el
+nombre del archivo.
+
 ## Favoritos
 
 La estrella del panel de carpetas marca la carpeta que se esta viendo. Los
