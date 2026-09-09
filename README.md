@@ -122,6 +122,18 @@ Medido sobre una carpeta de 2.700 fotos:
 | Renombrar 20 fotos por EXIF | 39 s | 0,01 s |
 | Filtro Sin GPS | minutos | 0,01 s |
 
+## Filtros de fecha
+
+Los filtros **Desde** y **Hasta** (y el orden) van por la fecha de los
+METADATOS, la fecha real en que se hizo la foto, no por la del archivo. La
+diferencia importa: una foto de 2005 copiada al NAS tiene fecha de archivo de
+hoy, asi que filtrando por ella "Desde" parecia funcionar (todo es posterior a
+cualquier fecha que pongas) mientras que "Hasta" vaciaba la galeria. La fecha la
+sirve el indice junto al listado de la carpeta, sin releer nada, y solo se usa
+si la foto no ha cambiado desde que se indexo; si de esa foto aun no se sabe
+nada, se recurre a la del nombre (si se renombro por EXIF) y por ultimo a la
+del archivo.
+
 ## Favoritos
 
 La estrella del panel de carpetas marca la carpeta que se esta viendo. Los

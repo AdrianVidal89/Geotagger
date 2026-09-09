@@ -275,6 +275,12 @@ def _exiftool_updated(stdout):
 def _exiftool_updated_none(stdout):
     return _exiftool_updated(stdout) == 0
 
+def _ui_date(raw):
+    """De "2005:06:15 10:00:00" (ExifTool) a "2005-06-15 10:00:00"."""
+    if not raw:
+        return ""
+    return re.sub(r"^(\d{4}):(\d{2}):(\d{2})", r"\1-\2-\3", raw)
+
 def _read_dates_batch(paths):
     """Fechas de un lote con UNA sola llamada. Devuelve por foto la fecha de
     toma y la primera que haya de las tres que toca -AllDates: si no hay
@@ -1091,11 +1097,26 @@ def _index_photos(base):
         "WHERE path >= ? AND path < ? AND lat IS NOT NULL AND lon IS NOT NULL",
         (lo, hi)).fetchall()
 
+def _index_dates(folder):
+    """Fecha de metadatos de las fotos bajo una carpeta, tal como la conoce el
+    indice, con su fecha y tamano para poder comprobar que sigue al dia."""
+    out = {}
+    try:
+        lo, hi = _index_range(folder)
+        for path, mtime, size, date in _index_db().execute(
+                "SELECT path, mtime, size, date FROM photos "
+                "WHERE path >= ? AND path < ? AND date IS NOT NULL AND date != ''",
+                (lo, hi)).fetchall():
+            out[path] = (mtime, size, date)
+    except Exception:
+        pass
+    return out
+
 def _index_without_gps(base):
     """Fotos que el indice sabe que NO tienen coordenadas."""
     lo, hi = _index_range(base)
     return _index_db().execute(
-        "SELECT path, mtime FROM photos WHERE path >= ? AND path < ? AND lat IS NULL",
+        "SELECT path, mtime, date FROM photos WHERE path >= ? AND path < ? AND lat IS NULL",
         (lo, hi)).fetchall()
 
 # ~1,1 km: el nombre que devuelve Nominatim a este nivel de zoom es el del
@@ -1422,6 +1443,10 @@ def browse():
     if abs_path is None or not abs_path.exists():
         return jsonify({"error": "Ruta no existe"}), 404
     dirs, files = [], []
+    # La fecha que importa al filtrar y ordenar es la de la FOTO, no la del
+    # archivo: una foto de 2005 copiada al NAS tiene fecha de archivo de hoy.
+    # El indice ya la sabe, asi que no cuesta nada acompanarla.
+    fechas = _index_dates(abs_path)
     for item in sorted(abs_path.iterdir()):
         if item.name.startswith("@") or item.name.startswith("."):
             continue
@@ -1429,14 +1454,19 @@ def browse():
             dirs.append({"name": item.name, "path": str(Path(rel) / item.name)})
         elif item.suffix.lower() in SUPPORTED_EXTS:
             try:
-                mtime = int(item.stat().st_mtime)
+                st = item.stat()
+                mtime, size = int(st.st_mtime), st.st_size
             except Exception:
-                mtime = 0
+                mtime, size = 0, -1
+            fila = fechas.get(str(item))
+            # Solo vale si la foto no ha cambiado desde que se indexo
+            al_dia = fila and fila[0] == mtime and fila[1] == size
             files.append({
                 "name": item.name,
                 "path": str(Path(rel) / item.name),
                 "ext": item.suffix.lower(),
                 "mtime": mtime,
+                "date": _ui_date(fila[2]) if al_dia else "",
             })
     # Las fotos mas recientes primero (por fecha de modificacion del archivo).
     files.sort(key=lambda f: f["mtime"], reverse=True)
@@ -2186,7 +2216,7 @@ def missing_gps():
     # Del indice: antes esto lanzaba un ExifTool POR FOTO
     _index_request(root)
     found = []
-    for path, mtime in _index_without_gps(base):
+    for path, mtime, date in _index_without_gps(base):
         item = Path(path)
         if not item.exists():
             continue
@@ -2201,6 +2231,7 @@ def missing_gps():
             "ext": item.suffix.lower(),
             "folder": "" if folder == "." else folder,
             "mtime": mtime if mtime and mtime > 0 else 0,
+            "date": _ui_date(date),
         })
     found.sort(key=lambda f: f["mtime"], reverse=True)
     return jsonify({"files": found, "count": len(found), "index": _index_status_dict()})

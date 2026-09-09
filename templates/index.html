@@ -2127,11 +2127,23 @@ function locationLabel(loc) { return loc === NO_LOC ? "Sin ubicación" : loc; }
 // "Renombrar por EXIF" (AAAA-MM-DD_HH-MM-SS); si no existe, usa la fecha del
 // archivo (mtime). Así el filtro/orden coincide con la fecha que ve el usuario.
 function fileTime(f) {
+  // 1) La fecha de los METADATOS, que es la fecha real de la foto y la que el
+  //    usuario tiene en la cabeza. Antes se usaba la del archivo cuando la foto
+  //    no estaba renombrada, y una foto de 2005 copiada al NAS tiene fecha de
+  //    archivo de hoy: por eso "desde" parecia funcionar (todo es posterior) y
+  //    "hasta" dejaba la galeria vacia.
+  const d = (f.date || "").match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if (d) {
+    const t = new Date(+d[1], +d[2] - 1, +d[3], +d[4], +d[5], +d[6]).getTime();
+    if (!isNaN(t)) return t;
+  }
+  // 2) La fecha del nombre, si se renombro por EXIF
   const m = (f.name || "").match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})_/);
   if (m) {
     const t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
     if (!isNaN(t)) return t;
   }
+  // 3) Y si no se sabe nada de la foto, la del archivo
   return (f.mtime || 0) * 1000;
 }
 
@@ -3367,7 +3379,8 @@ function mapShowPop(ph, x, y) {
 let mapAlbum = null;
 
 function mapPhotoToFile(ph) {
-  return {name: ph.name, path: ph.path, ext: ph.ext || "", mtime: ph.mtime || 0};
+  return {name: ph.name, path: ph.path, ext: ph.ext || "", mtime: ph.mtime || 0,
+          date: (ph.date || "").replace(/^(\d{4}):(\d{2}):(\d{2})/, "$1-$2-$3")};
 }
 
 function inMapAlbum(ph) {
