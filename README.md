@@ -32,6 +32,30 @@ elegir cualquier carpeta como grupo de trabajo. Sin `NAS_ROOT`, y con solo
 `/photos` montado, la app se comporta como antes: la galería se limita a esa
 carpeta.
 
+## Organizar
+
+- **Nueva carpeta**: desde la barra superior se crea una carpeta dentro de la
+  que estes viendo, y tambien desde el propio selector de destino.
+- **Mover o copiar**: con fotos seleccionadas, el selector de destino recorre la
+  carpeta de trabajo (nunca puede salirse de ella) y permite crear la carpeta
+  destino sobre la marcha. Mover es una operacion de sistema de archivos; copiar
+  duplica el archivo byte a byte conservando sus fechas. En ninguno de los dos
+  casos se abre ni se recodifica la imagen. Si en el destino ya hay un archivo
+  con el mismo nombre, se anade un sufijo en vez de sobrescribirlo.
+
+## Mapa
+
+Pulsando el logotipo se abren en un mapa las fotos de la carpeta actual y sus
+subcarpetas que tengan coordenadas. Las coordenadas se leen con UNA sola llamada
+a ExifTool sobre el arbol (un proceso por foto seria inviable con miles de
+archivos). El mapa no usa ninguna libreria externa: los mosaicos de OpenStreetMap
+se colocan segun la proyeccion Mercator y los marcadores se agrupan por celdas de
+pantalla, de modo que mil fotos del mismo sitio no tapan el mapa. Pulsando un
+grupo se acerca; pulsando una foto se ve su miniatura y se puede abrir en el
+visor. Las imagenes del mapa las descarga el navegador, asi que el dispositivo
+necesita internet; si no lo tiene, avisa pero las fotos siguen situadas y se
+pueden abrir.
+
 ## Edicion de fotos
 
 Desde el visor (boton de ajustes en la cabecera) se pueden girar, recortar y
@@ -53,7 +77,9 @@ ajustar luz y color las fotos:
   - *Temperatura* y *tinte*: afinan a mano la dominante (ambar-azul y
     verde-magenta).
   - *Auto restaurar*: calcula el equilibrio por canal y el relleno de sombras, y
-    lo deja puesto en los controles para poder retocarlo.
+    lo deja puesto en los controles para poder retocarlo. Tambien se puede
+    aplicar a VARIAS fotos a la vez desde el boton "Auto restaurar" del panel:
+    cada foto se analiza por separado.
   - *Enderezar*: rota +-15 grados y recorta al mayor rectangulo centrado con la
     misma proporcion, de modo que no quedan esquinas vacias. El factor depende
     solo de la proporcion y del angulo, asi que el editor calcula exactamente el

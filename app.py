@@ -6,6 +6,7 @@ import io
 import time
 import json
 import hashlib
+import shutil
 import zipfile
 import smtplib
 from email.mime.text import MIMEText
@@ -701,6 +702,38 @@ def _edit_destination(path):
         n += 1
     return candidate, True
 
+def _save_edit(img, abs_path):
+    """Guarda una imagen editada: escribe primero un temporal, le copia los
+    metadatos del original y solo entonces reemplaza el archivo. Asi un fallo a
+    medias nunca deja el original corrupto. Devuelve (destino, es_derivado)."""
+    dest, derived = _edit_destination(abs_path)
+    tmp = dest.with_name("." + dest.name + ".edit_tmp" + dest.suffix)
+    try:
+        _save_pixels(img, tmp, dest.suffix.lower())
+        _copy_metadata(abs_path, tmp)
+        os.replace(str(tmp), str(dest))
+    except Exception:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+        raise
+    _trigger_reindex(dest)
+    _evict_thumb_cache(dest)
+    _evict_thumb_cache(abs_path)
+    return dest, derived
+
+def _unique_target(dest_dir, name):
+    """Nombre libre dentro de dest_dir, anadiendo un sufijo si hace falta."""
+    candidate = dest_dir / name
+    stem, ext = os.path.splitext(name)
+    n = 2
+    while candidate.exists():
+        candidate = dest_dir / (stem + "_" + str(n) + ext)
+        n += 1
+    return candidate
+
 def _reverse_geocode(lat, lon):
     try:
         r = requests.get(
@@ -1267,8 +1300,6 @@ def edit_image():
         return jsonify({"ok": True, "lossless": True, "path": rel, "name": abs_path.name})
 
     # Via con recodificacion
-    dest, derived = _edit_destination(abs_path)
-    tmp = dest.with_name("." + dest.name + ".edit_tmp" + dest.suffix)
     try:
         img = _open_for_edit(abs_path)
         if rotate == "90":
@@ -1301,20 +1332,10 @@ def edit_image():
         # graduarlo despues)
         img = _apply_sharpen(img, sharpen)
         img = _apply_adjustments(img, adj)
-        _save_pixels(img, tmp, dest.suffix.lower())
-        _copy_metadata(abs_path, tmp)
-        os.replace(str(tmp), str(dest))
+        dest, derived = _save_edit(img, abs_path)
     except Exception as e:
-        try:
-            if tmp.exists():
-                tmp.unlink()
-        except Exception:
-            pass
         return jsonify({"error": str(e)}), 500
 
-    _trigger_reindex(dest)
-    _evict_thumb_cache(dest)
-    _evict_thumb_cache(abs_path)
     root = _work_root()
     return jsonify({
         "ok": True,
@@ -1323,6 +1344,159 @@ def edit_image():
         "name": dest.name,
         "path": str(dest.relative_to(root)),
     })
+
+@app.route("/api/mkdir", methods=["POST"])
+def make_dir():
+    """Crea una carpeta dentro de la carpeta de trabajo."""
+    data = request.json or {}
+    rel = (data.get("path") or "").strip()
+    name = _safe_upload_name(data.get("name") or "")
+    if not name:
+        return jsonify({"error": "nombre no valido"}), 400
+    parent = _resolve_path(rel)
+    if parent is None or not parent.is_dir():
+        return jsonify({"error": "la carpeta de destino no existe"}), 404
+    target = parent / name
+    if target.exists():
+        return jsonify({"error": "ya existe una carpeta con ese nombre"}), 400
+    try:
+        target.mkdir()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    root = _work_root()
+    return jsonify({"ok": True, "name": name, "path": str(target.relative_to(root))})
+
+@app.route("/api/transfer", methods=["POST"])
+def transfer_files():
+    """
+    Mueve o copia fotos a otra carpeta.
+    Mover es una operacion de sistema de archivos; copiar duplica el archivo
+    byte a byte (copy2 conserva ademas las fechas). En ningun caso se abre ni
+    se recodifica la imagen.
+    """
+    data = request.json or {}
+    files = data.get("files", [])
+    mode = "copy" if data.get("mode") == "copy" else "move"
+    dest = _resolve_path((data.get("dest") or "").strip())
+    if dest is None or not dest.is_dir():
+        return jsonify({"error": "la carpeta de destino no existe"}), 404
+    if not files:
+        return jsonify({"error": "sin archivos"}), 400
+
+    ok, errors = [], []
+    for rel in files:
+        src = _resolve_path(rel)
+        if src is None or not src.exists() or not src.is_file():
+            errors.append({"file": rel, "error": "no existe o ruta invalida"})
+            continue
+        if src.parent == dest:
+            errors.append({"file": src.name, "error": "ya esta en esa carpeta"})
+            continue
+        try:
+            target = _unique_target(dest, src.name)
+            if mode == "copy":
+                shutil.copy2(str(src), str(target))
+            else:
+                shutil.move(str(src), str(target))
+                _evict_thumb_cache(src)
+            _trigger_reindex(target)
+            ok.append({"name": src.name, "new": target.name})
+        except Exception as e:
+            errors.append({"file": src.name, "error": str(e)})
+    root = _work_root()
+    return jsonify({"ok": ok, "errors": errors, "dest": str(dest.relative_to(root))})
+
+@app.route("/api/gps_map")
+def gps_map():
+    """
+    Coordenadas de las fotos de una carpeta (y sus subcarpetas) para el mapa.
+    Se resuelve con UNA sola llamada a ExifTool sobre el arbol: lanzar un
+    proceso por foto seria inviable con miles de archivos.
+    """
+    rel = request.args.get("path", "")
+    base = _resolve_path(rel)
+    if base is None or not base.is_dir():
+        return jsonify({"error": "la carpeta no existe"}), 404
+    root = _work_root()
+    cmd = ["exiftool", "-json", "-n", "-q", "-q",
+           "-GPSLatitude", "-GPSLongitude", "-DateTimeOriginal", "-SourceFile"]
+    for ext in sorted(SUPPORTED_EXTS):
+        cmd += ["-ext", ext.lstrip(".")]
+    cmd += ["-r", str(base)]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        items = json.loads(result.stdout) if result.stdout.strip() else []
+    except Exception as e:
+        return jsonify({"error": str(e), "photos": []}), 500
+
+    photos, total = [], 0
+    for item in items:
+        try:
+            path = Path(item.get("SourceFile", "")).resolve()
+            relative = path.relative_to(root)
+        except Exception:
+            continue
+        if any(part.startswith("@") or part.startswith(".") for part in relative.parts):
+            continue
+        total += 1
+        lat, lon = item.get("GPSLatitude"), item.get("GPSLongitude")
+        if lat is None or lon is None:
+            continue
+        try:
+            lat, lon = float(lat), float(lon)
+        except (TypeError, ValueError):
+            continue
+        folder = str(relative.parent)
+        photos.append({
+            "path": str(relative),
+            "name": path.name,
+            "folder": "" if folder == "." else folder,
+            "lat": round(lat, 6),
+            "lon": round(lon, 6),
+            "date": item.get("DateTimeOriginal") or "",
+        })
+    return jsonify({"photos": photos, "total": total, "with_gps": len(photos)})
+
+@app.route("/api/auto_edit", methods=["POST"])
+def auto_edit_files():
+    """
+    Aplica el "Auto restaurar" a varias fotos de una vez: para cada una se
+    calculan sus propios niveles por canal y su relleno de sombras. Recodifica
+    y sobrescribe el original (la interfaz avisa antes); los RAW generan un
+    JPEG derivado y quedan intactos.
+    """
+    data = request.json or {}
+    files = data.get("files", [])
+    if not files:
+        return jsonify({"error": "sin archivos"}), 400
+    try:
+        sharpen = max(-100.0, min(150.0, float(data.get("sharpen") or 0)))
+    except (TypeError, ValueError):
+        sharpen = 0.0
+
+    ok, errors = [], []
+    root = _work_root()
+    for rel in files:
+        path = _resolve_path(rel)
+        if path is None or not path.exists() or not path.is_file():
+            errors.append({"file": rel, "error": "no existe o ruta invalida"})
+            continue
+        if path.suffix.lower() not in SUPPORTED_EXTS:
+            errors.append({"file": path.name, "error": "formato no soportado"})
+            continue
+        try:
+            img = _open_for_edit(path)
+            sample = img.copy()
+            sample.thumbnail((512, 512))
+            adj = _auto_levels(sample)
+            img = _apply_sharpen(img, sharpen)
+            img = _apply_adjustments(img, adj)
+            dest, derived = _save_edit(img, path)
+            ok.append({"name": path.name, "new": dest.name,
+                       "path": str(dest.relative_to(root)), "derived": derived})
+        except Exception as e:
+            errors.append({"file": path.name, "error": str(e)})
+    return jsonify({"ok": ok, "errors": errors})
 
 @app.route("/api/missing_gps")
 def missing_gps():

@@ -525,6 +525,14 @@ header .spacer{flex:1}
 }
 .del-file-list div:last-child{border-bottom:none}
 .del-more{font-size:.75rem;color:var(--text2);padding:4px 0 0;text-align:right}
+/* destino de mover/copiar */
+#modal-dest .modal{max-width:480px}
+#modal-dest .modal-actions{flex-wrap:wrap}
+#modal-dest .modal-actions .btn{flex:1 1 30%;min-width:120px}
+/* en pantallas estrechas la cuenta de la barra flotante se queda en el número */
+@media(max-width:560px){
+  .sel-bar-count .sbar-fotos{display:none}
+}
 /* work-root picker modal */
 #modal-root .modal{max-width:480px}
 .root-help{font-size:.8rem;color:var(--text2);line-height:1.45;margin-bottom:14px}
@@ -638,6 +646,86 @@ header .spacer{flex:1}
 @media(max-width:768px){
   /* En movil se navega con swipe; las flechas estorban */
   .vw-nav{display:none}
+}
+
+/* ── MAPA ────────────────────────────────────── */
+.logo{cursor:pointer}
+.logo:hover .logo-mark{background:var(--primary-dk)}
+.map-view{
+  display:none;position:fixed;inset:0;z-index:470;
+  background:#1b1b1b;color:#fff;flex-direction:column;
+}
+.map-view.on{display:flex}
+.map-top{
+  display:flex;align-items:center;gap:12px;padding:10px 12px;
+  flex-shrink:0;border-bottom:1px solid rgba(255,255,255,.1);
+}
+.map-title{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.map-name{font-size:.9rem;font-weight:500}
+.map-meta{font-size:.72rem;color:rgba(255,255,255,.6)}
+.map-stage{
+  flex:1;position:relative;overflow:hidden;
+  background:#2a2a2a;touch-action:none;cursor:grab;
+}
+.map-stage.dragging{cursor:grabbing}
+.map-layer{position:absolute;inset:0;will-change:transform}
+.map-tile{position:absolute;width:256px;height:256px;user-select:none;pointer-events:none}
+.map-mark{
+  position:absolute;transform:translate(-50%,-50%);
+  display:flex;align-items:center;justify-content:center;
+  min-width:26px;height:26px;padding:0 7px;border-radius:14px;
+  background:var(--primary);color:#fff;border:2px solid #fff;
+  font-size:.72rem;font-weight:600;cursor:pointer;
+  box-shadow:0 2px 8px rgba(0,0,0,.45);
+}
+.map-mark.one{width:16px;height:16px;min-width:16px;padding:0;border-radius:50%}
+.map-mark:hover{background:var(--primary-dk)}
+.map-zoom{
+  position:absolute;right:12px;top:12px;display:flex;flex-direction:column;gap:4px;z-index:3;
+}
+.map-zoom button{
+  width:36px;height:36px;border:none;border-radius:8px;cursor:pointer;
+  background:rgba(0,0,0,.65);color:#fff;font-size:20px;line-height:1;
+}
+.map-zoom button:hover{background:rgba(0,0,0,.85)}
+.map-attr{
+  position:absolute;right:6px;bottom:4px;z-index:3;
+  font-size:.62rem;color:rgba(255,255,255,.75);
+  background:rgba(0,0,0,.45);padding:2px 6px;border-radius:4px;
+}
+.map-attr a{color:inherit}
+.map-msg{
+  position:absolute;inset:0;display:none;z-index:4;
+  align-items:center;justify-content:center;flex-direction:column;gap:10px;
+  background:rgba(0,0,0,.55);text-align:center;padding:24px;
+  font-size:.9rem;color:rgba(255,255,255,.85);
+}
+.map-msg.on{display:flex}
+.map-notice{
+  position:absolute;top:10px;left:50%;transform:translateX(-50%);
+  z-index:4;display:none;max-width:min(420px, 90%);
+  background:rgba(0,0,0,.72);border-radius:10px;padding:9px 14px;
+  font-size:.78rem;line-height:1.4;text-align:center;
+  color:rgba(255,255,255,.9);pointer-events:none;
+}
+.map-notice.on{display:block}
+.map-pop{
+  position:absolute;z-index:5;display:none;width:200px;
+  transform:translate(-50%,calc(-100% - 18px));
+  background:var(--bg);color:var(--text);border-radius:12px;overflow:hidden;
+  box-shadow:0 6px 24px rgba(0,0,0,.45);
+}
+.map-pop.on{display:block}
+.map-pop img{width:100%;height:130px;object-fit:cover;display:block;background:var(--surface)}
+.map-pop-body{padding:9px 11px}
+.map-pop-name{
+  font-size:.78rem;font-weight:500;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.map-pop-sub{font-size:.68rem;color:var(--text2);margin-top:2px}
+.map-pop-open{
+  margin-top:8px;width:100%;border:none;border-radius:8px;padding:7px;
+  background:var(--primary);color:#fff;font-size:.75rem;cursor:pointer;
 }
 
 /* ── EDITOR DE IMAGEN ────────────────────────── */
@@ -838,10 +926,12 @@ header .spacer{flex:1}
   .panel{display:flex!important}
 }
 @media(max-width:560px){
-  /* Con cinco acciones los textos no caben: solo iconos */
+  /* Con siete acciones los textos no caben: solo iconos, y muy justos */
   .sbar-lbl{display:none}
-  .sbar-btn{padding:9px 11px}
+  .sbar-btn{padding:9px 9px}
   .sbar-btn svg{width:16px;height:16px}
+  .sel-bar{gap:5px;padding-right:6px}
+  .sbar-close{padding:5px}
 }
 @media(max-width:480px){
   .files-grid{grid-template-columns:repeat(3,1fr);gap:2px}
@@ -855,7 +945,7 @@ header .spacer{flex:1}
   <button class="hdr-btn mob-toggle" id="btn-sidebar" title="Carpetas">
     <svg viewBox="0 0 24 24"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" fill="currentColor"/></svg>
   </button>
-  <div class="logo">
+  <div class="logo" id="btn-map" title="Ver las fotos en el mapa">
     <div class="logo-mark">
       <svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>
     </div>
@@ -897,6 +987,10 @@ header .spacer{flex:1}
         <div class="chip chip-upload" id="chip-upload" title="Subir fotos a esta carpeta">
           <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" fill="currentColor"/></svg>
           Subir
+        </div>
+        <div class="chip" id="chip-newfolder" title="Crear una carpeta aquí">
+          <svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-1 8h-3v3h-2v-3h-3v-2h3V9h2v3h3v2z" fill="currentColor"/></svg>
+          Nueva carpeta
         </div>
         <div class="chip" id="chip-filter" title="Filtrar y ordenar">
           <svg viewBox="0 0 24 24"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z" fill="currentColor"/></svg>
@@ -1000,6 +1094,14 @@ header .spacer{flex:1}
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
         Renombrar por EXIF
       </button>
+      <button class="btn btn-secondary" id="btn-autoedit" disabled>
+        <svg viewBox="0 0 24 24"><path d="M7.5 5.6L10 7 8.6 4.5 10 2 7.5 3.4 5 2l1.4 2.5L5 7l2.5-1.4zm12 9.8L17 14l1.4 2.5L17 19l2.5-1.4L22 19l-1.4-2.5L22 14l-2.5 1.4zM22 2l-2.5 1.4L17 2l1.4 2.5L17 7l2.5-1.4L22 7l-1.4-2.5L22 2zm-7.63 5.29a.9959.9959 0 0 0-1.41 0L1.29 18.96c-.39.39-.39 1.02 0 1.41l2.34 2.34c.39.39 1.02.39 1.41 0L16.7 11.05c.39-.39.39-1.02 0-1.41l-2.33-2.35zm-1.03 5.49l-2.12-2.12 2.44-2.44 2.12 2.12-2.44 2.44z" fill="currentColor"/></svg>
+        Auto restaurar
+      </button>
+      <button class="btn btn-secondary" id="btn-move" disabled>
+        <svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-8 12v-3H8v-4h4V8l5 5-5 5z" fill="currentColor"/></svg>
+        Mover o copiar
+      </button>
       <button class="btn btn-dl" id="btn-download" disabled>
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
         Descargar
@@ -1035,7 +1137,7 @@ header .spacer{flex:1}
 
 <!-- FLOATING SELECTION BAR (mobile) -->
 <div class="sel-bar" id="sel-bar">
-  <span class="sel-bar-count"><span id="sbar-count">0</span> fotos</span>
+  <span class="sel-bar-count"><span id="sbar-count">0</span><span class="sbar-fotos"> fotos</span></span>
   <button class="sbar-btn pri" id="sbar-gps" title="Aplicar GPS">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>
     <span class="sbar-lbl">GPS</span>
@@ -1051,6 +1153,14 @@ header .spacer{flex:1}
   <button class="sbar-btn" id="sbar-rename" title="Renombrar por EXIF">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"/></svg>
     <span class="sbar-lbl">Renombrar</span>
+  </button>
+  <button class="sbar-btn" id="sbar-autoedit" title="Auto restaurar">
+    <svg viewBox="0 0 24 24"><path d="M7.5 5.6L10 7 8.6 4.5 10 2 7.5 3.4 5 2l1.4 2.5L5 7l2.5-1.4zm12 9.8L17 14l1.4 2.5L17 19l2.5-1.4L22 19l-1.4-2.5L22 14l-2.5 1.4zM22 2l-2.5 1.4L17 2l1.4 2.5L17 7l2.5-1.4L22 7l-1.4-2.5L22 2zm-7.63 5.29a.9959.9959 0 0 0-1.41 0L1.29 18.96c-.39.39-.39 1.02 0 1.41l2.34 2.34c.39.39 1.02.39 1.41 0L16.7 11.05c.39-.39.39-1.02 0-1.41l-2.33-2.35zm-1.03 5.49l-2.12-2.12 2.44-2.44 2.12 2.12-2.44 2.44z" fill="currentColor"/></svg>
+    <span class="sbar-lbl">Auto</span>
+  </button>
+  <button class="sbar-btn" id="sbar-move" title="Mover o copiar">
+    <svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-8 12v-3H8v-4h4V8l5 5-5 5z" fill="currentColor"/></svg>
+    <span class="sbar-lbl">Mover</span>
   </button>
   <button class="sbar-btn danger" id="sbar-delete" title="Eliminar">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
@@ -1123,6 +1233,33 @@ header .spacer{flex:1}
   <button class="vw-nav next" id="vw-next" title="Siguiente (→)">
     <svg viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
   </button>
+</div>
+
+<!-- MAP VIEW -->
+<div class="map-view" id="map-view">
+  <div class="map-top">
+    <button class="ed-icon-btn" id="map-close" title="Cerrar (Esc)">
+      <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+    </button>
+    <div class="map-title">
+      <span class="map-name" id="map-folder">Fotos en el mapa</span>
+      <span class="map-meta" id="map-meta">Buscando coordenadas...</span>
+    </div>
+    <button class="ed-icon-btn" id="map-fit" title="Encajar todas las fotos">
+      <svg viewBox="0 0 24 24"><path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3A8.994 8.994 0 0 0 13 3.06V1h-2v2.06A8.994 8.994 0 0 0 3.06 11H1v2h2.06A8.994 8.994 0 0 0 11 20.94V23h2v-2.06A8.994 8.994 0 0 0 20.94 13H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/></svg>
+    </button>
+  </div>
+  <div class="map-stage" id="map-stage">
+    <div class="map-layer" id="map-layer"></div>
+    <div class="map-zoom">
+      <button id="map-in" title="Acercar">+</button>
+      <button id="map-out" title="Alejar">−</button>
+    </div>
+    <div class="map-pop" id="map-pop"></div>
+    <div class="map-notice" id="map-notice"></div>
+    <div class="map-msg" id="map-msg"></div>
+    <div class="map-attr">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></div>
+  </div>
 </div>
 
 <!-- IMAGE EDITOR -->
@@ -1424,6 +1561,61 @@ header .spacer{flex:1}
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>
         Aplicar fecha
       </button>
+    </div>
+  </div>
+</div>
+
+<!-- NEW FOLDER MODAL -->
+<div class="modal-overlay" id="modal-newfolder">
+  <div class="modal">
+    <div class="modal-title">Nueva carpeta</div>
+    <label for="newfolder-name">Nombre de la carpeta</label>
+    <input type="text" class="input-field" id="newfolder-name" placeholder="ej. 2024 - Verano" autocomplete="off">
+    <div class="root-sel" id="newfolder-where"></div>
+    <div id="newfolder-box" class="res-box" style="display:none"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="btn-newfolder-cancel">Cancelar</button>
+      <button class="btn btn-primary" id="btn-newfolder-create">Crear</button>
+    </div>
+  </div>
+</div>
+
+<!-- MOVE / COPY DESTINATION MODAL -->
+<div class="modal-overlay" id="modal-dest">
+  <div class="modal">
+    <div class="modal-title">Mover o copiar</div>
+    <p class="root-help" id="dest-count"></p>
+    <div class="root-crumb" id="dest-crumb"></div>
+    <div class="root-list" id="dest-list"></div>
+    <div class="root-sel" id="dest-sel"></div>
+    <div id="dest-box" class="res-box" style="display:none"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="btn-dest-newfolder">Nueva carpeta</button>
+      <button class="btn btn-secondary" id="btn-dest-copy">Copiar aquí</button>
+      <button class="btn btn-primary" id="btn-dest-move">Mover aquí</button>
+    </div>
+  </div>
+</div>
+
+<!-- BATCH AUTO EDIT MODAL -->
+<div class="modal-overlay" id="modal-autoedit">
+  <div class="modal">
+    <div class="modal-title">Auto restaurar</div>
+    <div class="edit-warn">
+      <svg viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
+      <div>
+        <strong>Las fotos se volverán a comprimir</strong>
+        <p id="autoedit-warn-text"></p>
+      </div>
+    </div>
+    <label class="date-check">
+      <input type="checkbox" id="autoedit-sharpen">
+      Añadir también un poco de nitidez (útil en escaneados)
+    </label>
+    <div id="autoedit-box" class="res-box" style="display:none"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="btn-autoedit-cancel">Cancelar</button>
+      <button class="btn btn-primary" id="btn-autoedit-confirm">Restaurar</button>
     </div>
   </div>
 </div>
@@ -1795,6 +1987,8 @@ function updateSelUI() {
   document.getElementById("btn-apply").disabled = n === 0 || !hasLoc;
   document.getElementById("btn-rename").disabled = n === 0;
   document.getElementById("btn-date").disabled = n === 0;
+  document.getElementById("btn-autoedit").disabled = n === 0;
+  document.getElementById("btn-move").disabled = n === 0;
   document.getElementById("btn-download").disabled = n === 0;
   document.getElementById("btn-delete").disabled = n === 0;
   document.getElementById("mob-btn-apply").disabled = n === 0 || !hasLoc;
@@ -2842,6 +3036,584 @@ viewerEl.addEventListener("touchend", (e) => {
   if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) viewerNav(dx < 0 ? 1 : -1);
   else if (dy > 70 && Math.abs(dy) > Math.abs(dx) * 1.5) closeViewer();
 }, { passive: true });
+
+// ── Mapa de fotos ────────────────────────────────────────────────────────────
+// Mapa propio, sin librerías: los mosaicos de OpenStreetMap son imágenes
+// colocadas según la proyección Mercator, y los marcadores se agrupan por
+// celdas de pantalla para que mil fotos del mismo sitio no tapen el mapa.
+const MAP_TILE = 256;
+const MAP_MAX_ZOOM = 18;
+const MAP_CLUSTER_PX = 56;
+let mapPhotos = [];
+let mapZoom = 3;
+let mapCenter = {lat: 25, lon: 0};
+let mapTiles = {};          // mosaicos ya cargados, para no recargarlos al mover
+let mapTilesFailed = 0;
+let mapClusters = [];
+
+const mapView = document.getElementById("map-view");
+const mapStage = document.getElementById("map-stage");
+const mapLayer = document.getElementById("map-layer");
+
+function lon2px(lon, z) { return (lon + 180) / 360 * MAP_TILE * Math.pow(2, z); }
+function lat2px(lat, z) {
+  const r = Math.max(-85.05, Math.min(85.05, lat)) * Math.PI / 180;
+  return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * MAP_TILE * Math.pow(2, z);
+}
+function px2lon(x, z) { return x / (MAP_TILE * Math.pow(2, z)) * 360 - 180; }
+function px2lat(y, z) {
+  const n = Math.PI - 2 * Math.PI * y / (MAP_TILE * Math.pow(2, z));
+  return 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+}
+
+function mapMsg(html) {
+  const el = document.getElementById("map-msg");
+  if (!html) { el.classList.remove("on"); el.innerHTML = ""; return; }
+  el.innerHTML = html;
+  el.classList.add("on");
+}
+
+function mapHidePop() { document.getElementById("map-pop").classList.remove("on"); }
+
+// Aviso que NO tapa el mapa: si fallan los mosaicos, los marcadores siguen
+// viéndose y pudiéndose pulsar
+function mapNotice(html) {
+  const el = document.getElementById("map-notice");
+  if (!html) { el.classList.remove("on"); return; }
+  el.innerHTML = html;
+  el.classList.add("on");
+}
+
+// Coloca los mosaicos que hacen falta y retira los que ya no se ven
+function mapDrawTiles(x0, y0, w, h) {
+  const n = Math.pow(2, mapZoom);
+  const tx0 = Math.floor(x0 / MAP_TILE), tx1 = Math.floor((x0 + w) / MAP_TILE);
+  const ty0 = Math.floor(y0 / MAP_TILE), ty1 = Math.floor((y0 + h) / MAP_TILE);
+  const needed = {};
+  for (let ty = ty0; ty <= ty1; ty++) {
+    if (ty < 0 || ty >= n) continue;
+    for (let tx = tx0; tx <= tx1; tx++) {
+      const wx = ((tx % n) + n) % n;              // el mundo da la vuelta en X
+      const key = mapZoom + "/" + wx + "/" + ty + "@" + tx;
+      needed[key] = true;
+      let img = mapTiles[key];
+      if (!img) {
+        img = document.createElement("img");
+        img.className = "map-tile";
+        img.decoding = "async";
+        img.onerror = () => {
+          img.style.visibility = "hidden";   // sin icono de imagen rota
+          mapTilesFailed++;
+          if (mapTilesFailed === 4) {
+            mapNotice("No se pudo cargar la imagen del mapa (hace falta conexión a internet " +
+                      "para OpenStreetMap). Las fotos siguen situadas y se pueden abrir.");
+          }
+        };
+        img.src = "https://tile.openstreetmap.org/" + mapZoom + "/" + wx + "/" + ty + ".png";
+        mapLayer.appendChild(img);
+        mapTiles[key] = img;
+      }
+      img.style.left = (tx * MAP_TILE - x0) + "px";
+      img.style.top = (ty * MAP_TILE - y0) + "px";
+    }
+  }
+  Object.keys(mapTiles).forEach(k => {
+    if (!needed[k]) { mapTiles[k].remove(); delete mapTiles[k]; }
+  });
+}
+
+// Agrupa por celdas de pantalla: una chincheta por celda, con su cuenta
+function mapDrawMarkers(x0, y0, w, h) {
+  mapLayer.querySelectorAll(".map-mark").forEach(el => el.remove());
+  const cells = {};
+  mapPhotos.forEach(ph => {
+    const px = lon2px(ph.lon, mapZoom) - x0;
+    const py = lat2px(ph.lat, mapZoom) - y0;
+    if (px < -60 || py < -60 || px > w + 60 || py > h + 60) return;
+    const key = Math.floor(px / MAP_CLUSTER_PX) + ":" + Math.floor(py / MAP_CLUSTER_PX);
+    if (!cells[key]) cells[key] = {x: 0, y: 0, items: []};
+    cells[key].x += px; cells[key].y += py; cells[key].items.push(ph);
+  });
+  mapClusters = Object.keys(cells).map(k => {
+    const c = cells[k];
+    return {x: c.x / c.items.length, y: c.y / c.items.length, items: c.items};
+  });
+  mapClusters.forEach((c, i) => {
+    const el = document.createElement("div");
+    el.className = "map-mark" + (c.items.length === 1 ? " one" : "");
+    el.style.left = c.x + "px";
+    el.style.top = c.y + "px";
+    el.dataset.i = i;
+    if (c.items.length > 1) el.textContent = c.items.length > 999 ? "999+" : c.items.length;
+    el.title = c.items.length === 1 ? c.items[0].name : c.items.length + " fotos";
+    mapLayer.appendChild(el);
+  });
+}
+
+function mapRender() {
+  const w = mapStage.clientWidth, h = mapStage.clientHeight;
+  const x0 = lon2px(mapCenter.lon, mapZoom) - w / 2;
+  const y0 = lat2px(mapCenter.lat, mapZoom) - h / 2;
+  mapLayer.style.transform = "";
+  mapDrawTiles(x0, y0, w, h);
+  mapDrawMarkers(x0, y0, w, h);
+}
+
+// Encaja todas las fotos en pantalla
+function mapFit() {
+  if (!mapPhotos.length) return;
+  let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
+  mapPhotos.forEach(p => {
+    minLat = Math.min(minLat, p.lat); maxLat = Math.max(maxLat, p.lat);
+    minLon = Math.min(minLon, p.lon); maxLon = Math.max(maxLon, p.lon);
+  });
+  mapCenter = {lat: (minLat + maxLat) / 2, lon: (minLon + maxLon) / 2};
+  const w = Math.max(120, mapStage.clientWidth - 80), h = Math.max(120, mapStage.clientHeight - 80);
+  let z = MAP_MAX_ZOOM;
+  while (z > 1) {
+    const dx = Math.abs(lon2px(maxLon, z) - lon2px(minLon, z));
+    const dy = Math.abs(lat2px(minLat, z) - lat2px(maxLat, z));
+    if (dx <= w && dy <= h) break;
+    z--;
+  }
+  mapZoom = Math.min(MAP_MAX_ZOOM, z);
+  mapRender();
+}
+
+function mapSetZoom(z, anchorX, anchorY) {
+  const nz = Math.max(1, Math.min(MAP_MAX_ZOOM, Math.round(z)));
+  if (nz === mapZoom) return;
+  const w = mapStage.clientWidth, h = mapStage.clientHeight;
+  const ax = anchorX === undefined ? w / 2 : anchorX;
+  const ay = anchorY === undefined ? h / 2 : anchorY;
+  // Punto geográfico bajo el cursor: se mantiene fijo al hacer zoom
+  const gx = lon2px(mapCenter.lon, mapZoom) - w / 2 + ax;
+  const gy = lat2px(mapCenter.lat, mapZoom) - h / 2 + ay;
+  const lon = px2lon(gx, mapZoom), lat = px2lat(gy, mapZoom);
+  mapZoom = nz;
+  const nx = lon2px(lon, nz) - (ax - w / 2);
+  const ny = lat2px(lat, nz) - (ay - h / 2);
+  mapCenter = {lon: px2lon(nx, nz), lat: px2lat(ny, nz)};
+  mapHidePop();
+  mapRender();
+}
+
+// ── Arrastre y zoom ──────────────────────────────────────────────────────────
+(function mapGestures() {
+  let dragging = false, moved = false, sx = 0, sy = 0;
+  const pointers = new Map();
+  let pinchDist = 0;
+  // Al capturar el puntero para arrastrar, el "click" se dispara sobre el
+  // lienzo y no sobre el marcador; por eso la pulsación se resuelve aquí,
+  // recordando sobre qué se apretó
+  let downMark = null;
+
+  function activateMark(mark) {
+    const c = mapClusters[parseInt(mark.dataset.i, 10)];
+    if (!c) return;
+    if (c.items.length > 1) mapSetZoom(mapZoom + 2, c.x, c.y);
+    else mapShowPop(c.items[0], c.x, c.y);
+  }
+
+  mapStage.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".map-pop") || e.target.closest(".map-zoom")) return;
+    downMark = e.target.closest(".map-mark");
+    pointers.set(e.pointerId, {x: e.clientX, y: e.clientY});
+    if (pointers.size === 2) {
+      const [a, b] = Array.from(pointers.values());
+      pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+      dragging = false;
+      return;
+    }
+    dragging = true; moved = false;
+    sx = e.clientX; sy = e.clientY;
+    mapStage.setPointerCapture(e.pointerId);
+    mapStage.classList.add("dragging");
+  });
+
+  mapStage.addEventListener("pointermove", (e) => {
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, {x: e.clientX, y: e.clientY});
+    if (pointers.size === 2) {
+      const [a, b] = Array.from(pointers.values());
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinchDist && Math.abs(d - pinchDist) > 60) {
+        const r = mapStage.getBoundingClientRect();
+        mapSetZoom(mapZoom + (d > pinchDist ? 1 : -1),
+                   (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top);
+        pinchDist = d;
+      }
+      return;
+    }
+    if (!dragging) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+    mapLayer.style.transform = "translate(" + dx + "px," + dy + "px)";
+  });
+
+  function endDrag(e) {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchDist = 0;
+    if (!dragging) return;
+    dragging = false;
+    mapStage.classList.remove("dragging");
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (!moved) {
+      const mark = downMark;
+      downMark = null;
+      if (mark) activateMark(mark);
+      else mapHidePop();
+      return;
+    }
+    downMark = null;
+    if (moved) {
+      // El desplazamiento en píxeles se convierte en el nuevo centro
+      const cx = lon2px(mapCenter.lon, mapZoom) - dx;
+      const cy = lat2px(mapCenter.lat, mapZoom) - dy;
+      mapCenter = {lon: px2lon(cx, mapZoom), lat: px2lat(cy, mapZoom)};
+      mapHidePop();
+      mapRender();
+    }
+  }
+  ["pointerup", "pointercancel"].forEach(ev => mapStage.addEventListener(ev, endDrag));
+
+  mapStage.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const r = mapStage.getBoundingClientRect();
+    mapSetZoom(mapZoom + (e.deltaY < 0 ? 1 : -1), e.clientX - r.left, e.clientY - r.top);
+  }, {passive: false});
+
+})();
+
+function mapShowPop(ph, x, y) {
+  const pop = document.getElementById("map-pop");
+  pop.style.left = x + "px";
+  pop.style.top = y + "px";
+  pop.innerHTML =
+    '<img src="' + bust("/api/thumb?path=" + encodeURIComponent(ph.path), ph.path) + '" alt="">' +
+    '<div class="map-pop-body">' +
+      '<div class="map-pop-name">' + ph.name + '</div>' +
+      '<div class="map-pop-sub">' + (ph.folder || workRootName) +
+        (ph.date ? " · " + humanDate(ph.date.replace(/^(\d{4}):(\d{2}):(\d{2})/, "$1-$2-$3")) : "") +
+      '</div>' +
+      '<button class="map-pop-open">Abrir foto</button>' +
+    '</div>';
+  pop.classList.add("on");
+  pop.querySelector(".map-pop-open").addEventListener("click", () => openPhotoFromMap(ph));
+}
+
+async function openPhotoFromMap(ph) {
+  closeMap();
+  const folder = ph.folder || "";
+  if (folder !== currentPath || missingMode) await navigate(folder);
+  const idx = currentFiles.findIndex(f => f.path === ph.path);
+  if (idx >= 0) openViewer(idx);
+}
+
+// ── Abrir y cerrar ───────────────────────────────────────────────────────────
+async function openMap() {
+  mapView.classList.add("on");
+  mapPhotos = [];
+  mapTiles = {};
+  mapTilesFailed = 0;
+  mapLayer.innerHTML = "";
+  mapHidePop();
+  mapNotice("");
+  document.getElementById("map-folder").textContent =
+    "Fotos en el mapa · " + (currentPath || workRootName);
+  document.getElementById("map-meta").textContent = "Buscando coordenadas...";
+  mapMsg('<div class="spinner"></div>Leyendo las coordenadas de las fotos...');
+  document.addEventListener("keydown", mapKeys);
+
+  let d;
+  try {
+    const res = await fetch("/api/gps_map?path=" + encodeURIComponent(currentPath));
+    d = await res.json();
+  } catch(e) {
+    mapMsg("No se pudieron leer las coordenadas.");
+    return;
+  }
+  if (d.error) { mapMsg(d.error); return; }
+
+  mapPhotos = d.photos || [];
+  document.getElementById("map-meta").textContent =
+    mapPhotos.length + " de " + d.total + " fotos tienen ubicación";
+  if (!mapPhotos.length) {
+    mapMsg("Ninguna de las " + d.total + " fotos de esta carpeta tiene coordenadas.<br>" +
+           "<span style='font-size:.8em'>Selecciona fotos y usa <strong>Aplicar GPS</strong> para situarlas.</span>");
+    mapRender();
+    return;
+  }
+  mapMsg("");
+  mapFit();
+}
+
+function closeMap() {
+  mapView.classList.remove("on");
+  document.removeEventListener("keydown", mapKeys);
+  mapHidePop();
+}
+
+function mapKeys(e) { if (e.key === "Escape") { e.stopPropagation(); closeMap(); } }
+
+document.getElementById("btn-map").addEventListener("click", openMap);
+document.getElementById("map-close").addEventListener("click", closeMap);
+document.getElementById("map-fit").addEventListener("click", () => { mapHidePop(); mapFit(); });
+document.getElementById("map-in").addEventListener("click", () => mapSetZoom(mapZoom + 1));
+document.getElementById("map-out").addEventListener("click", () => mapSetZoom(mapZoom - 1));
+window.addEventListener("resize", () => { if (mapView.classList.contains("on")) mapRender(); });
+
+
+// ── Carpetas nuevas, mover y copiar ──────────────────────────────────────────
+// El selector de destino navega por dentro de la carpeta de trabajo con el
+// mismo /api/browse que la galería, así que nunca puede salirse de ella.
+let destPath = "";          // carpeta que se está mirando en el selector
+let destFiles = [];         // fotos a mover o copiar
+let newFolderParent = "";   // dónde se creará la carpeta nueva
+let newFolderAfter = null;  // qué hacer después de crearla
+
+function showBox(id, cls, text) {
+  const box = document.getElementById(id);
+  box.style.display = "flex";
+  box.className = "res-box " + cls;
+  box.innerHTML = "<span>" + text + "</span>";
+}
+
+// ── Nueva carpeta ────────────────────────────────────────────────────────────
+function openNewFolder(parent, after) {
+  newFolderParent = parent || "";
+  newFolderAfter = after || null;
+  document.getElementById("newfolder-name").value = "";
+  document.getElementById("newfolder-box").style.display = "none";
+  document.getElementById("newfolder-where").innerHTML =
+    "Se creará dentro de <strong>" + (newFolderParent || workRootName) + "</strong>";
+  document.getElementById("modal-newfolder").classList.add("on");
+  setTimeout(() => document.getElementById("newfolder-name").focus(), 50);
+}
+
+async function createFolder() {
+  const name = document.getElementById("newfolder-name").value.trim();
+  if (!name) { showBox("newfolder-box", "res-err", "Escribe un nombre"); return; }
+  const btn = document.getElementById("btn-newfolder-create");
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/mkdir", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ path: newFolderParent, name: name })
+    });
+    const d = await res.json();
+    if (d.error) {
+      showBox("newfolder-box", "res-err", d.error);
+    } else {
+      document.getElementById("modal-newfolder").classList.remove("on");
+      if (newFolderAfter) newFolderAfter(d);
+      else if (!missingMode) navigate(currentPath);
+    }
+  } catch(e) {
+    showBox("newfolder-box", "res-err", "Error de conexión");
+  }
+  btn.disabled = false;
+}
+
+document.getElementById("chip-newfolder").addEventListener("click", () => openNewFolder(currentPath));
+document.getElementById("btn-newfolder-create").addEventListener("click", createFolder);
+document.getElementById("newfolder-name").addEventListener("keydown", e => {
+  if (e.key === "Enter") createFolder();
+});
+document.getElementById("btn-newfolder-cancel").addEventListener("click", () => {
+  document.getElementById("modal-newfolder").classList.remove("on");
+});
+document.getElementById("modal-newfolder").addEventListener("click", e => {
+  if (e.target === document.getElementById("modal-newfolder")) {
+    document.getElementById("modal-newfolder").classList.remove("on");
+  }
+});
+
+// ── Selector de destino ──────────────────────────────────────────────────────
+function renderDestCrumb(path) {
+  const parts = path ? path.split("/").filter(Boolean) : [];
+  let html = '<span class="rc-item' + (parts.length ? '' : ' cur') + '" data-path="">' + workRootName + '</span>';
+  let acc = "";
+  parts.forEach((seg, i) => {
+    acc += (acc ? "/" : "") + seg;
+    html += '<span class="rc-sep">›</span><span class="rc-item' +
+      (i === parts.length - 1 ? ' cur' : '') + '" data-path="' + acc + '">' + seg + '</span>';
+  });
+  const crumb = document.getElementById("dest-crumb");
+  crumb.innerHTML = html;
+  crumb.querySelectorAll(".rc-item:not(.cur)").forEach(el => {
+    el.addEventListener("click", () => browseDest(el.dataset.path));
+  });
+}
+
+async function browseDest(path) {
+  const list = document.getElementById("dest-list");
+  list.innerHTML = '<div class="root-empty"><div class="spinner" style="margin:0 auto"></div></div>';
+  document.getElementById("dest-box").style.display = "none";
+  let d;
+  try {
+    const res = await fetch("/api/browse?path=" + encodeURIComponent(path || ""));
+    d = await res.json();
+    if (d.error) throw new Error(d.error);
+  } catch(e) {
+    list.innerHTML = '<div class="root-empty">No se pudo abrir la carpeta</div>';
+    return;
+  }
+  destPath = d.current || "";
+  renderDestCrumb(destPath);
+
+  let html = "";
+  if (destPath) {
+    const parent = destPath.split("/").slice(0, -1).join("/");
+    html += '<div class="root-item up" data-path="' + parent + '">' +
+      '<svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>' +
+      '<span class="ri-name">Subir un nivel</span></div>';
+  }
+  html += d.dirs.map(dir =>
+    '<div class="root-item" data-path="' + dir.path + '">' + RI_FOLDER +
+    '<span class="ri-name">' + dir.name + '</span></div>'
+  ).join("");
+  if (!d.dirs.length) html += '<div class="root-empty">Sin subcarpetas aquí</div>';
+  list.innerHTML = html;
+  list.querySelectorAll(".root-item").forEach(el => {
+    el.addEventListener("click", () => browseDest(el.dataset.path));
+  });
+
+  document.getElementById("dest-sel").innerHTML =
+    "Destino: <strong>" + (destPath || workRootName) + "</strong>" +
+    (d.files.length ? " (" + d.files.length + " foto(s) ya aquí)" : "");
+}
+
+function openDestPicker() {
+  destFiles = Array.from(selectedFiles);
+  if (!destFiles.length) return;
+  document.getElementById("dest-count").textContent =
+    "Elige a qué carpeta llevar " + destFiles.length + " foto(s). Mover cambia el archivo de sitio; copiar deja el original donde está.";
+  document.getElementById("modal-dest").classList.add("on");
+  // Se abre en la carpeta actual, que suele ser el punto de partida
+  browseDest(currentPath);
+}
+
+async function doTransfer(mode) {
+  if (!destFiles.length) return;
+  const btn = document.getElementById(mode === "copy" ? "btn-dest-copy" : "btn-dest-move");
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div>';
+  showBox("dest-box", "res-progress", (mode === "copy" ? "Copiando " : "Moviendo ") + destFiles.length + " foto(s)...");
+  let data = {};
+  try {
+    const res = await fetch("/api/transfer", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ files: destFiles, dest: destPath, mode: mode })
+    });
+    data = await res.json();
+  } catch(e) {
+    data = {error: "Error de conexión"};
+  }
+  btn.disabled = false;
+  btn.innerHTML = orig;
+
+  if (data.error) { showBox("dest-box", "res-err", data.error); return; }
+  const ok = data.ok.length, err = data.errors.length;
+  sendReport(mode === "copy" ? "Copiar fotos" : "Mover fotos", ok + err, ok, err, data.errors.map(e => e.file));
+  if (err) {
+    showBox("dest-box", err === ok + err ? "res-err" : "res-ok",
+      ok + " hechas, " + err + " con error: " + data.errors.slice(0, 3).map(e => e.error).join(", "));
+  } else {
+    showBox("dest-box", "res-ok", ok + " foto(s) " + (mode === "copy" ? "copiadas" : "movidas"));
+  }
+  if (ok) {
+    setTimeout(() => {
+      document.getElementById("modal-dest").classList.remove("on");
+      selectedFiles.clear();
+      if (missingMode) loadMissing(currentPath); else navigate(currentPath);
+    }, 900);
+  }
+}
+
+document.getElementById("btn-move").addEventListener("click", openDestPicker);
+document.getElementById("sbar-move").addEventListener("click", openDestPicker);
+document.getElementById("btn-dest-copy").addEventListener("click", () => doTransfer("copy"));
+document.getElementById("btn-dest-move").addEventListener("click", () => doTransfer("move"));
+document.getElementById("btn-dest-newfolder").addEventListener("click", () => {
+  // Al crearla desde aquí, el selector entra directamente en la carpeta nueva
+  openNewFolder(destPath, (d) => browseDest(d.path));
+});
+document.getElementById("modal-dest").addEventListener("click", e => {
+  if (e.target === document.getElementById("modal-dest")) {
+    document.getElementById("modal-dest").classList.remove("on");
+  }
+});
+
+// ── Auto restaurar en lote ───────────────────────────────────────────────────
+function openAutoEdit() {
+  if (selectedFiles.size === 0) return;
+  document.getElementById("autoedit-warn-text").textContent =
+    "Se restaurarán " + selectedFiles.size + " foto(s) sobrescribiendo el original, " +
+    "recomprimidas a calidad 95. Cada foto se analiza por separado: se equilibra el color " +
+    "canal a canal y se levantan las sombras si hace falta. Los RAW no se tocan: generan un JPEG nuevo al lado.";
+  document.getElementById("autoedit-box").style.display = "none";
+  document.getElementById("autoedit-sharpen").checked = false;
+  document.getElementById("modal-autoedit").classList.add("on");
+}
+
+async function runAutoEdit() {
+  const files = Array.from(selectedFiles);
+  if (!files.length) return;
+  const sharpen = document.getElementById("autoedit-sharpen").checked ? 50 : 0;
+  const btn = document.getElementById("btn-autoedit-confirm");
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Restaurando...';
+  showBox("autoedit-box", "res-progress", "Restaurando " + files.length + " foto(s)... puede tardar un poco");
+  let data = {};
+  try {
+    const res = await fetch("/api/auto_edit", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ files: files, sharpen: sharpen })
+    });
+    data = await res.json();
+  } catch(e) {
+    data = {error: "Error de conexión"};
+  }
+  btn.disabled = false;
+  btn.innerHTML = orig;
+  if (data.error) { showBox("autoedit-box", "res-err", data.error); return; }
+
+  const ok = data.ok.length, err = data.errors.length;
+  sendReport("Auto restaurar", ok + err, ok, err, data.errors.map(e => e.file));
+  if (err) {
+    showBox("autoedit-box", ok ? "res-ok" : "res-err",
+      ok + " restauradas, " + err + " con error: " + data.errors.slice(0, 3).map(e => e.file).join(", "));
+  } else {
+    showBox("autoedit-box", "res-ok", ok + " foto(s) restauradas");
+  }
+  if (ok) {
+    // Las miniaturas se sirven con cache immutable: forzar que se recarguen
+    data.ok.forEach(o => { editedStamps[o.path] = Date.now(); });
+    setTimeout(() => {
+      document.getElementById("modal-autoedit").classList.remove("on");
+      selectedFiles.clear();
+      if (missingMode) loadMissing(currentPath); else navigate(currentPath);
+    }, 1200);
+  }
+}
+
+document.getElementById("btn-autoedit").addEventListener("click", openAutoEdit);
+document.getElementById("sbar-autoedit").addEventListener("click", openAutoEdit);
+document.getElementById("btn-autoedit-confirm").addEventListener("click", runAutoEdit);
+document.getElementById("btn-autoedit-cancel").addEventListener("click", () => {
+  document.getElementById("modal-autoedit").classList.remove("on");
+});
+document.getElementById("modal-autoedit").addEventListener("click", e => {
+  if (e.target === document.getElementById("modal-autoedit")) {
+    document.getElementById("modal-autoedit").classList.remove("on");
+  }
+});
+
 
 // ── Editor de imagen ─────────────────────────────────────────────────────────
 // La vista previa se dibuja en un canvas y los ajustes se aplican con un LUT
