@@ -675,16 +675,24 @@ def _open_for_edit(abs_path):
         pass
     return img
 
-def _save_pixels(img, dest, ext):
-    """Guarda la imagen en el formato que corresponde a la extension."""
+def _save_pixels(img, dest, ext, exif=None):
+    """
+    Guarda la imagen en el formato que corresponde a la extension.
+    Si se pasa el bloque EXIF del original, va incrustado DE UNA VEZ: escribir
+    los metadatos despues, con ExifTool, obliga a reescribir el archivo entero
+    (casi 3 s en un PNG de 23 MB).
+    En PNG no se usa optimize: prueba varias estrategias de compresion para
+    ahorrar un 2% de tamano, y con archivos grandes eso se nota y no compensa.
+    """
+    extra = {"exif": exif} if exif else {}
     if ext in (".jpg", ".jpeg"):
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
-        img.save(str(dest), format="JPEG", quality=95, subsampling=0, optimize=True)
+        img.save(str(dest), format="JPEG", quality=95, subsampling=0, optimize=True, **extra)
     elif ext == ".png":
-        img.save(str(dest), format="PNG", optimize=True)
+        img.save(str(dest), format="PNG", compress_level=6, **extra)
     elif ext == ".webp":
-        img.save(str(dest), format="WEBP", quality=95, method=4)
+        img.save(str(dest), format="WEBP", quality=95, method=4, **extra)
     elif ext in (".tif", ".tiff"):
         # LZW es sin perdida y evita TIFF enormes sin comprimir
         img.save(str(dest), format="TIFF", compression="tiff_lzw")
@@ -692,6 +700,40 @@ def _save_pixels(img, dest, ext):
         img.save(str(dest), format="HEIF", quality=95)
     else:
         raise Exception("formato no editable")
+
+def _source_exif(abs_path):
+    """Bloque EXIF del original listo para incrustar en el archivo editado.
+    Se conserva tal cual (GPS y fechas incluidos) y solo se fuerza
+    Orientation=1, porque el giro ya va aplicado a los pixeles."""
+    try:
+        with Image.open(str(abs_path)) as im:      # no decodifica los pixeles
+            exif = im.getexif()
+            if not exif:
+                return None
+            exif[0x0112] = 1
+            data = exif.tobytes()
+        return data or None
+    except Exception:
+        return None
+
+def _needs_metadata_copy(abs_path, exif_embedded):
+    """
+    Decide si hace falta pasar por ExifTool, que es lo caro (reescribe el
+    archivo entero: casi 3 s en un PNG de 23 MB). Leer es barato.
+    - Si ya se incrusto el EXIF al guardar, solo importan XMP e IPTC.
+    - Si no se pudo leer el EXIF (un RAW, por ejemplo), tambien hace falta el.
+    Un PNG sin metadatos -un recorte cualquiera- no necesita nada.
+    """
+    groups = ["-XMP:all", "-IPTC:all"]
+    if not exif_embedded:
+        groups.append("-EXIF:all")
+    try:
+        result = subprocess.run(
+            ["exiftool", "-fast2", "-s3"] + groups + [str(abs_path)],
+            capture_output=True, text=True, timeout=30)
+        return bool(result.stdout.strip())
+    except Exception:
+        return True     # ante la duda, la via segura
 
 def _copy_metadata(src, dest):
     """Copia los metadatos del original al archivo editado (GPS, fechas, camara)
@@ -720,15 +762,39 @@ def _edit_destination(path):
         n += 1
     return candidate, True
 
+def _prewarm_cache(img, dest):
+    """Deja hechas la miniatura y la vista previa del archivo recien guardado.
+    El navegador las pide justo despues de editar y, si no estan, hay que
+    decodificar otra vez la foto entera."""
+    try:
+        preview = img.copy()
+        preview.thumbnail((PREVIEW_MAX, PREVIEW_MAX))
+        if preview.mode not in ("RGB", "RGBA", "L"):
+            preview = preview.convert("RGB")
+        preview.save(str(_thumb_cache_path(dest, "PREVIEW-WEBP")),
+                     format="WEBP", quality=88, method=4)
+        thumb = preview.copy()
+        thumb.thumbnail((300, 300))
+        thumb.save(str(_thumb_cache_path(dest, "WEBP")), format="WEBP", quality=82, method=4)
+    except Exception:
+        pass
+
 def _save_edit(img, abs_path):
-    """Guarda una imagen editada: escribe primero un temporal, le copia los
+    """Guarda una imagen editada: escribe primero un temporal, le pone los
     metadatos del original y solo entonces reemplaza el archivo. Asi un fallo a
-    medias nunca deja el original corrupto. Devuelve (destino, es_derivado)."""
+    medias nunca deja el original corrupto. Devuelve (destino, es_derivado).
+
+    Los metadatos van incrustados al guardar (rapido). Solo se pasa por ExifTool
+    cuando hace falta de verdad: si el original lleva XMP o IPTC, o si no se
+    pudo leer su EXIF (por ejemplo en un RAW, que se guarda como JPEG derivado).
+    """
     dest, derived = _edit_destination(abs_path)
     tmp = dest.with_name("." + dest.name + ".edit_tmp" + dest.suffix)
+    exif = _source_exif(abs_path)
     try:
-        _save_pixels(img, tmp, dest.suffix.lower())
-        _copy_metadata(abs_path, tmp)
+        _save_pixels(img, tmp, dest.suffix.lower(), exif=exif)
+        if _needs_metadata_copy(abs_path, exif is not None):
+            _copy_metadata(abs_path, tmp)
         os.replace(str(tmp), str(dest))
     except Exception:
         try:
@@ -740,6 +806,7 @@ def _save_edit(img, abs_path):
     _trigger_reindex(dest)
     _evict_thumb_cache(dest)
     _evict_thumb_cache(abs_path)
+    _prewarm_cache(img, dest)
     _index_stale(dest)
     return dest, derived
 

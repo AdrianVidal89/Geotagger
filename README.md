@@ -118,6 +118,26 @@ ajustar luz y color las fotos:
 - **Los RAW no se pueden sobrescribir**: al recortar o ajustar uno se guarda un
   JPEG nuevo junto al original (`nombre_edit.jpg`) y el RAW se queda intacto.
 
+### Coste de guardar
+
+Escribir metadatos con ExifTool obliga a reescribir el archivo entero, y en PNG
+sale caro: casi 3 s en uno de 23 MB (unas 3 veces mas por MB que en JPEG),
+mientras que LEERLOS cuesta centesimas. Por eso al guardar:
+
+- El bloque EXIF del original (fechas, GPS, camara) se incrusta al escribir el
+  archivo, con Orientation puesto a 1 porque el giro ya va en los pixeles.
+- Solo se pasa por ExifTool cuando de verdad hace falta: si el original lleva
+  XMP o IPTC, que no caben en el EXIF, o si no se pudo leer su EXIF (un RAW).
+  Un PNG sin metadatos no necesita ninguna pasada.
+- En PNG no se usa `optimize`: prueba varias estrategias para ahorrar un 2% de
+  tamano y con archivos grandes no compensa.
+- La miniatura y la vista previa del archivo editado se dejan hechas en la
+  cache, porque el navegador las pide justo despues y regenerarlas obliga a
+  decodificar otra vez la foto entera.
+
+Con un PNG de 23 MB, un recorte pasa de 3,9 s a 1,6 s, y la vista previa
+posterior de 0,22 s a 0,01 s.
+
 La vista previa del navegador y el resultado guardado usan la misma cadena, en
 el mismo orden (giro y volteo -> enderezado -> recorte -> nitidez -> equilibrio
 por canal -> niveles -> temperatura y tinte -> sombras y luces -> exposicion ->
