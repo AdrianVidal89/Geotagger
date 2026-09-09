@@ -275,11 +275,28 @@ def _exiftool_updated(stdout):
 def _exiftool_updated_none(stdout):
     return _exiftool_updated(stdout) == 0
 
-def _ui_date(raw):
-    """De "2005:06:15 10:00:00" (ExifTool) a "2005-06-15 10:00:00"."""
+# Una fecha de metadatos tiene que parecer una fecha. Algunos campos EXIF
+# guardan el texto con un prefijo de codificacion ("ASCII\0\0\0..."), y un
+# archivo con los metadatos danados puede devolver cualquier cosa donde deberia
+# ir la fecha. Antes que ensenar un disparate -o guardarlo en el indice- es
+# mejor no saberla y leer el archivo.
+DATE_SHAPE = re.compile(r"^\d{4}[:-]\d{2}[:-]\d{2}[ T]\d{2}:\d{2}:\d{2}")
+
+def _clean_date(raw):
+    """Devuelve la fecha si tiene forma de fecha; si no, cadena vacia."""
     if not raw:
         return ""
-    return re.sub(r"^(\d{4}):(\d{2}):(\d{2})", r"\1-\2-\3", raw)
+    txt = str(raw).strip()
+    if not DATE_SHAPE.match(txt) or txt.startswith("0000"):
+        return ""
+    return txt
+
+def _ui_date(raw):
+    """De "2005:06:15 10:00:00" (ExifTool) a "2005-06-15 10:00:00"."""
+    txt = _clean_date(raw)
+    if not txt:
+        return ""
+    return re.sub(r"^(\d{4}):(\d{2}):(\d{2})", r"\1-\2-\3", txt)
 
 def _read_dates_batch(paths):
     """Fechas de un lote con UNA sola llamada. Devuelve por foto la fecha de
@@ -297,10 +314,11 @@ def _read_dates_batch(paths):
             origen = row.get("SourceFile")
             if not origen:
                 continue
-            toma = row.get("DateTimeOriginal") or ""
+            toma = _clean_date(row.get("DateTimeOriginal"))
             out[os.path.realpath(origen)] = {
                 "toma": toma,
-                "alguna": toma or row.get("CreateDate") or row.get("ModifyDate") or "",
+                "alguna": toma or _clean_date(row.get("CreateDate"))
+                          or _clean_date(row.get("ModifyDate")),
             }
     except Exception:
         pass
@@ -449,7 +467,7 @@ def _read_dates(path):
              ("modify_date", "ModifyDate"), ("file_date", "FileModifyDate"))
     for key, tag in pairs:
         val = data.get(tag)
-        if isinstance(val, str) and val.strip() and not val.startswith("0000"):
+        if isinstance(val, str) and DATE_SHAPE.match(val.strip()) and not val.startswith("0000"):
             out[key] = val.strip()
     return out
 
@@ -1018,7 +1036,7 @@ def _index_read_batch(paths):
             lon = float(lon) if lon is not None else None
         except (TypeError, ValueError):
             lat = lon = None
-        read[os.path.abspath(src)] = (lat, lon, item.get("DateTimeOriginal") or "")
+        read[os.path.abspath(src)] = (lat, lon, _clean_date(item.get("DateTimeOriginal")))
     return read
 
 def _index_scan(base):
@@ -1099,17 +1117,24 @@ def _index_photos(base):
 
 def _index_dates(folder):
     """Fecha de metadatos de las fotos bajo una carpeta, tal como la conoce el
-    indice, con su fecha y tamano para poder comprobar que sigue al dia."""
-    out = {}
+    indice, con su fecha y tamano para poder comprobar que sigue al dia. Si una
+    fila guarda algo que no es una fecha se descarta y se marca para releer:
+    asi una fila envenenada no se queda para siempre."""
+    out, sucias = {}, []
     try:
         lo, hi = _index_range(folder)
         for path, mtime, size, date in _index_db().execute(
                 "SELECT path, mtime, size, date FROM photos "
                 "WHERE path >= ? AND path < ? AND date IS NOT NULL AND date != ''",
                 (lo, hi)).fetchall():
-            out[path] = (mtime, size, date)
+            if _clean_date(date):
+                out[path] = (mtime, size, date)
+            else:
+                sucias.append(path)
     except Exception:
         pass
+    for path in sucias:
+        _index_stale(path)
     return out
 
 def _index_without_gps(base):
@@ -1757,14 +1782,17 @@ def gpsinfo():
         return jsonify({"has_gps": True, "lat": str(known["lat"]), "lon": str(known["lon"])})
     try:
         result = subprocess.run(
-            ["exiftool", "-fast2", "-n", "-GPSLatitude", "-GPSLongitude", "-s", "-s", "-s", str(abs_path)],
+            ["exiftool", "-fast2", "-json", "-n", "-q", "-q",
+             "-GPSLatitude", "-GPSLongitude", str(abs_path)],
             capture_output=True, text=True, timeout=10
         )
-        out = result.stdout.strip()
-        if out and "\n" in out:
-            parts = out.split("\n")
-            return jsonify({"has_gps": True, "lat": parts[0].strip(), "lon": parts[1].strip()})
-        return jsonify({"has_gps": False})
+        # Por NOMBRE, no por posicion: con "-s -s -s" un tag que falta no imprime
+        # linea, y la longitud acababa leyendose como latitud
+        fila = (json.loads(result.stdout or "[]") or [{}])[0]
+        lat, lon = fila.get("GPSLatitude"), fila.get("GPSLongitude")
+        if lat is None or lon is None:
+            return jsonify({"has_gps": False})
+        return jsonify({"has_gps": True, "lat": str(lat), "lon": str(lon)})
     except Exception as e:
         return jsonify({"has_gps": False, "error": str(e)})
 
@@ -1777,9 +1805,9 @@ def dateinfo():
         return jsonify({"has_date": False, "error": "no existe"}), 404
     # Igual que con el GPS: si el indice lo sabe, nos ahorramos el proceso
     known = _index_get(abs_path)
-    if known is not None and known["date"]:
+    if known is not None and _clean_date(known["date"]):
         return jsonify({
-            "date": known["date"].replace(":", "-", 2),
+            "date": _ui_date(known["date"]),
             "file_date": datetime.fromtimestamp(known["file_mtime"]).strftime(UI_DATE_FMT),
             "has_date": True,
         })
@@ -2297,6 +2325,8 @@ def rename_files():
                     capture_output=True, text=True, timeout=10
                 )
                 dt_raw = result.stdout.strip()
+            # Un valor que no sea una fecha no puede acabar en el nombre
+            dt_raw = _clean_date(dt_raw)
             if dt_raw:
                 dt = dt_raw.replace(":", "-", 2).replace(" ", "_").replace(":", "-")
             else:
