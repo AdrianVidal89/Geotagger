@@ -43,12 +43,39 @@ carpeta.
   casos se abre ni se recodifica la imagen. Si en el destino ya hay un archivo
   con el mismo nombre, se anade un sufijo en vez de sobrescribirlo.
 
+## Indice de metadatos
+
+Leer el GPS de cada foto con ExifTool es proporcional al numero de archivos, y
+un RAW tarda bastante en abrirse: con miles de fotos, abrir el mapa se hacia
+esperar. Ahora hay un indice en SQLite (`/app/data/index.db`, dentro del volumen
+de datos) que se mantiene en segundo plano:
+
+- Cada foto se lee UNA vez. Solo se vuelve a leer si cambia su fecha o su tamano.
+- El repaso corre en un hilo aparte y por lotes, asi que el mapa se abre al
+  instante con lo que ya se sabe y se va completando solo mientras se mira.
+- Se repasa al arrancar, cada 15 minutos, al cambiar la carpeta de trabajo y al
+  subir fotos. Nunca dos repasos a la vez, y no se repite si acaba de hacerse.
+- Las operaciones de la app actualizan el indice sin releer nada: al escribir GPS
+  ya se conocen las coordenadas, mover o renombrar solo cambia la ruta de la
+  fila, copiar la duplica y borrar la quita.
+- El indice es una cache: si se borra el fichero, se reconstruye solo.
+
+Ademas del mapa, el filtro **Sin GPS** se sirve del indice. Antes lanzaba un
+proceso de ExifTool POR FOTO; con 3.000 fotos de prueba pasa de minutos a 0,09 s.
+
+## Favoritos
+
+La estrella del panel de carpetas marca la carpeta que se esta viendo. Los
+favoritos se guardan como rutas completas dentro del NAS, asi que pulsarlos
+cambia la carpeta de trabajo a esa ruta y la galeria arranca alli, vengas de
+donde vengas.
+
 ## Mapa
 
 Pulsando el logotipo se abren en un mapa las fotos de la carpeta actual y sus
-subcarpetas que tengan coordenadas. Las coordenadas se leen con UNA sola llamada
-a ExifTool sobre el arbol (un proceso por foto seria inviable con miles de
-archivos). El mapa no usa ninguna libreria externa: los mosaicos de OpenStreetMap
+subcarpetas que tengan coordenadas, servidas por el indice (ver arriba): la
+primera apertura tarda lo que tarde el indice en construirse, y a partir de ahi
+es instantanea. El mapa no usa ninguna libreria externa: los mosaicos de OpenStreetMap
 se colocan segun la proyeccion Mercator y los marcadores se agrupan por celdas de
 pantalla, de modo que mil fotos del mismo sitio no tapan el mapa. Pulsando un
 grupo se acerca; pulsando una foto se ve su miniatura y se puede abrir en el

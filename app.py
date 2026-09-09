@@ -7,6 +7,8 @@ import time
 import json
 import hashlib
 import shutil
+import sqlite3
+import threading
 import zipfile
 import smtplib
 from email.mime.text import MIMEText
@@ -125,6 +127,19 @@ def _work_root_info():
         "nas_name": Path(NAS_ROOT).name or "NAS",
     }
 
+def _favorites():
+    """Accesos directos a carpetas, guardados como rutas relativas a la raiz del
+    NAS para que sigan valiendo aunque se cambie la carpeta de trabajo."""
+    favs = _load_settings().get("favorites", [])
+    out = []
+    for f in favs if isinstance(favs, list) else []:
+        if not isinstance(f, dict):
+            continue
+        path = str(f.get("path", "")).strip().strip("/")
+        name = str(f.get("name", "")).strip() or (path.split("/")[-1] if path else "NAS")
+        out.append({"path": path, "name": name})
+    return out
+
 def _resolve_path(rel, base=None):
     """Resuelve una ruta relativa DENTRO de la carpeta de trabajo actual
     (o de la base indicada). Devuelve None si se sale de ella."""
@@ -227,6 +242,7 @@ def _write_gps_exiftool(path, lat, lon, alt=None):
     _trigger_reindex(path)
     # Invalidate thumbnail cache for this file
     _evict_thumb_cache(path)
+    _index_set_gps(path, lat, lon)
 
 def _evict_thumb_cache(abs_path):
     """Remove all cached thumbnails (JPEG + WebP) for a given file."""
@@ -361,6 +377,7 @@ def _write_date_exiftool(path, exif_date=None, shift=None, sync_file=True):
                         else "no se pudo escribir la fecha")
     _trigger_reindex(path)
     _evict_thumb_cache(path)
+    _index_stale(path)
     return path
 
 # =============================================================================
@@ -405,6 +422,7 @@ def _rotate_lossless(path, op):
                         else "no se pudo girar")
     _trigger_reindex(path)
     _evict_thumb_cache(path)
+    _index_stale(path)
     return new
 
 # ── Ajustes de luz y color ───────────────────────────────────────────────────
@@ -722,6 +740,7 @@ def _save_edit(img, abs_path):
     _trigger_reindex(dest)
     _evict_thumb_cache(dest)
     _evict_thumb_cache(abs_path)
+    _index_stale(dest)
     return dest, derived
 
 def _unique_target(dest_dir, name):
@@ -733,6 +752,253 @@ def _unique_target(dest_dir, name):
         candidate = dest_dir / (stem + "_" + str(n) + ext)
         n += 1
     return candidate
+
+# =============================================================================
+# INDICE DE METADATOS
+# Leer el GPS de cada foto con ExifTool es proporcional al numero de archivos
+# (y un RAW tarda bastante en abrirse), asi que el mapa y el filtro "sin GPS"
+# se sirven de un indice en SQLite que se mantiene en segundo plano: cada foto
+# se lee UNA vez, y solo se vuelve a leer si cambia su fecha o su tamano.
+# El indice es una cache: si se borra, se reconstruye solo.
+# =============================================================================
+
+INDEX_FILE = SETTINGS_DIR + "/index.db"
+INDEX_BATCH = 150          # fotos por llamada a ExifTool
+INDEX_INTERVAL = 900       # repaso periodico del arbol (segundos)
+
+_index_local = threading.local()
+_index_lock = threading.Lock()
+# SQLite admite muchos lectores pero un solo escritor: las escrituras se
+# serializan aqui para no chocar con el repaso de fondo ("database is locked")
+_index_write = threading.Lock()
+_index_state = {"scanning": False, "done": 0, "total": 0, "root": "", "at": 0}
+
+def _index_db():
+    """Conexion propia de cada hilo (Flask atiende varias peticiones a la vez)."""
+    conn = getattr(_index_local, "conn", None)
+    if conn is None:
+        conn = sqlite3.connect(INDEX_FILE, timeout=60)
+        try:
+            conn.execute("PRAGMA busy_timeout=60000")
+            conn.execute("PRAGMA journal_mode=WAL")   # lecturas mientras se escribe
+            conn.execute("PRAGMA synchronous=NORMAL")
+        except sqlite3.Error:
+            pass                                     # WAL es una mejora, no un requisito
+        with _index_write:
+            conn.execute("""CREATE TABLE IF NOT EXISTS photos (
+                path TEXT PRIMARY KEY,
+                mtime INTEGER, size INTEGER,
+                lat REAL, lon REAL, date TEXT)""")
+            conn.commit()
+        _index_local.conn = conn
+    return conn
+
+def _index_range(base):
+    """Limites para consultar por prefijo de ruta sin usar LIKE (una ruta puede
+    llevar % o _, que en LIKE son comodines)."""
+    prefix = str(base).rstrip("/") + "/"
+    return prefix, prefix + "\uffff"
+
+def _index_walk(base):
+    """Fotos del arbol con su fecha y tamano, saltando ocultas y del sistema."""
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and not d.startswith("@")]
+        for fn in filenames:
+            if fn.startswith(".") or fn.startswith("@"):
+                continue
+            if os.path.splitext(fn)[1].lower() not in SUPPORTED_EXTS:
+                continue
+            full = os.path.join(dirpath, fn)
+            try:
+                st = os.stat(full)
+            except OSError:
+                continue
+            yield full, int(st.st_mtime), st.st_size
+
+def _index_read_batch(paths):
+    """Lee un lote con UNA sola llamada a ExifTool."""
+    cmd = ["exiftool", "-json", "-n", "-q", "-q",
+           "-GPSLatitude", "-GPSLongitude", "-DateTimeOriginal", "-SourceFile"] + paths
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        items = json.loads(result.stdout) if result.stdout.strip() else []
+    except Exception:
+        items = []
+    read = {}
+    for item in items:
+        src = item.get("SourceFile")
+        if not src:
+            continue
+        lat, lon = item.get("GPSLatitude"), item.get("GPSLongitude")
+        try:
+            lat = float(lat) if lat is not None else None
+            lon = float(lon) if lon is not None else None
+        except (TypeError, ValueError):
+            lat = lon = None
+        read[os.path.abspath(src)] = (lat, lon, item.get("DateTimeOriginal") or "")
+    return read
+
+def _index_scan(base):
+    """Pone al dia el indice de un arbol: solo lee lo nuevo o lo que cambio."""
+    conn = _index_db()
+    lo, hi = _index_range(base)
+
+    current = {}
+    for full, mtime, size in _index_walk(base):
+        current[full] = (mtime, size)
+
+    known = {}
+    for path, mtime, size in conn.execute(
+            "SELECT path, mtime, size FROM photos WHERE path >= ? AND path < ?", (lo, hi)):
+        known[path] = (mtime, size)
+
+    # Ojo: no basta con "no estaba en el recorrido". Una foto copiada mientras
+    # se recorria el arbol no aparece en esa foto fija, y borrarla la sacaria
+    # del indice hasta el siguiente repaso. Se comprueba en disco.
+    gone = [p for p in known if p not in current and not os.path.exists(p)]
+    if gone:
+        with _index_write:
+            conn.executemany("DELETE FROM photos WHERE path = ?", [(p,) for p in gone])
+            conn.commit()
+
+    todo = [p for p, v in sorted(current.items()) if known.get(p) != v]
+    _index_state.update(total=len(todo), done=0, root=str(base))
+    for i in range(0, len(todo), INDEX_BATCH):
+        batch = todo[i:i + INDEX_BATCH]
+        read = _index_read_batch(batch)
+        rows = []
+        for path in batch:
+            lat, lon, date = read.get(path, (None, None, ""))
+            mtime, size = current[path]
+            rows.append((path, mtime, size, lat, lon, date))
+        with _index_write:
+            conn.executemany(
+                "INSERT OR REPLACE INTO photos (path, mtime, size, lat, lon, date) "
+                "VALUES (?, ?, ?, ?, ?, ?)", rows)
+            conn.commit()
+        _index_state["done"] += len(batch)
+    _index_state["at"] = int(time.time())
+
+def _index_worker(base):
+    try:
+        _index_scan(Path(base))
+    except Exception as e:
+        print("Index error:", str(e))
+    finally:
+        _index_state["scanning"] = False
+
+INDEX_MIN_GAP = 60         # segundos entre repasos del mismo arbol
+
+def _index_request(base, force=False):
+    """Lanza un repaso en segundo plano si no hay otro en marcha. Recorrer el
+    arbol cuesta E/S en el NAS, asi que no se repite si acaba de hacerse."""
+    with _index_lock:
+        if _index_state["scanning"]:
+            return False
+        if (not force and _index_state["at"]
+                and time.time() - _index_state["at"] < INDEX_MIN_GAP
+                and _index_state["root"] == str(base)):
+            return False
+        _index_state["scanning"] = True
+    threading.Thread(target=_index_worker, args=(str(base),), daemon=True).start()
+    return True
+
+def _index_photos(base):
+    """Fotos CON coordenadas bajo base, tal como las conoce el indice."""
+    lo, hi = _index_range(base)
+    return _index_db().execute(
+        "SELECT path, lat, lon, date FROM photos "
+        "WHERE path >= ? AND path < ? AND lat IS NOT NULL AND lon IS NOT NULL",
+        (lo, hi)).fetchall()
+
+def _index_without_gps(base):
+    """Fotos que el indice sabe que NO tienen coordenadas."""
+    lo, hi = _index_range(base)
+    return _index_db().execute(
+        "SELECT path, mtime FROM photos WHERE path >= ? AND path < ? AND lat IS NULL",
+        (lo, hi)).fetchall()
+
+def _index_count(base):
+    lo, hi = _index_range(base)
+    return _index_db().execute(
+        "SELECT COUNT(*) FROM photos WHERE path >= ? AND path < ?", (lo, hi)).fetchone()[0]
+
+# ── Mantener el indice al dia cuando la app toca los archivos ───────────────
+def _index_set_gps(path, lat, lon):
+    """Tras escribir GPS ya sabemos las coordenadas: no hace falta releerlas."""
+    try:
+        st = os.stat(str(path))
+        conn = _index_db()
+        with _index_write:
+            conn.execute(
+                "INSERT INTO photos (path, mtime, size, lat, lon, date) VALUES (?,?,?,?,?,"
+                "COALESCE((SELECT date FROM photos WHERE path = ?), '')) "
+                "ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, size=excluded.size, "
+                "lat=excluded.lat, lon=excluded.lon",
+                (str(path), int(st.st_mtime), st.st_size, lat, lon, str(path)))
+            conn.commit()
+    except Exception:
+        pass
+
+def _index_stale(path):
+    """Marca una foto para que el proximo repaso la relea (sin perder lo que ya
+    sabemos de ella, que sigue siendo valido para el mapa)."""
+    try:
+        conn = _index_db()
+        with _index_write:
+            conn.execute("UPDATE photos SET mtime = -1 WHERE path = ?", (str(path),))
+            conn.commit()
+    except Exception:
+        pass
+
+def _index_forget(path):
+    try:
+        conn = _index_db()
+        with _index_write:
+            conn.execute("DELETE FROM photos WHERE path = ?", (str(path),))
+            conn.commit()
+    except Exception:
+        pass
+
+def _index_move(old, new):
+    """Mover o renombrar no cambia los metadatos: basta con mover la fila."""
+    try:
+        st = os.stat(str(new))
+        conn = _index_db()
+        with _index_write:
+            conn.execute("DELETE FROM photos WHERE path = ?", (str(new),))
+            conn.execute("UPDATE photos SET path = ?, mtime = ? WHERE path = ?",
+                         (str(new), int(st.st_mtime), str(old)))
+            conn.commit()
+    except Exception:
+        pass
+
+def _index_copy(old, new):
+    try:
+        st = os.stat(str(new))
+        conn = _index_db()
+        with _index_write:
+            conn.execute(
+                "INSERT OR REPLACE INTO photos (path, mtime, size, lat, lon, date) "
+                "SELECT ?, ?, ?, lat, lon, date FROM photos WHERE path = ?",
+                (str(new), int(st.st_mtime), st.st_size, str(old)))
+            conn.commit()
+    except Exception:
+        pass
+
+def _index_background():
+    """Repaso periodico de la carpeta de trabajo, mas uno al arrancar."""
+    time.sleep(3)
+    while True:
+        try:
+            root = _work_root()
+            if root.is_dir():
+                _index_request(root)
+        except Exception:
+            pass
+        time.sleep(INDEX_INTERVAL)
+
+threading.Thread(target=_index_background, daemon=True).start()
 
 def _reverse_geocode(lat, lon):
     try:
@@ -856,7 +1122,44 @@ def work_root():
     if target is None or not target.is_dir():
         return jsonify({"error": "la carpeta no existe"}), 400
     _save_settings({"work_root": rel})
+    _index_request(target, force=True)
     return jsonify(_work_root_info())
+
+@app.route("/api/favorites", methods=["GET", "POST"])
+def favorites():
+    """Lista, anade o quita accesos directos a carpetas."""
+    if request.method == "GET":
+        return jsonify({"favorites": _favorites()})
+
+    data = request.json or {}
+    action = data.get("action", "add")
+    favs = _favorites()
+
+    if action == "remove":
+        path = str(data.get("path", "")).strip().strip("/")
+        favs = [f for f in favs if f["path"] != path]
+        _save_settings({"favorites": favs})
+        return jsonify({"favorites": favs})
+
+    # Anadir: llega la ruta relativa a la carpeta de trabajo y se guarda
+    # completa (relativa al NAS), que es lo que hace falta para volver a ella
+    rel = str(data.get("path", "")).strip().strip("/")
+    target = _resolve_path(rel)
+    if target is None or not target.is_dir():
+        return jsonify({"error": "la carpeta no existe"}), 404
+    base = Path(NAS_ROOT).resolve()
+    try:
+        full = "" if target == base else str(target.relative_to(base))
+    except ValueError:
+        return jsonify({"error": "fuera del NAS"}), 400
+    if any(f["path"] == full for f in favs):
+        return jsonify({"favorites": favs, "already": True})
+    name = str(data.get("name", "")).strip() or (full.split("/")[-1] if full else (base.name or "NAS"))
+    if len(favs) >= 40:
+        return jsonify({"error": "demasiados favoritos"}), 400
+    favs.append({"path": full, "name": name})
+    _save_settings({"favorites": favs})
+    return jsonify({"favorites": favs})
 
 @app.route("/api/browse")
 def browse():
@@ -1345,6 +1648,14 @@ def edit_image():
         "path": str(dest.relative_to(root)),
     })
 
+def _index_status_dict():
+    return {
+        "scanning": bool(_index_state["scanning"]),
+        "done": _index_state["done"],
+        "total": _index_state["total"],
+        "updated_at": _index_state["at"],
+    }
+
 @app.route("/api/mkdir", methods=["POST"])
 def make_dir():
     """Crea una carpeta dentro de la carpeta de trabajo."""
@@ -1396,9 +1707,11 @@ def transfer_files():
             target = _unique_target(dest, src.name)
             if mode == "copy":
                 shutil.copy2(str(src), str(target))
+                _index_copy(src, target)
             else:
                 shutil.move(str(src), str(target))
                 _evict_thumb_cache(src)
+                _index_move(src, target)
             _trigger_reindex(target)
             ok.append({"name": src.name, "new": target.name})
         except Exception as e:
@@ -1418,44 +1731,36 @@ def gps_map():
     if base is None or not base.is_dir():
         return jsonify({"error": "la carpeta no existe"}), 404
     root = _work_root()
-    cmd = ["exiftool", "-json", "-n", "-q", "-q",
-           "-GPSLatitude", "-GPSLongitude", "-DateTimeOriginal", "-SourceFile"]
-    for ext in sorted(SUPPORTED_EXTS):
-        cmd += ["-ext", ext.lstrip(".")]
-    cmd += ["-r", str(base)]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-        items = json.loads(result.stdout) if result.stdout.strip() else []
-    except Exception as e:
-        return jsonify({"error": str(e), "photos": []}), 500
 
-    photos, total = [], 0
-    for item in items:
+    # Se responde con lo que el indice ya sabe (instantaneo) y se pide un
+    # repaso en segundo plano: la interfaz va completando el mapa sola
+    _index_request(root)
+    photos = []
+    for path, lat, lon, date in _index_photos(base):
         try:
-            path = Path(item.get("SourceFile", "")).resolve()
-            relative = path.relative_to(root)
+            relative = Path(path).relative_to(root)
         except Exception:
-            continue
-        if any(part.startswith("@") or part.startswith(".") for part in relative.parts):
-            continue
-        total += 1
-        lat, lon = item.get("GPSLatitude"), item.get("GPSLongitude")
-        if lat is None or lon is None:
-            continue
-        try:
-            lat, lon = float(lat), float(lon)
-        except (TypeError, ValueError):
             continue
         folder = str(relative.parent)
         photos.append({
             "path": str(relative),
-            "name": path.name,
+            "name": os.path.basename(path),
             "folder": "" if folder == "." else folder,
             "lat": round(lat, 6),
             "lon": round(lon, 6),
-            "date": item.get("DateTimeOriginal") or "",
+            "date": date or "",
         })
-    return jsonify({"photos": photos, "total": total, "with_gps": len(photos)})
+    return jsonify({
+        "photos": photos,
+        "total": _index_count(base),
+        "with_gps": len(photos),
+        "index": _index_status_dict(),
+    })
+
+@app.route("/api/index_status")
+def index_status():
+    """Como va el indice, para que la interfaz avise y se refresque sola."""
+    return jsonify(_index_status_dict())
 
 @app.route("/api/auto_edit", methods=["POST"])
 def auto_edit_files():
@@ -1505,28 +1810,27 @@ def missing_gps():
     if base is None or not base.exists():
         return jsonify({"error": "no existe", "files": []}), 404
     root = _work_root()
+    # Del indice: antes esto lanzaba un ExifTool POR FOTO
+    _index_request(root)
     found = []
-    for item in sorted(base.rglob("*")):
-        if item.is_dir():
+    for path, mtime in _index_without_gps(base):
+        item = Path(path)
+        if not item.exists():
             continue
-        if any(part.startswith("@") or part.startswith(".") for part in item.relative_to(root).parts):
+        try:
+            relative = item.relative_to(root)
+        except Exception:
             continue
-        if item.suffix.lower() not in SUPPORTED_EXTS:
-            continue
-        if not _has_gps_fast(item):
-            try:
-                mtime = int(item.stat().st_mtime)
-            except Exception:
-                mtime = 0
-            found.append({
-                "name": item.name,
-                "path": str(item.relative_to(root)),
-                "ext": item.suffix.lower(),
-                "folder": str(item.parent.relative_to(root)),
-                "mtime": mtime,
-            })
+        folder = str(relative.parent)
+        found.append({
+            "name": item.name,
+            "path": str(relative),
+            "ext": item.suffix.lower(),
+            "folder": "" if folder == "." else folder,
+            "mtime": mtime if mtime and mtime > 0 else 0,
+        })
     found.sort(key=lambda f: f["mtime"], reverse=True)
-    return jsonify({"files": found, "count": len(found)})
+    return jsonify({"files": found, "count": len(found), "index": _index_status_dict()})
 
 @app.route("/api/rename", methods=["POST"])
 def rename_files():
@@ -1585,6 +1889,7 @@ def rename_files():
             path.rename(candidate)
             # Invalidate old thumbnail cache
             _evict_thumb_cache(path)
+            _index_move(path, candidate)
             ok.append({"old": path.name, "new": candidate.name})
         except Exception as e:
             errors.append({"file": path.name, "error": str(e)})
@@ -1646,6 +1951,7 @@ def delete_files():
         try:
             _evict_thumb_cache(path)
             path.unlink()
+            _index_forget(path)
             ok.append(path.name)
         except Exception as e:
             errors.append({"file": path.name, "error": str(e)})
@@ -1758,6 +2064,8 @@ def upload_files():
         except Exception as e:
             errors.append({"file": name, "error": str(e)})
 
+    if ok:
+        _index_request(_work_root(), force=True)   # las nuevas entran en el indice
     return jsonify({"ok": ok, "errors": errors})
 
 if __name__ == "__main__":
