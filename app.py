@@ -6,6 +6,7 @@ import io
 import time
 import json
 import ctypes
+import base64
 import hashlib
 import tempfile
 import shutil
@@ -412,11 +413,19 @@ def _evict_thumb_cache(abs_path):
 #      ocupando cientos de MB que ya no usa hasta que se reinicia.
 # =============================================================================
 
-# Cuantas fotos se pueden estar descomprimiendo a la vez. Dejando un nucleo
-# libre la interfaz sigue respondiendo mientras se llena la galeria, y el techo
-# de memoria de la app pasa a ser algo conocido y no el numero de pestanas
-# abiertas.
-DECODE_SLOTS = max(2, min(4, (os.cpu_count() or 2) - 1))
+# Cuantas fotos se pueden estar descomprimiendo a la vez: el techo de memoria
+# de la app pasa a ser algo conocido, y no el numero de pestanas abiertas.
+# Una por nucleo, medido en el NAS de 4 (12 miniaturas de 40 MB / 8 vistas
+# previas a la vez / pico de memoria):
+#     2 turnos -> 2,27 s / 3,17 s / 214 MB
+#     3 turnos -> 1,67 s / 2,52 s / 290 MB
+#     4 turnos -> 1,18 s / 1,67 s / 383 MB   <-- uno por nucleo
+#     6 turnos -> 1,32 s / 2,08 s / 360 MB   (repartir de mas sale peor)
+# Dejar un nucleo libre "para que la interfaz responda" parecia buena idea y
+# resulto ser solo mas lento: a quien hay que apartar del camino no es a las
+# peticiones del usuario, sino al trabajo de fondo, y de eso se encarga
+# _usuario_quieto(). El tope de 4 es el que mantiene la memoria acotada.
+DECODE_SLOTS = max(2, min(4, os.cpu_count() or 2))
 _decode_sem = threading.BoundedSemaphore(DECODE_SLOTS)
 
 try:
@@ -446,12 +455,13 @@ def _decode_slot():
 # pre-generado de fondo mira este numero para apartarse: el que esta mirando la
 # pantalla va primero, siempre.
 _user_decodes = 0
+_user_last = 0.0
 _user_guard = threading.Lock()
 
 @contextmanager
 def _user_decode():
     """Turno de decodificacion para una peticion del usuario."""
-    global _user_decodes
+    global _user_decodes, _user_last
     with _user_guard:
         _user_decodes += 1
     try:
@@ -460,6 +470,15 @@ def _user_decode():
     finally:
         with _user_guard:
             _user_decodes -= 1
+            _user_last = time.time()
+
+def _usuario_quieto(margen):
+    """Cierto si el usuario no tiene nada en marcha y lleva `margen` segundos
+    sin pedir nada. No basta con mirar si hay algo AHORA MISMO: entre dos
+    miniaturas de la misma pantalla hay milisegundos de hueco, y colarse ahi
+    significa quedarse con un turno durante los 0,35 s que tarda la siguiente
+    foto, que es justo lo que el usuario esta esperando."""
+    return _user_decodes == 0 and (time.time() - _user_last) > margen
 
 # Una sola generacion por archivo de cache: si dos peticiones piden a la vez la
 # misma vista previa (el visor y la miniatura, o dos pestanas), la segunda
@@ -569,7 +588,14 @@ def _cache_store(cache_file, data):
 # =============================================================================
 
 PREFETCH_MAX = 600          # fotos por carpeta
-PREFETCH_PAUSA = 0.15       # espera mientras el usuario tiene algo en marcha
+PREFETCH_PAUSA = 0.1        # cada cuanto se vuelve a mirar si el usuario paro
+# Margen de silencio antes de ponerse a trabajar. Tiene que ser mayor que lo
+# que tarda una foto (0,35 s), o el fondo se cuela entre dos miniaturas de la
+# pantalla que el usuario esta mirando y se la retrasa.
+PREFETCH_MARGEN = 0.5
+# Al abrir una carpeta, el navegador tarda un momento en pedir las miniaturas
+# que se ven. Sin esta espera, el fondo llega antes y le quita el sitio.
+PREFETCH_ARRANQUE = 0.6
 # Siempre UN turno menos de los que hay: asi, por mucho que el fondo trabaje,
 # al usuario nunca le toca esperar a que se libere una plaza.
 PREFETCH_WORKERS = max(1, DECODE_SLOTS - 1)
@@ -598,11 +624,12 @@ def _prefetch_vigente(gen):
 
 def _prefetch_worker(folder, names, gen):
     hechas = 0
+    time.sleep(PREFETCH_ARRANQUE)
     for name in names:
         if not _prefetch_vigente(gen):
             return
-        # El usuario primero: si tiene algo esperando turno, apartarse
-        while _user_decodes:
+        # El usuario primero: no se toca nada hasta que lleve un rato quieto
+        while not _usuario_quieto(PREFETCH_MARGEN):
             if not _prefetch_vigente(gen):
                 return
             time.sleep(PREFETCH_PAUSA)
@@ -621,6 +648,7 @@ def _prefetch_worker(folder, names, gen):
                     hechas += 1
         except Exception:
             pass            # una foto rota no puede parar el resto
+    _blur_flush()
     if hechas and _prefetch_vigente(gen):
         _cache_sweep()
 
@@ -1307,7 +1335,14 @@ def _index_db():
             conn.execute("""CREATE TABLE IF NOT EXISTS photos (
                 path TEXT PRIMARY KEY,
                 mtime INTEGER, size INTEGER,
-                lat REAL, lon REAL, date TEXT)""")
+                lat REAL, lon REAL, date TEXT,
+                blur TEXT)""")
+            try:
+                # Bases de datos de versiones anteriores: se les anade la
+                # columna y el proximo repaso la va rellenando.
+                conn.execute("ALTER TABLE photos ADD COLUMN blur TEXT")
+            except sqlite3.OperationalError:
+                pass                                 # ya la tiene
             # Nombres de lugar ya consultados: Nominatim obliga a esperar un
             # segundo entre peticiones, asi que conviene no repetirlas nunca
             conn.execute("""CREATE TABLE IF NOT EXISTS places (
@@ -1338,11 +1373,55 @@ def _index_walk(base):
                 continue
             yield full, int(st.st_mtime), st.st_size
 
+# =============================================================================
+# LA MINIATURA DIMINUTA (el truco de Google Photos)
+# Una rejilla llena de huecos grises PARECE lenta aunque no lo sea. Lo que hace
+# que Google Photos parezca instantaneo no es que sus miniaturas vuelen: es que
+# nunca ensena un hueco. Manda, dentro del propio listado, una version de 16 px
+# de cada foto -142 bytes- que el navegador pinta borrosa al instante, y encima
+# de ella va apareciendo la miniatura de verdad.
+#
+# Aqui sale practicamente gratis porque casi todas las fotos de camara o movil
+# llevan YA una miniatura de 160x120 incrustada en su EXIF, y el repaso del
+# indice recorre todos los archivos con ExifTool de todas formas: pedirsela en
+# la misma llamada cuesta un 5% mas (0,208 s -> 0,218 s por cada 80 fotos) y
+# encogerla a 16 px, 0,3 ms. Las fotos que no la traen (escaneos, PNG, algunas
+# ya editadas) la consiguen igual la primera vez que se genera su miniatura.
+# =============================================================================
+
+LQIP_PX = 16                # lado mayor de la version diminuta
+LQIP_QUALITY = 55
+LQIP_LISTADO_MAX = 1500     # cuantas viajan en un listado
+
+def _lqip(img):
+    """Version de 16 px en WebP, lista para incrustar en el listado."""
+    try:
+        tiny = _downscaled(img, (LQIP_PX, LQIP_PX))
+        if tiny.mode not in ("RGB", "L"):
+            tiny = tiny.convert("RGB")
+        buf = io.BytesIO()
+        tiny.save(buf, format="WEBP", quality=LQIP_QUALITY, method=6)
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception:
+        return None
+
+def _lqip_from_bytes(data):
+    """Lo mismo, a partir de la miniatura incrustada que devuelve ExifTool."""
+    if not data:
+        return None
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            return _lqip(img)
+    except Exception:
+        return None
+
 def _index_read_batch(paths):
     """Lee un lote con UNA sola llamada a ExifTool."""
     # -fast2 corta la lectura en cuanto tiene los metadatos: en un RAW o un PNG
-    # grande evita leerse el archivo entero
-    cmd = ["exiftool", "-fast2", "-json", "-n", "-q", "-q",
+    # grande evita leerse el archivo entero. -b devuelve la miniatura
+    # incrustada en base64 dentro del mismo JSON.
+    cmd = ["exiftool", "-fast2", "-json", "-n", "-q", "-q", "-b",
+           "-ThumbnailImage",
            "-GPSLatitude", "-GPSLongitude", "-DateTimeOriginal", "-SourceFile"] + paths
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
@@ -1360,7 +1439,16 @@ def _index_read_batch(paths):
             lon = float(lon) if lon is not None else None
         except (TypeError, ValueError):
             lat = lon = None
-        read[os.path.abspath(src)] = (lat, lon, _clean_date(item.get("DateTimeOriginal")))
+        crudo = item.get("ThumbnailImage") or ""
+        if crudo.startswith("base64:"):
+            try:
+                crudo = base64.b64decode(crudo[7:])
+            except Exception:
+                crudo = b""
+        else:
+            crudo = b""
+        read[os.path.abspath(src)] = (lat, lon, _clean_date(item.get("DateTimeOriginal")),
+                                      _lqip_from_bytes(crudo))
     return read
 
 def _index_scan(base):
@@ -1393,13 +1481,13 @@ def _index_scan(base):
         read = _index_read_batch(batch)
         rows = []
         for path in batch:
-            lat, lon, date = read.get(path, (None, None, ""))
+            lat, lon, date, blur = read.get(path, (None, None, "", None))
             mtime, size = current[path]
-            rows.append((path, mtime, size, lat, lon, date))
+            rows.append((path, mtime, size, lat, lon, date, blur))
         with _index_write:
             conn.executemany(
-                "INSERT OR REPLACE INTO photos (path, mtime, size, lat, lon, date) "
-                "VALUES (?, ?, ?, ?, ?, ?)", rows)
+                "INSERT OR REPLACE INTO photos (path, mtime, size, lat, lon, date, blur) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
             conn.commit()
         _index_state["done"] += len(batch)
         # Un respiro entre lotes: el repaso es de fondo y no debe comerse el
@@ -1410,6 +1498,7 @@ def _index_scan(base):
 def _index_worker(base):
     try:
         _index_scan(Path(base))
+        _blur_flush()
         _cache_sweep()
     except Exception as e:
         print("Index error:", str(e))
@@ -1441,26 +1530,58 @@ def _index_photos(base):
         (lo, hi)).fetchall()
 
 def _index_dates(folder):
-    """Fecha de metadatos de las fotos bajo una carpeta, tal como la conoce el
-    indice, con su fecha y tamano para poder comprobar que sigue al dia. Si una
-    fila guarda algo que no es una fecha se descarta y se marca para releer:
-    asi una fila envenenada no se queda para siempre."""
+    """Lo que el indice sabe de las fotos de una carpeta: la fecha de los
+    metadatos y la miniatura diminuta, con la fecha y el tamano del archivo
+    para poder comprobar que sigue al dia. Si una fila guarda algo que no es
+    una fecha se descarta y se marca para releer: asi una fila envenenada no se
+    queda para siempre."""
     out, sucias = {}, []
     try:
         lo, hi = _index_range(folder)
-        for path, mtime, size, date in _index_db().execute(
-                "SELECT path, mtime, size, date FROM photos "
-                "WHERE path >= ? AND path < ? AND date IS NOT NULL AND date != ''",
-                (lo, hi)).fetchall():
-            if _clean_date(date):
-                out[path] = (mtime, size, date)
-            else:
+        for path, mtime, size, date, blur in _index_db().execute(
+                "SELECT path, mtime, size, date, blur FROM photos "
+                "WHERE path >= ? AND path < ?", (lo, hi)).fetchall():
+            if date and not _clean_date(date):
                 sucias.append(path)
+                continue
+            out[path] = (mtime, size, date or "", blur)
     except Exception:
         pass
     for path in sucias:
         _index_stale(path)
     return out
+
+# Un commit por foto sale mas caro que generar la propia miniatura diminuta,
+# sobre todo con el pre-generado y el repaso del indice escribiendo a la vez
+# (comparten el mismo cerrojo de escritura). Se acumulan y se guardan en lotes;
+# si se pierde alguno al reiniciar no pasa nada, se vuelve a calcular.
+BLUR_BATCH = 32
+_blur_pend = []
+_blur_pend_lock = threading.Lock()
+
+def _index_set_blur(path, blur):
+    """Apunta la miniatura diminuta de una foto que no la traia incrustada."""
+    if not blur:
+        return
+    with _blur_pend_lock:
+        _blur_pend.append((blur, str(path)))
+        lleno = len(_blur_pend) >= BLUR_BATCH
+    if lleno:
+        _blur_flush()
+
+def _blur_flush():
+    with _blur_pend_lock:
+        if not _blur_pend:
+            return
+        lote = list(_blur_pend)
+        del _blur_pend[:]
+    try:
+        conn = _index_db()
+        with _index_write:
+            conn.executemany("UPDATE photos SET blur = ? WHERE path = ?", lote)
+            conn.commit()
+    except Exception:
+        pass
 
 def _index_without_gps(base):
     """Fotos que el indice sabe que NO tienen coordenadas."""
@@ -1583,8 +1704,8 @@ def _index_copy(old, new):
         conn = _index_db()
         with _index_write:
             conn.execute(
-                "INSERT OR REPLACE INTO photos (path, mtime, size, lat, lon, date) "
-                "SELECT ?, ?, ?, lat, lon, date FROM photos WHERE path = ?",
+                "INSERT OR REPLACE INTO photos (path, mtime, size, lat, lon, date, blur) "
+                "SELECT ?, ?, ?, lat, lon, date, blur FROM photos WHERE path = ?",
                 (str(new), int(st.st_mtime), st.st_size, str(old)))
             conn.commit()
     except Exception:
@@ -1796,6 +1917,7 @@ def browse():
     # La fecha que importa al filtrar y ordenar es la de la FOTO, no la del
     # archivo: una foto de 2005 copiada al NAS tiene fecha de archivo de hoy.
     # El indice ya la sabe, asi que no cuesta nada acompanarla.
+    _blur_flush()          # que lo recien generado viaje ya en este listado
     fechas = _index_dates(abs_path)
     for item in sorted(abs_path.iterdir()):
         if item.name.startswith("@") or item.name.startswith("."):
@@ -1817,6 +1939,8 @@ def browse():
                 "ext": item.suffix.lower(),
                 "mtime": mtime,
                 "date": _ui_date(fila[2]) if al_dia else "",
+                # 142 bytes que evitan un hueco gris (ver LA MINIATURA DIMINUTA)
+                "blur": (fila[3] or "") if al_dia else "",
             })
     # Las fotos mas recientes primero (por fecha de modificacion del archivo).
     files.sort(key=lambda f: f["mtime"], reverse=True)
@@ -1825,6 +1949,11 @@ def browse():
     # destino usa la misma ruta y no lo pide: alli solo se ven carpetas.
     if request.args.get("prefetch") == "1":
         _prefetch_request(abs_path, [f["name"] for f in files])
+    # Las diminutas solo de lo que se va a llegar a ver de una sentada: en una
+    # carpeta de 3.000 fotos serian 0,6 MB de listado, y para cuando se baja
+    # tanto las miniaturas de verdad ya estan hechas.
+    for f in files[LQIP_LISTADO_MAX:]:
+        f["blur"] = ""
     return jsonify({"dirs": dirs, "files": files, "current": rel})
 
 @app.route("/api/thumb")
@@ -1883,6 +2012,10 @@ def _make_thumb(abs_path, cache_file, fmt):
             return
 
     img = _fit(_open_scaled(abs_path, box), box)
+    # Ya esta descomprimida y pequena: sacar aqui la version diminuta es casi
+    # gratis, y asi tambien la tienen las fotos sin miniatura EXIF incrustada
+    # (escaneos, PNG, las que salen de editar).
+    _index_set_blur(abs_path, _lqip(img))
     buf = io.BytesIO()
     if fmt == "WEBP":
         img.save(buf, format="WEBP", quality=82, method=4)

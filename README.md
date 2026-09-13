@@ -217,6 +217,57 @@ regenerables: no se pierde nada, la siguiente vez se vuelven a hacer. El
 repaso va en segundo plano, como mucho cada media hora, y recorrer 2.000
 ficheros de cache cuesta 0,01 s.
 
+### La miniatura diminuta (el truco de Google Photos)
+
+Google Photos no va rapido solo porque sus miniaturas vuelen: va rapido porque
+**nunca ensena un hueco gris**. Dentro del propio listado manda una version
+minuscula de cada foto, que el navegador pinta borrosa al instante, y encima de
+ella va apareciendo la miniatura de verdad. La rejilla esta llena desde el
+primer fotograma aunque las miniaturas tarden.
+
+Aqui sale practicamente gratis, porque casi todas las fotos de camara o de
+movil llevan YA una miniatura de 160x120 incrustada en su EXIF y el repaso del
+indice recorre todos los archivos con ExifTool de todas formas:
+
+- pedirla en la misma llamada cuesta un 5% mas (0,208 s -> 0,218 s por cada 80
+  fotos) y no cambia ningun otro valor que se lea;
+- encogerla a 16 px en WebP son **142 bytes** (200 en base64) y 0,16 ms;
+- se guarda en el indice, en una columna nueva. Las bases de datos anteriores
+  se migran solas al arrancar y no pierden nada.
+
+En el listado viajan solo las de las primeras 1.500 fotos: en una carpeta de
+3.000 serian 0,6 MB, y para cuando se baja tanto las miniaturas de verdad ya
+estan hechas. Una foto que no traiga miniatura incrustada (escaneos, PNG, ya
+editadas) consigue la suya la primera vez que se genera su miniatura normal,
+asi que a la segunda visita la carpeta ya esta completa.
+
+| Carpeta de 80 fotos de camara | Antes | Ahora |
+|---|---|---|
+| Listado | 0,003 s (8 KB) | 0,003 s (24 KB) |
+| La rejilla deja de estar gris | al llegar las miniaturas | **0,003 s** |
+| Primera pantalla ya nitida | 0,28 s | 0,26 s |
+
+### Cuantas fotos descomprimir a la vez
+
+El tope de decodificaciones simultaneas (lo que acota la memoria) estaba en "un
+nucleo menos", con la idea de que la interfaz siguiera respondiendo. Medido en
+el NAS de 4 nucleos, con 12 miniaturas de 40 MB / 8 vistas previas a la vez /
+pico de memoria:
+
+| Turnos | 12 miniaturas | 8 vistas previas | Pico |
+|---|---|---|---|
+| 2 | 2,27 s | 3,17 s | 214 MB |
+| 3 | 1,67 s | 2,52 s | 290 MB |
+| **4** (uno por nucleo) | **1,18 s** | **1,67 s** | 383 MB |
+| 6 | 1,32 s | 2,08 s | 360 MB |
+
+Dejar un nucleo libre solo era mas lento, y repartir de mas tambien. A quien
+hay que apartar del camino no es a las peticiones del usuario sino al trabajo
+de fondo, y de eso se encarga la espera de silencio: el pre-generado no toca
+nada hasta que el usuario lleva medio segundo sin pedir. Con eso, abrir una
+carpeta es MAS rapido que antes de todos estos cambios (1,18 s frente a 1,31 s)
+y el pico de memoria sigue siendo 8 veces menor.
+
 ### Lo que se probo y NO se quedo
 
 - **Una segunda base de datos.** Ya hay una (el indice SQLite, con WAL y
@@ -228,9 +279,13 @@ ficheros de cache cuesta 0,01 s.
 - **Un servidor de produccion (waitress) en vez del de Flask.** Medido con 8
   clientes pidiendo 300 miniaturas cacheadas: 310 peticiones/s con el actual
   frente a 320 con waitress. No compensa anadir una dependencia por eso.
-- **Usar la miniatura EXIF incrustada en el JPEG** para saltarse la
-  descompresion. Suele ser de 160x120 y la galeria pinta a 300 px (el doble en
-  pantallas retina): se veria borrosa.
+- **Usar la miniatura EXIF incrustada en el JPEG como miniatura de la
+  galeria**, para saltarse la descompresion. Suele ser de 160x120 y la galeria
+  pinta a 300 px (el doble en pantallas retina): se veria borrosa. Para una
+  version de 16 px, en cambio, es perfecta: es de donde sale la diminuta.
+- **Un commit por foto** al guardar las diminutas. Salia mas caro que generar
+  la propia miniatura, porque el repaso del indice comparte el cerrojo de
+  escritura. Se guardan de 32 en 32.
 - **Bajar `optimize` al guardar en JPEG.** Parecia costar 2,5 s, pero esa
   medida estaba hecha sobre ruido sintetico. En una foto de verdad son 0,17 s y
   ahorran un 16% de tamano: compensa, se queda como estaba.
