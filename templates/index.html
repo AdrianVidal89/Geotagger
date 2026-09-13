@@ -293,7 +293,20 @@ header .spacer{flex:1}
   contain-intrinsic-size:auto 160px;
 }
 
-/* skeleton shimmer */
+/* La foto de 16px que viaja dentro del listado: se pinta al instante, sin
+   pedir nada al servidor, y debajo de la miniatura de verdad. Ampliada a
+   tamaño de tarjeta se ve como una mancha de color, que es justo lo que hace
+   que la rejilla parezca llena desde el primer momento en vez de gris.
+   El scale() esconde el borde blando que deja el desenfoque. */
+.fc-blur{
+  position:absolute;inset:0;
+  background-size:cover;background-position:center;
+  filter:blur(8px);transform:scale(1.12);
+  transition:opacity .35s;
+}
+.fc img.ready~.fc-blur{opacity:0}
+
+/* skeleton shimmer: solo para las fotos de las que aún no hay ni el 16px */
 .fc-skeleton{
   position:absolute;inset:0;
   background:linear-gradient(90deg,#f0f0f0 25%,#e8e8e8 50%,#f0f0f0 75%);
@@ -1699,6 +1712,7 @@ function _startLoad(card, src) {
   activeLoads++;
   const img = card.querySelector("img");
   const skeleton = card.querySelector(".fc-skeleton");
+  const blur = card.querySelector(".fc-blur");
   const fallback = card.querySelector(".fc-icon");
 
   const probe = new Image();
@@ -1715,6 +1729,7 @@ function _startLoad(card, src) {
   probe.onerror = () => {
     if (img) img.style.display = "none";
     if (skeleton) skeleton.style.display = "none";
+    if (blur) blur.style.display = "none";
     if (fallback) fallback.classList.add("show");
     activeLoads--;
     _drainQueue();
@@ -1797,7 +1812,11 @@ async function navigate(path, opts) {
   const c = document.getElementById("content");
   c.innerHTML = '<div class="empty-state"><div class="spinner"></div><p style="margin-top:12px">Cargando...</p></div>';
   try {
-    const res = await fetch("/api/browse?path=" + encodeURIComponent(path));
+    // prefetch=1: avisa al servidor de que estas fotos se van a ENSEÑAR, para
+    // que vaya dejando hechas las miniaturas que falten mientras se mira la
+    // primera pantalla. Sin esto, cada foto grande cuesta su descompresión la
+    // primera vez que aparece.
+    const res = await fetch("/api/browse?prefetch=1&path=" + encodeURIComponent(path));
     const data = await res.json();
     renderBreadcrumb(path);
     renderSidebar(data.dirs, path);
@@ -1881,9 +1900,14 @@ function makeCard(f, i) {
   card.dataset.src = bust("/api/thumb?path=" + encodeURIComponent(f.path), f.path);
   const isRaw = RAW_EXTS.includes(f.ext);
   const folderHtml = f.folder && f.folder !== "." ? '<br><small style="opacity:.7">' + f.folder + '</small>' : '';
+  // Con la miniatura de 16px la tarjeta nace con la foto (borrosa) dentro; el
+  // shimmer gris queda solo para las que aún no están indexadas.
+  const fondo = f.blur
+    ? '<div class="fc-blur" style="background-image:url(data:image/webp;base64,' + f.blur + ')"></div>'
+    : '<div class="fc-skeleton"></div>';
   card.innerHTML =
     '<img alt="' + f.name + '" decoding="async">' +
-    '<div class="fc-skeleton"></div>' +
+    fondo +
     '<div class="fc-icon">' + (isRaw ? makeRawIcon() : makeImgIcon()) + '</div>' +
     '<div class="fc-overlay"><div class="fc-check"></div></div>' +
     '<div class="fc-name">' + f.name + folderHtml + '</div>';

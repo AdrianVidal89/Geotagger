@@ -122,6 +122,174 @@ Medido sobre una carpeta de 2.700 fotos:
 | Renombrar 20 fotos por EXIF | 39 s | 0,01 s |
 | Filtro Sin GPS | minutos | 0,01 s |
 
+## Fotos grandes (25-40 MB): memoria y fluidez
+
+Con fotos normales todo iba bien, pero al abrir una carpeta de JPEG de 25-40 MB
+(48 Mpx) la app se comia la RAM del NAS y el visor se arrastraba. La foto no
+tenia nada de malo: el problema era que se descomprimia ENTERA una y otra vez
+para cosas que no necesitan esa resolucion. Un JPEG de 48 Mpx ocupa 144 MB por
+copia en memoria y casi un segundo solo en abrirse, y la app llegaba a tener
+varias copias vivas a la vez.
+
+- **La vista previa se giraba ANTES de reducirla.** Aplicar la orientacion EXIF
+  obliga a descomprimir la foto entera y ademas deja otra copia girada: 384 MB
+  para acabar generando una imagen de 2048 px. Reduciendo primero y girando
+  despues el resultado es el mismo (el recuadro es cuadrado, y esta comprobado
+  con las ocho orientaciones EXIF) y baja a 99 MB.
+- **No se le pedia al decodificador que entregara menos.** JPEG sabe
+  descomprimir a 1/2, 1/4 u 1/8 casi gratis (`draft`), que es de sobra para una
+  miniatura o una vista previa. Ahora se pide siempre.
+- **El editor descomprimia la foto entera para leer dos numeros.** Al pulsar
+  "Editar" se pedia el tamano real: 1,7 s y 380 MB cada vez. El ancho y el alto
+  estan en la cabecera del archivo; ahora es instantaneo.
+- **Nada limitaba cuantas fotos se abrian a la vez.** Flask atiende cada
+  peticion en su propio hilo, asi que ocho previsualizaciones simultaneas eran
+  ocho descompresiones simultaneas: 2,7 GB de pico en un NAS que tiene 3,7 GB.
+  Ahora hay un tope (los nucleos menos uno) y el techo de memoria es
+  predecible. Ademas, si dos peticiones piden la misma foto a la vez, se genera
+  una sola vez y la segunda aprovecha la cache.
+- **La memoria liberada no volvia al sistema.** El asignador de C guarda una
+  reserva por hilo, asi que el contenedor se quedaba "ocupando" cientos de MB
+  que ya no usaba. Ahora se devuelve al terminar cada foto
+  (`MALLOC_ARENA_MAX=2` en el Dockerfile y `malloc_trim`).
+- **Enfocar mantenia seis copias de la foto vivas a la vez.** El desenfoque,
+  las dos mascaras y los resultados intermedios encadenados en una sola linea
+  seguian todos en memoria. Soltandolos en cuanto sobran caben cuatro donde
+  antes seis, y el resultado es identico al pixel.
+- **El ZIP de una descarga se armaba en memoria.** Cuatro fotos eran 155 MB
+  retenidos hasta que el navegador terminara de bajarlo. Ahora se monta en
+  disco y se sirve segun se descarga: 43 MB de memoria para el mismo ZIP.
+- Los archivos de cache se escriben ahora de una sola vez (a un temporal y
+  luego rename), para que otra peticion no pueda encontrarse uno a medias.
+
+Medido con un JPEG de 8000x6000 (38 MB) en una maquina de 4 nucleos:
+
+| Operacion | Antes | Ahora |
+|---|---|---|
+| Abrir la foto en el visor | 1,48 s / 419 MB | 0,82 s / 130 MB |
+| Ocho fotos a la vez (galeria) | 5,06 s / 2.983 MB | 2,43 s / 294 MB |
+| Pulsar "Editar" (tamano real) | 0,71 s / 416 MB | 0,00 s / 49 MB |
+| Sugerir ajustes (auto niveles) | 0,84 s / 416 MB | 0,37 s / 54 MB |
+| Guardar una edicion | 6,05 s / 1.148 MB | 5,16 s / 965 MB |
+| Descargar 4 fotos en ZIP | 155 MB en memoria | 43 MB |
+
+Guardar una edicion sigue costando lo que cuesta: ahi SI hace falta la foto
+entera, porque es lo que se va a escribir en el disco.
+
+### Miniaturas por adelantado
+
+Arreglado lo anterior, abrir una carpeta POR PRIMERA VEZ seguia siendo lento, y
+por un motivo que no tiene arreglo: descomprimir un JPEG de 40 MB cuesta 0,35 s
+y no se puede bajar. No es cuestion de resolucion -pedir 1/8 tarda lo mismo que
+pedir 1/4, porque el grueso es recorrer los 40 MB de datos comprimidos- ni de
+disco (leer el archivo son 0,025 s). Sesenta fotos asi son ocho segundos
+mirando huecos grises. La segunda vez son 0,1 s, porque ya estan en la cache.
+
+Asi que lo que se ha quitado no es el coste, es la espera: al listar una
+carpeta, unos hilos de fondo van generando las miniaturas que falten en el
+MISMO ORDEN en que se ven. Mientras se mira la primera pantalla, el resto se
+va haciendo solo. Para no estorbar en un NAS que comparte sitio con otros
+contenedores:
+
+- se dejan siempre menos hilos de fondo que turnos de decodificacion, asi que
+  al usuario nunca le toca esperar a que se libere una plaza;
+- el fondo se aparta en cuanto hay una peticion del usuario en marcha;
+- se para en seco al cambiar de carpeta, y no pasa de 600 fotos;
+- solo lo pide la galeria (`prefetch=1`), no el selector de carpeta de destino,
+  que solo ensena carpetas.
+
+| Carpeta de 60 fotos de 38 MB | Antes | Ahora |
+|---|---|---|
+| Abrirla y bajar hasta el final | 7,7 s | 0,1 s |
+| `/api/browse` (responde y sigue) | 0,002 s | 0,002 s |
+| Una miniatura suelta con el fondo trabajando | — | 0,36 s |
+
+### Tope de la cache
+
+Las miniaturas son pequenas (unos 8 KB) pero las vistas previas no (de 50 KB a
+casi 1 MB), y hasta ahora nada las borraba nunca: solo se tiraban las de una
+foto cuando esa foto cambiaba. Una biblioteca grande vista foto a foto podia
+dejar varios GB en el volumen del NAS creciendo para siempre.
+
+Ahora hay un tope (`THUMB_CACHE_MAX_MB`, por defecto 1024; con 0 se desactiva).
+Al pasarse se tiran las menos usadas hasta bajar al 85%. Son ficheros
+regenerables: no se pierde nada, la siguiente vez se vuelven a hacer. El
+repaso va en segundo plano, como mucho cada media hora, y recorrer 2.000
+ficheros de cache cuesta 0,01 s.
+
+### La miniatura diminuta (el truco de Google Photos)
+
+Google Photos no va rapido solo porque sus miniaturas vuelen: va rapido porque
+**nunca ensena un hueco gris**. Dentro del propio listado manda una version
+minuscula de cada foto, que el navegador pinta borrosa al instante, y encima de
+ella va apareciendo la miniatura de verdad. La rejilla esta llena desde el
+primer fotograma aunque las miniaturas tarden.
+
+Aqui sale practicamente gratis, porque casi todas las fotos de camara o de
+movil llevan YA una miniatura de 160x120 incrustada en su EXIF y el repaso del
+indice recorre todos los archivos con ExifTool de todas formas:
+
+- pedirla en la misma llamada cuesta un 5% mas (0,208 s -> 0,218 s por cada 80
+  fotos) y no cambia ningun otro valor que se lea;
+- encogerla a 16 px en WebP son **142 bytes** (200 en base64) y 0,16 ms;
+- se guarda en el indice, en una columna nueva. Las bases de datos anteriores
+  se migran solas al arrancar y no pierden nada.
+
+En el listado viajan solo las de las primeras 1.500 fotos: en una carpeta de
+3.000 serian 0,6 MB, y para cuando se baja tanto las miniaturas de verdad ya
+estan hechas. Una foto que no traiga miniatura incrustada (escaneos, PNG, ya
+editadas) consigue la suya la primera vez que se genera su miniatura normal,
+asi que a la segunda visita la carpeta ya esta completa.
+
+| Carpeta de 80 fotos de camara | Antes | Ahora |
+|---|---|---|
+| Listado | 0,003 s (8 KB) | 0,003 s (24 KB) |
+| La rejilla deja de estar gris | al llegar las miniaturas | **0,003 s** |
+| Primera pantalla ya nitida | 0,28 s | 0,26 s |
+
+### Cuantas fotos descomprimir a la vez
+
+El tope de decodificaciones simultaneas (lo que acota la memoria) estaba en "un
+nucleo menos", con la idea de que la interfaz siguiera respondiendo. Medido en
+el NAS de 4 nucleos, con 12 miniaturas de 40 MB / 8 vistas previas a la vez /
+pico de memoria:
+
+| Turnos | 12 miniaturas | 8 vistas previas | Pico |
+|---|---|---|---|
+| 2 | 2,27 s | 3,17 s | 214 MB |
+| 3 | 1,67 s | 2,52 s | 290 MB |
+| **4** (uno por nucleo) | **1,18 s** | **1,67 s** | 383 MB |
+| 6 | 1,32 s | 2,08 s | 360 MB |
+
+Dejar un nucleo libre solo era mas lento, y repartir de mas tambien. A quien
+hay que apartar del camino no es a las peticiones del usuario sino al trabajo
+de fondo, y de eso se encarga la espera de silencio: el pre-generado no toca
+nada hasta que el usuario lleva medio segundo sin pedir. Con eso, abrir una
+carpeta es MAS rapido que antes de todos estos cambios (1,18 s frente a 1,31 s)
+y el pico de memoria sigue siendo 8 veces menor.
+
+### Lo que se probo y NO se quedo
+
+- **Una segunda base de datos.** Ya hay una (el indice SQLite, con WAL y
+  `synchronous=NORMAL`) y hace su trabajo: listar 3.000 fotos son 0,05 s y el
+  mapa 0,00 s. Una base de datos no puede aliviar la RAM de esta app, porque la
+  RAM no se va en datos sino en PIXELES descomprimidos. Guardar ademas las
+  miniaturas como blobs dentro de SQLite seria peor: servir un fichero con
+  `send_file` no pasa por memoria, y leer un blob si.
+- **Un servidor de produccion (waitress) en vez del de Flask.** Medido con 8
+  clientes pidiendo 300 miniaturas cacheadas: 310 peticiones/s con el actual
+  frente a 320 con waitress. No compensa anadir una dependencia por eso.
+- **Usar la miniatura EXIF incrustada en el JPEG como miniatura de la
+  galeria**, para saltarse la descompresion. Suele ser de 160x120 y la galeria
+  pinta a 300 px (el doble en pantallas retina): se veria borrosa. Para una
+  version de 16 px, en cambio, es perfecta: es de donde sale la diminuta.
+- **Un commit por foto** al guardar las diminutas. Salia mas caro que generar
+  la propia miniatura, porque el repaso del indice comparte el cerrojo de
+  escritura. Se guardan de 32 en 32.
+- **Bajar `optimize` al guardar en JPEG.** Parecia costar 2,5 s, pero esa
+  medida estaba hecha sobre ruido sintetico. En una foto de verdad son 0,17 s y
+  ahorran un 16% de tamano: compensa, se queda como estaba.
+
 ## Filtros de fecha
 
 Los filtros **Desde** y **Hasta** (y el orden) van por la fecha de los
