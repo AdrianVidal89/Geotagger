@@ -176,6 +176,65 @@ Medido con un JPEG de 8000x6000 (38 MB) en una maquina de 4 nucleos:
 Guardar una edicion sigue costando lo que cuesta: ahi SI hace falta la foto
 entera, porque es lo que se va a escribir en el disco.
 
+### Miniaturas por adelantado
+
+Arreglado lo anterior, abrir una carpeta POR PRIMERA VEZ seguia siendo lento, y
+por un motivo que no tiene arreglo: descomprimir un JPEG de 40 MB cuesta 0,35 s
+y no se puede bajar. No es cuestion de resolucion -pedir 1/8 tarda lo mismo que
+pedir 1/4, porque el grueso es recorrer los 40 MB de datos comprimidos- ni de
+disco (leer el archivo son 0,025 s). Sesenta fotos asi son ocho segundos
+mirando huecos grises. La segunda vez son 0,1 s, porque ya estan en la cache.
+
+Asi que lo que se ha quitado no es el coste, es la espera: al listar una
+carpeta, unos hilos de fondo van generando las miniaturas que falten en el
+MISMO ORDEN en que se ven. Mientras se mira la primera pantalla, el resto se
+va haciendo solo. Para no estorbar en un NAS que comparte sitio con otros
+contenedores:
+
+- se dejan siempre menos hilos de fondo que turnos de decodificacion, asi que
+  al usuario nunca le toca esperar a que se libere una plaza;
+- el fondo se aparta en cuanto hay una peticion del usuario en marcha;
+- se para en seco al cambiar de carpeta, y no pasa de 600 fotos;
+- solo lo pide la galeria (`prefetch=1`), no el selector de carpeta de destino,
+  que solo ensena carpetas.
+
+| Carpeta de 60 fotos de 38 MB | Antes | Ahora |
+|---|---|---|
+| Abrirla y bajar hasta el final | 7,7 s | 0,1 s |
+| `/api/browse` (responde y sigue) | 0,002 s | 0,002 s |
+| Una miniatura suelta con el fondo trabajando | — | 0,36 s |
+
+### Tope de la cache
+
+Las miniaturas son pequenas (unos 8 KB) pero las vistas previas no (de 50 KB a
+casi 1 MB), y hasta ahora nada las borraba nunca: solo se tiraban las de una
+foto cuando esa foto cambiaba. Una biblioteca grande vista foto a foto podia
+dejar varios GB en el volumen del NAS creciendo para siempre.
+
+Ahora hay un tope (`THUMB_CACHE_MAX_MB`, por defecto 1024; con 0 se desactiva).
+Al pasarse se tiran las menos usadas hasta bajar al 85%. Son ficheros
+regenerables: no se pierde nada, la siguiente vez se vuelven a hacer. El
+repaso va en segundo plano, como mucho cada media hora, y recorrer 2.000
+ficheros de cache cuesta 0,01 s.
+
+### Lo que se probo y NO se quedo
+
+- **Una segunda base de datos.** Ya hay una (el indice SQLite, con WAL y
+  `synchronous=NORMAL`) y hace su trabajo: listar 3.000 fotos son 0,05 s y el
+  mapa 0,00 s. Una base de datos no puede aliviar la RAM de esta app, porque la
+  RAM no se va en datos sino en PIXELES descomprimidos. Guardar ademas las
+  miniaturas como blobs dentro de SQLite seria peor: servir un fichero con
+  `send_file` no pasa por memoria, y leer un blob si.
+- **Un servidor de produccion (waitress) en vez del de Flask.** Medido con 8
+  clientes pidiendo 300 miniaturas cacheadas: 310 peticiones/s con el actual
+  frente a 320 con waitress. No compensa anadir una dependencia por eso.
+- **Usar la miniatura EXIF incrustada en el JPEG** para saltarse la
+  descompresion. Suele ser de 160x120 y la galeria pinta a 300 px (el doble en
+  pantallas retina): se veria borrosa.
+- **Bajar `optimize` al guardar en JPEG.** Parecia costar 2,5 s, pero esa
+  medida estaba hecha sobre ruido sintetico. En una foto de verdad son 0,17 s y
+  ahorran un 16% de tamano: compensa, se queda como estaba.
+
 ## Filtros de fecha
 
 Los filtros **Desde** y **Hasta** (y el orden) van por la fecha de los

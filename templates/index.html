@@ -1797,7 +1797,11 @@ async function navigate(path, opts) {
   const c = document.getElementById("content");
   c.innerHTML = '<div class="empty-state"><div class="spinner"></div><p style="margin-top:12px">Cargando...</p></div>';
   try {
-    const res = await fetch("/api/browse?path=" + encodeURIComponent(path));
+    // prefetch=1: avisa al servidor de que estas fotos se van a ENSEÑAR, para
+    // que vaya dejando hechas las miniaturas que falten mientras se mira la
+    // primera pantalla. Sin esto, cada foto grande cuesta su descompresión la
+    // primera vez que aparece.
+    const res = await fetch("/api/browse?prefetch=1&path=" + encodeURIComponent(path));
     const data = await res.json();
     renderBreadcrumb(path);
     renderSidebar(data.dirs, path);

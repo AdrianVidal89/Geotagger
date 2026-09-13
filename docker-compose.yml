@@ -21,6 +21,10 @@ services:
       # Cuenta desde la que se envian los reportes por email (opcional).
       # SMTP_USER: tu@gmail.com
       # SMTP_PASS: contrasena-de-aplicacion
+      # Tope de la cache de miniaturas y vistas previas, en MB (opcional).
+      # Son ficheros regenerables: al pasarse se tiran los menos usados. Por
+      # defecto 1024; con 0 se desactiva el tope y crece sin limite.
+      # THUMB_CACHE_MAX_MB: 1024
     volumes:
       # El share del NAS montado en la MISMA ruta dentro y fuera. En QNAP las
       # carpetas de /share son symlinks a /share/CACHEDEV1_DATA/..., y solo

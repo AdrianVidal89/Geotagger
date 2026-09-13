@@ -442,6 +442,25 @@ def _decode_slot():
         finally:
             _release_memory()
 
+# Peticiones del usuario que estan esperando turno o descomprimiendo. El
+# pre-generado de fondo mira este numero para apartarse: el que esta mirando la
+# pantalla va primero, siempre.
+_user_decodes = 0
+_user_guard = threading.Lock()
+
+@contextmanager
+def _user_decode():
+    """Turno de decodificacion para una peticion del usuario."""
+    global _user_decodes
+    with _user_guard:
+        _user_decodes += 1
+    try:
+        with _decode_slot():
+            yield
+    finally:
+        with _user_guard:
+            _user_decodes -= 1
+
 # Una sola generacion por archivo de cache: si dos peticiones piden a la vez la
 # misma vista previa (el visor y la miniatura, o dos pestanas), la segunda
 # espera a la primera y se lleva la cache ya hecha en lugar de descomprimir la
@@ -530,6 +549,145 @@ def _cache_store(cache_file, data):
         except Exception:
             pass
         raise
+
+# =============================================================================
+# MINIATURAS POR ADELANTADO
+# Abrir una carpeta POR PRIMERA VEZ es lo unico que seguia costando: cada
+# miniatura obliga a descomprimir la foto, y en un JPEG de 40 MB son 0,35 s que
+# no hay forma de bajar. No es cuestion de resolucion -pedir 1/8 no es mas
+# rapido que pedir 1/4, porque el grueso es descomprimir los 40 MB de datos-,
+# asi que sesenta fotos de esas son ocho segundos mirando huecos grises.
+#
+# Lo que si se puede es que no espere nadie: al listar una carpeta, un hilo de
+# fondo va generando las miniaturas que falten EN EL MISMO ORDEN en que se ven.
+# Cuando el usuario baja, ya estan hechas (de 134 ms a 1,8 ms por foto).
+# Reglas para no estorbar en un NAS que comparte sitio con otros contenedores:
+#   - un solo hilo, y solo de la carpeta que se esta mirando;
+#   - se aparta mientras haya peticiones del usuario en marcha;
+#   - se para en seco en cuanto se abre otra carpeta;
+#   - se rinde tras un tope de fotos: lo que el usuario ve al bajar un rato.
+# =============================================================================
+
+PREFETCH_MAX = 600          # fotos por carpeta
+PREFETCH_PAUSA = 0.15       # espera mientras el usuario tiene algo en marcha
+# Siempre UN turno menos de los que hay: asi, por mucho que el fondo trabaje,
+# al usuario nunca le toca esperar a que se libere una plaza.
+PREFETCH_WORKERS = max(1, DECODE_SLOTS - 1)
+
+_prefetch_gen = 0
+_prefetch_guard = threading.Lock()
+
+def _prefetch_request(folder, names):
+    """Arranca el pre-generado de una carpeta y cancela el de la anterior."""
+    global _prefetch_gen
+    if not names:
+        return
+    with _prefetch_guard:
+        _prefetch_gen += 1
+        gen = _prefetch_gen
+    names = names[:PREFETCH_MAX]
+    # Repartidas de forma intercalada: entre todos los hilos, la lista avanza
+    # en orden, que es como se van a ir viendo al bajar.
+    for i in range(min(PREFETCH_WORKERS, len(names))):
+        threading.Thread(target=_prefetch_worker,
+                         args=(Path(folder), names[i::PREFETCH_WORKERS], gen),
+                         daemon=True).start()
+
+def _prefetch_vigente(gen):
+    return _prefetch_gen == gen
+
+def _prefetch_worker(folder, names, gen):
+    hechas = 0
+    for name in names:
+        if not _prefetch_vigente(gen):
+            return
+        # El usuario primero: si tiene algo esperando turno, apartarse
+        while _user_decodes:
+            if not _prefetch_vigente(gen):
+                return
+            time.sleep(PREFETCH_PAUSA)
+        path = folder / name
+        # WEBP es lo que pide cualquier navegador desde 2020, y es la unica
+        # version que vale la pena adelantar: adelantar las dos seria el doble
+        # de trabajo para que sobre la mitad.
+        cache_file = _thumb_cache_path(path, "WEBP")
+        if cache_file.exists():
+            continue
+        try:
+            with _render_once(str(cache_file)):
+                if not cache_file.exists():
+                    with _decode_slot():
+                        _make_thumb(path, cache_file, "WEBP")
+                    hechas += 1
+        except Exception:
+            pass            # una foto rota no puede parar el resto
+    if hechas and _prefetch_vigente(gen):
+        _cache_sweep()
+
+# =============================================================================
+# TOPE DE LA CACHE EN DISCO
+# Las miniaturas son pequenas (unos 8 KB) pero las vistas previas no (de 50 KB
+# a casi 1 MB cada una), y hasta ahora nada las borraba nunca: solo se tiraban
+# las de una foto cuando esa foto cambiaba. Una biblioteca grande vista foto a
+# foto puede dejar varios GB en el volumen del NAS creciendo para siempre.
+# Al pasarse del tope se tiran las MENOS USADAS hasta bajar al 85%; son
+# ficheros regenerables, no se pierde nada.
+# =============================================================================
+
+def _cache_limite_bytes():
+    try:
+        mb = int(os.environ.get("THUMB_CACHE_MAX_MB", "1024"))
+    except ValueError:
+        mb = 1024
+    return max(0, mb) * 1024 * 1024      # 0 = sin tope
+
+CACHE_SWEEP_GAP = 1800      # segundos entre repasos, como poco
+_cache_sweep_at = 0
+# Recorrer la cache entera son miles de stat(): que no lo hagan dos hilos a la
+# vez (el pre-generado lanza varios y el indice tambien lo pide al terminar).
+_cache_sweep_lock = threading.Lock()
+
+def _cache_sweep():
+    """Recorta la cache si se paso del tope. Solo mira tamanos y fechas."""
+    global _cache_sweep_at
+    limite = _cache_limite_bytes()
+    if limite <= 0:
+        return
+    if time.time() - _cache_sweep_at < CACHE_SWEEP_GAP:
+        return
+    if not _cache_sweep_lock.acquire(blocking=False):
+        return
+    try:
+        _cache_sweep_at = time.time()
+        ficheros, total = [], 0
+        for dirpath, _, names in os.walk(THUMB_CACHE_DIR):
+            for n in names:
+                f = os.path.join(dirpath, n)
+                try:
+                    st = os.stat(f)
+                except OSError:
+                    continue
+                total += st.st_size
+                # atime donde el sistema lo actualiza, mtime donde no: para una
+                # cache las dos fechas sirven para saber que sobra antes
+                ficheros.append((max(st.st_atime, st.st_mtime), st.st_size, f))
+        if total <= limite:
+            return
+        objetivo = limite * 0.85
+        ficheros.sort()                  # las mas antiguas primero
+        for _, size, f in ficheros:
+            if total <= objetivo:
+                break
+            try:
+                os.unlink(f)
+                total -= size
+            except OSError:
+                pass
+        print("Cache de miniaturas recortada a %.0f MB" % (total / 1024 / 1024))
+    except Exception as e:
+        print("Cache sweep error:", str(e))
+    finally:
+        _cache_sweep_lock.release()
 
 def _has_gps_fast(path):
     """Lee (sin modificar) si el archivo ya tiene coordenadas GPS."""
@@ -1252,6 +1410,7 @@ def _index_scan(base):
 def _index_worker(base):
     try:
         _index_scan(Path(base))
+        _cache_sweep()
     except Exception as e:
         print("Index error:", str(e))
     finally:
@@ -1661,6 +1820,11 @@ def browse():
             })
     # Las fotos mas recientes primero (por fecha de modificacion del archivo).
     files.sort(key=lambda f: f["mtime"], reverse=True)
+    # La galeria avisa de que va a ENSENAR estas fotos, asi que sus miniaturas
+    # se van haciendo de fondo en este mismo orden. El selector de carpeta de
+    # destino usa la misma ruta y no lo pide: alli solo se ven carpetas.
+    if request.args.get("prefetch") == "1":
+        _prefetch_request(abs_path, [f["name"] for f in files])
     return jsonify({"dirs": dirs, "files": files, "current": rel})
 
 @app.route("/api/thumb")
@@ -1692,7 +1856,7 @@ def thumb():
         with _render_once(str(cache_file)):
             if cache_file.exists():     # la genero otro hilo mientras esperabamos
                 return _cached_image_response(cache_file, mime)
-            with _decode_slot():
+            with _user_decode():
                 _make_thumb(abs_path, cache_file, fmt)
         return _cached_image_response(cache_file, mime)
     except Exception as e:
@@ -1805,7 +1969,7 @@ def preview():
         with _render_once(str(cache_file)):
             if cache_file.exists():     # la genero otro hilo mientras esperabamos
                 return _cached_image_response(cache_file, mime)
-            with _decode_slot():
+            with _user_decode():
                 _make_preview(abs_path, cache_file, fmt)
         return _cached_image_response(cache_file, mime)
     except Exception as e:
@@ -2155,7 +2319,7 @@ def auto_levels():
     try:
         # El histograma se mira sobre una version pequena, asi que la foto se
         # abre ya reducida en vez de descomprimirla entera para tirarla.
-        with _decode_slot():
+        with _user_decode():
             img = _open_for_edit(abs_path, (512, 512))
             return jsonify(_auto_levels(img))
     except Exception as e:
@@ -2217,7 +2381,7 @@ def edit_image():
     # va a guardar), por eso pasa por el turno: dos ediciones simultaneas de
     # fotos grandes se comen la memoria del contenedor.
     try:
-        with _decode_slot():
+        with _user_decode():
             img = _open_for_edit(abs_path)
             if rotate == "90":
                 img = img.transpose(Image.ROTATE_270)
@@ -2408,7 +2572,7 @@ def auto_edit_files():
             errors.append({"file": path.name, "error": "formato no soportado"})
             continue
         try:
-            with _decode_slot():
+            with _user_decode():
                 img = _open_for_edit(path)
                 adj = _auto_levels(_downscaled(img, (512, 512)))
                 img = _apply_sharpen(img, sharpen)
