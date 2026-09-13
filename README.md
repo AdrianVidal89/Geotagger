@@ -122,6 +122,60 @@ Medido sobre una carpeta de 2.700 fotos:
 | Renombrar 20 fotos por EXIF | 39 s | 0,01 s |
 | Filtro Sin GPS | minutos | 0,01 s |
 
+## Fotos grandes (25-40 MB): memoria y fluidez
+
+Con fotos normales todo iba bien, pero al abrir una carpeta de JPEG de 25-40 MB
+(48 Mpx) la app se comia la RAM del NAS y el visor se arrastraba. La foto no
+tenia nada de malo: el problema era que se descomprimia ENTERA una y otra vez
+para cosas que no necesitan esa resolucion. Un JPEG de 48 Mpx ocupa 144 MB por
+copia en memoria y casi un segundo solo en abrirse, y la app llegaba a tener
+varias copias vivas a la vez.
+
+- **La vista previa se giraba ANTES de reducirla.** Aplicar la orientacion EXIF
+  obliga a descomprimir la foto entera y ademas deja otra copia girada: 384 MB
+  para acabar generando una imagen de 2048 px. Reduciendo primero y girando
+  despues el resultado es el mismo (el recuadro es cuadrado, y esta comprobado
+  con las ocho orientaciones EXIF) y baja a 99 MB.
+- **No se le pedia al decodificador que entregara menos.** JPEG sabe
+  descomprimir a 1/2, 1/4 u 1/8 casi gratis (`draft`), que es de sobra para una
+  miniatura o una vista previa. Ahora se pide siempre.
+- **El editor descomprimia la foto entera para leer dos numeros.** Al pulsar
+  "Editar" se pedia el tamano real: 1,7 s y 380 MB cada vez. El ancho y el alto
+  estan en la cabecera del archivo; ahora es instantaneo.
+- **Nada limitaba cuantas fotos se abrian a la vez.** Flask atiende cada
+  peticion en su propio hilo, asi que ocho previsualizaciones simultaneas eran
+  ocho descompresiones simultaneas: 2,7 GB de pico en un NAS que tiene 3,7 GB.
+  Ahora hay un tope (los nucleos menos uno) y el techo de memoria es
+  predecible. Ademas, si dos peticiones piden la misma foto a la vez, se genera
+  una sola vez y la segunda aprovecha la cache.
+- **La memoria liberada no volvia al sistema.** El asignador de C guarda una
+  reserva por hilo, asi que el contenedor se quedaba "ocupando" cientos de MB
+  que ya no usaba. Ahora se devuelve al terminar cada foto
+  (`MALLOC_ARENA_MAX=2` en el Dockerfile y `malloc_trim`).
+- **Enfocar mantenia seis copias de la foto vivas a la vez.** El desenfoque,
+  las dos mascaras y los resultados intermedios encadenados en una sola linea
+  seguian todos en memoria. Soltandolos en cuanto sobran caben cuatro donde
+  antes seis, y el resultado es identico al pixel.
+- **El ZIP de una descarga se armaba en memoria.** Cuatro fotos eran 155 MB
+  retenidos hasta que el navegador terminara de bajarlo. Ahora se monta en
+  disco y se sirve segun se descarga: 43 MB de memoria para el mismo ZIP.
+- Los archivos de cache se escriben ahora de una sola vez (a un temporal y
+  luego rename), para que otra peticion no pueda encontrarse uno a medias.
+
+Medido con un JPEG de 8000x6000 (38 MB) en una maquina de 4 nucleos:
+
+| Operacion | Antes | Ahora |
+|---|---|---|
+| Abrir la foto en el visor | 1,48 s / 419 MB | 0,82 s / 130 MB |
+| Ocho fotos a la vez (galeria) | 5,06 s / 2.983 MB | 2,43 s / 294 MB |
+| Pulsar "Editar" (tamano real) | 0,71 s / 416 MB | 0,00 s / 49 MB |
+| Sugerir ajustes (auto niveles) | 0,84 s / 416 MB | 0,37 s / 54 MB |
+| Guardar una edicion | 6,05 s / 1.148 MB | 5,16 s / 965 MB |
+| Descargar 4 fotos en ZIP | 155 MB en memoria | 43 MB |
+
+Guardar una edicion sigue costando lo que cuesta: ahi SI hace falta la foto
+entera, porque es lo que se va a escribir en el disco.
+
 ## Filtros de fecha
 
 Los filtros **Desde** y **Hasta** (y el orden) van por la fecha de los

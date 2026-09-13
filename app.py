@@ -5,12 +5,15 @@ import re
 import io
 import time
 import json
+import ctypes
 import hashlib
+import tempfile
 import shutil
 import sqlite3
 import threading
 import zipfile
 import smtplib
+from contextlib import contextmanager
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pathlib import Path
@@ -43,8 +46,13 @@ DEFAULT_WORK_ROOT = os.environ.get("WORK_ROOT", "").strip().strip("/")
 SETTINGS_DIR = "/app/data"
 SETTINGS_FILE = SETTINGS_DIR + "/settings.json"
 THUMB_CACHE_DIR = SETTINGS_DIR + "/thumb_cache"
+# Los archivos grandes que la app arma al vuelo (el ZIP de una descarga) se
+# montan AQUI, no en memoria: un ZIP de veinte fotos son cientos de MB que el
+# contenedor tendria retenidos hasta que el navegador termine de bajarlo.
+TMP_DIR = SETTINGS_DIR + "/tmp"
 os.makedirs(SETTINGS_DIR, exist_ok=True)
 os.makedirs(THUMB_CACHE_DIR, exist_ok=True)
+os.makedirs(TMP_DIR, exist_ok=True)
 
 JPG_EXTS = {".jpg", ".jpeg", ".tiff", ".tif"}
 PNG_EXTS = {".png"}
@@ -383,6 +391,146 @@ def _evict_thumb_cache(abs_path):
     except Exception:
         pass
 
+# =============================================================================
+# LECTURA DE IMAGENES: MEMORIA Y CONCURRENCIA
+# Descomprimir una foto grande es con diferencia lo mas caro que hace la app:
+# un JPEG de 48 Mpx (unos 25-40 MB en disco) ocupa 144 MB por copia en memoria
+# y tarda casi un segundo solo en abrirse. Nada de lo que la app ENSENA -la
+# miniatura, la vista previa de 2048 px, el histograma de 512 px- necesita esa
+# resolucion, asi que aqui estan las cuatro medidas que mantienen el consumo a
+# raya. Todas juntas son la diferencia entre 384 MB por foto abierta y 99 MB:
+#   1. draft(): el decodificador JPEG entrega la imagen YA reducida (escalas
+#      1/2, 1/4 u 1/8 del DCT, que salen casi gratis). Hay que pedirselo antes
+#      de tocar los pixeles: en cuanto algo los lee, ya se descomprimieron
+#      todos. Por eso ORIENTAR VA AL FINAL y no al principio.
+#   2. reduce() en vez de copy() cuando solo hace falta una version pequena.
+#   3. un tope de decodificaciones a la vez: Flask atiende cada peticion en su
+#      propio hilo y la galeria pide muchas fotos de golpe; sin tope, N fotos
+#      grandes a la vez multiplican por N la memoria del contenedor.
+#   4. malloc_trim(): sin el, lo que Pillow libera se queda en el proceso (el
+#      asignador de C no lo devuelve al sistema) y el contenedor se queda
+#      ocupando cientos de MB que ya no usa hasta que se reinicia.
+# =============================================================================
+
+# Cuantas fotos se pueden estar descomprimiendo a la vez. Dejando un nucleo
+# libre la interfaz sigue respondiendo mientras se llena la galeria, y el techo
+# de memoria de la app pasa a ser algo conocido y no el numero de pestanas
+# abiertas.
+DECODE_SLOTS = max(2, min(4, (os.cpu_count() or 2) - 1))
+_decode_sem = threading.BoundedSemaphore(DECODE_SLOTS)
+
+try:
+    _libc = ctypes.CDLL("libc.so.6")
+except Exception:
+    _libc = None
+
+def _release_memory():
+    """Devuelve al sistema la memoria que Pillow ya solto."""
+    if _libc is None:
+        return
+    try:
+        _libc.malloc_trim(0)
+    except Exception:
+        pass
+
+@contextmanager
+def _decode_slot():
+    """Turno para descomprimir una foto. Al salir devuelve la memoria."""
+    with _decode_sem:
+        try:
+            yield
+        finally:
+            _release_memory()
+
+# Una sola generacion por archivo de cache: si dos peticiones piden a la vez la
+# misma vista previa (el visor y la miniatura, o dos pestanas), la segunda
+# espera a la primera y se lleva la cache ya hecha en lugar de descomprimir la
+# foto por segunda vez.
+_render_locks = {}
+_render_guard = threading.Lock()
+
+@contextmanager
+def _render_once(key):
+    with _render_guard:
+        entry = _render_locks.get(key)
+        if entry is None:
+            entry = [threading.Lock(), 0]
+            _render_locks[key] = entry
+        entry[1] += 1
+    entry[0].acquire()
+    try:
+        yield
+    finally:
+        entry[0].release()
+        with _render_guard:
+            entry[1] -= 1
+            if entry[1] <= 0:
+                _render_locks.pop(key, None)
+
+def _open_scaled(abs_path, box):
+    """Abre una foto pidiendo al decodificador que no se moleste en entregar
+    mas resolucion de la que cabe en `box`. Es LECTURA: no toca el original."""
+    img = Image.open(str(abs_path))
+    _draft(img, box)
+    return img
+
+def _draft(img, box):
+    """Pide la escala reducida al decodificador. En los formatos que no la
+    soportan (PNG, WebP) no hace nada, y no pasa nada."""
+    try:
+        img.draft(None, box)
+    except Exception:
+        pass
+
+def _fit(img, box):
+    """Ajusta al recuadro y ORIENTA DESPUES. Girar una foto de 48 Mpx cuesta
+    otra copia entera (144 MB) y ademas obliga a descomprimirla del todo;
+    girar la ya reducida no cuesta nada y da exactamente el mismo resultado,
+    porque el recuadro es cuadrado."""
+    img.thumbnail(box)
+    try:
+        img = ImageOps.exif_transpose(img)
+    except Exception:
+        pass
+    return img
+
+def _downscaled(img, box):
+    """Copia reducida de una imagen YA abierta. reduce() promedia por bloques y
+    devuelve directamente algo pequeno; copy()+thumbnail(), que es lo que habia
+    antes, reservaba los 48 Mpx enteros para tirarlos acto seguido."""
+    n = max(1, min(img.width // max(1, box[0]), img.height // max(1, box[1])))
+    small = img.reduce(n) if n > 1 else img.copy()
+    small.thumbnail(box)
+    return small
+
+# Orientaciones EXIF en las que la foto se ve girada un cuarto de vuelta, o sea
+# con el ancho y el alto intercambiados respecto a lo que dice el archivo.
+SWAP_ORIENTATIONS = {5, 6, 7, 8}
+
+def _oriented_size(img):
+    """Tamano tal como se VE, leyendo solo la cabecera (sin descomprimir)."""
+    w, h = img.size
+    try:
+        orient = img.getexif().get(0x0112, 1)
+    except Exception:
+        orient = 1
+    return (h, w) if orient in SWAP_ORIENTATIONS else (w, h)
+
+def _cache_store(cache_file, data):
+    """Guarda un archivo de cache de una sola vez. Escribir directamente sobre
+    el destino deja una ventana en la que otra peticion puede encontrarselo a
+    medio escribir y servir una imagen rota."""
+    tmp = cache_file.with_name(cache_file.name + "." + str(threading.get_ident()) + ".part")
+    try:
+        tmp.write_bytes(data)
+        os.replace(str(tmp), str(cache_file))
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+
 def _has_gps_fast(path):
     """Lee (sin modificar) si el archivo ya tiene coordenadas GPS."""
     try:
@@ -671,8 +819,7 @@ def _apply_adjustments(img, adj):
 def _auto_levels(img):
     """Sugiere ajustes a partir del histograma. El cliente los coloca en los
     sliders, asi la vista previa y el resultado guardado coinciden siempre."""
-    small = img.copy()
-    small.thumbnail((256, 256))
+    small = _downscaled(img, (256, 256))
     if small.mode != "RGB":
         small = small.convert("RGB")
 
@@ -777,23 +924,41 @@ def _apply_sharpen(img, amount):
     scale = lambda v: min(255, int(mag * v + 0.5))
     hi = ImageChops.subtract(img, blurred).point(scale)   # donde la imagen supera al desenfoque
     lo = ImageChops.subtract(blurred, img).point(scale)   # donde queda por debajo
+    # Cada una de estas imagenes es una COPIA ENTERA de la foto: 144 MB en una
+    # de 48 Mpx. Encadenandolas todas en una sola linea seguian vivas a la vez
+    # y enfocar se iba por encima del giga; soltandolas en cuanto sobran, el
+    # resultado es identico al pixel y caben cuatro donde antes seis.
+    del blurred
     if a > 0:
-        return ImageChops.subtract(ImageChops.add(img, hi), lo)
-    return ImageChops.add(ImageChops.subtract(img, hi), lo)
+        salida = ImageChops.add(img, hi)
+        del hi
+        return ImageChops.subtract(salida, lo)
+    salida = ImageChops.subtract(img, hi)
+    del hi
+    return ImageChops.add(salida, lo)
 
-def _open_for_edit(abs_path):
+def _open_for_edit(abs_path, box=None):
     """Abre la imagen ya orientada (como se ve en el visor). Para un RAW usa la
-    vista previa incrustada, que es lo unico editable de ese formato."""
+    vista previa incrustada, que es lo unico editable de ese formato.
+
+    Con `box` se abre solo a la resolucion que hace falta. Guardar una edicion
+    necesita la foto entera, pero MIRARLA no: descomprimir 48 Mpx (144 MB) para
+    sacar un histograma de 512 px es tirar la memoria del NAS a la basura."""
     ext = abs_path.suffix.lower()
     if ext in RAW_EXTS:
         data = _extract_raw_preview(abs_path)
         if not data:
             raise Exception("no se pudo leer la vista previa del RAW")
         img = Image.open(io.BytesIO(data))
+        if box:
+            _draft(img, box)
+            img.thumbnail(box)
         op = ORIENTATION_OPS.get(_read_orientation(abs_path))
         if op is not None:
             img = img.transpose(op)
         return img
+    if box:
+        return _fit(_open_scaled(abs_path, box), box)
     img = Image.open(str(abs_path))
     try:
         img = ImageOps.exif_transpose(img)
@@ -893,15 +1058,16 @@ def _prewarm_cache(img, dest):
     El navegador las pide justo despues de editar y, si no estan, hay que
     decodificar otra vez la foto entera."""
     try:
-        preview = img.copy()
-        preview.thumbnail((PREVIEW_MAX, PREVIEW_MAX))
+        preview = _downscaled(img, (PREVIEW_MAX, PREVIEW_MAX))
         if preview.mode not in ("RGB", "RGBA", "L"):
             preview = preview.convert("RGB")
-        preview.save(str(_thumb_cache_path(dest, "PREVIEW-WEBP")),
-                     format="WEBP", quality=88, method=4)
-        thumb = preview.copy()
-        thumb.thumbnail((300, 300))
-        thumb.save(str(_thumb_cache_path(dest, "WEBP")), format="WEBP", quality=82, method=4)
+        buf = io.BytesIO()
+        preview.save(buf, format="WEBP", quality=88, method=PREVIEW_WEBP_METHOD)
+        _cache_store(_thumb_cache_path(dest, "PREVIEW-WEBP"), buf.getvalue())
+        thumb = _downscaled(preview, (300, 300))
+        buf = io.BytesIO()
+        thumb.save(buf, format="WEBP", quality=82, method=4)
+        _cache_store(_thumb_cache_path(dest, "WEBP"), buf.getvalue())
     except Exception:
         pass
 
@@ -1517,63 +1683,51 @@ def thumb():
     cache_file = _thumb_cache_path(abs_path, fmt)
 
     if cache_file.exists():
-        etag = cache_file.stem
-        if request.headers.get("If-None-Match") == etag:
+        if request.headers.get("If-None-Match") == cache_file.stem:
             return "", 304
-        resp = send_file(str(cache_file), mimetype=mime)
-        resp.headers["Cache-Control"] = "public, max-age=2592000, immutable"
-        resp.headers["ETag"] = etag
-        resp.headers["Vary"] = "Accept"
-        return resp
+        return _cached_image_response(cache_file, mime)
 
     try:
-        ext = abs_path.suffix.lower()
-        if ext in RAW_EXTS:
-            result = subprocess.run(
-                ["exiftool", "-b", "-ThumbnailImage", str(abs_path)],
-                capture_output=True, timeout=15
-            )
-            if result.returncode == 0 and result.stdout:
-                if fmt == "WEBP":
-                    # Convert embedded JPEG thumbnail to WebP
-                    img = Image.open(io.BytesIO(result.stdout))
-                    buf = io.BytesIO()
-                    img.save(buf, format="WEBP", quality=82, method=4)
-                    cache_file.write_bytes(buf.getvalue())
-                else:
-                    cache_file.write_bytes(result.stdout)
-                resp = send_file(str(cache_file), mimetype=mime)
-                resp.headers["Cache-Control"] = "public, max-age=2592000, immutable"
-                resp.headers["ETag"] = cache_file.stem
-                resp.headers["Vary"] = "Accept"
-                return resp
-
-        img = Image.open(str(abs_path))
-        img.thumbnail((300, 300))
-        # Preserve EXIF orientation without reloading metadata
-        if hasattr(img, '_getexif'):
-            try:
-                from PIL import ImageOps
-                img = ImageOps.exif_transpose(img)
-            except Exception:
-                pass
-        buf = io.BytesIO()
-        if fmt == "WEBP":
-            img.save(buf, format="WEBP", quality=82, method=4)
-        else:
-            # JPEG no admite canal alfa (PNG/WebP RGBA) ni paleta
-            if img.mode not in ("RGB", "L"):
-                img = img.convert("RGB")
-            img.save(buf, format="JPEG", quality=82, optimize=True)
-        data = buf.getvalue()
-        cache_file.write_bytes(data)
-        resp = send_file(io.BytesIO(data), mimetype=mime)
-        resp.headers["Cache-Control"] = "public, max-age=2592000, immutable"
-        resp.headers["ETag"] = cache_file.stem
-        resp.headers["Vary"] = "Accept"
-        return resp
+        # Una sola generacion por miniatura aunque la pidan varias peticiones
+        with _render_once(str(cache_file)):
+            if cache_file.exists():     # la genero otro hilo mientras esperabamos
+                return _cached_image_response(cache_file, mime)
+            with _decode_slot():
+                _make_thumb(abs_path, cache_file, fmt)
+        return _cached_image_response(cache_file, mime)
     except Exception as e:
         return str(e), 404
+
+def _make_thumb(abs_path, cache_file, fmt):
+    """Genera la miniatura y la deja en la cache. NUNCA toca el original."""
+    ext = abs_path.suffix.lower()
+    box = (300, 300)
+    if ext in RAW_EXTS:
+        result = subprocess.run(
+            ["exiftool", "-b", "-ThumbnailImage", str(abs_path)],
+            capture_output=True, timeout=15
+        )
+        if result.returncode == 0 and result.stdout:
+            if fmt != "WEBP":
+                _cache_store(cache_file, result.stdout)
+                return
+            # La miniatura incrustada viene en JPEG: pasarla a WebP
+            img = Image.open(io.BytesIO(result.stdout))
+            buf = io.BytesIO()
+            img.save(buf, format="WEBP", quality=82, method=4)
+            _cache_store(cache_file, buf.getvalue())
+            return
+
+    img = _fit(_open_scaled(abs_path, box), box)
+    buf = io.BytesIO()
+    if fmt == "WEBP":
+        img.save(buf, format="WEBP", quality=82, method=4)
+    else:
+        # JPEG no admite canal alfa (PNG/WebP RGBA) ni paleta
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        img.save(buf, format="JPEG", quality=82, optimize=True)
+    _cache_store(cache_file, buf.getvalue())
 
 # Mapa de valores EXIF Orientation -> operacion de transposicion de Pillow.
 # Se usa para orientar los previews extraidos de RAW, que no llevan EXIF propio.
@@ -1588,6 +1742,7 @@ ORIENTATION_OPS = {
 }
 
 PREVIEW_MAX = 2048
+PREVIEW_WEBP_METHOD = 2
 
 def _extract_raw_preview(abs_path):
     """Extrae la vista previa JPEG embebida en un RAW (solo LECTURA).
@@ -1647,35 +1802,44 @@ def preview():
         return _cached_image_response(cache_file, mime)
 
     try:
-        ext = abs_path.suffix.lower()
-        img = None
-        if ext in RAW_EXTS:
-            data = _extract_raw_preview(abs_path)
-            if data:
-                img = Image.open(io.BytesIO(data))
-                # Los previews embebidos no llevan EXIF: aplicar la
-                # orientacion declarada en el RAW original.
-                op = ORIENTATION_OPS.get(_read_orientation(abs_path))
-                if op is not None:
-                    img = img.transpose(op)
-        if img is None:
-            img = Image.open(str(abs_path))
-            try:
-                img = ImageOps.exif_transpose(img)
-            except Exception:
-                pass
-        img.thumbnail((PREVIEW_MAX, PREVIEW_MAX))
-        if fmt == "JPEG" and img.mode not in ("RGB", "L"):
-            img = img.convert("RGB")
-        buf = io.BytesIO()
-        if fmt == "WEBP":
-            img.save(buf, format="WEBP", quality=88, method=4)
-        else:
-            img.save(buf, format="JPEG", quality=88, optimize=True)
-        cache_file.write_bytes(buf.getvalue())
+        with _render_once(str(cache_file)):
+            if cache_file.exists():     # la genero otro hilo mientras esperabamos
+                return _cached_image_response(cache_file, mime)
+            with _decode_slot():
+                _make_preview(abs_path, cache_file, fmt)
         return _cached_image_response(cache_file, mime)
     except Exception as e:
         return str(e), 404
+
+def _make_preview(abs_path, cache_file, fmt):
+    """Genera la vista previa y la deja en la cache. NUNCA toca el original."""
+    ext = abs_path.suffix.lower()
+    box = (PREVIEW_MAX, PREVIEW_MAX)
+    img = None
+    if ext in RAW_EXTS:
+        data = _extract_raw_preview(abs_path)
+        if data:
+            img = Image.open(io.BytesIO(data))
+            _draft(img, box)
+            img.thumbnail(box)
+            # Los previews embebidos no llevan EXIF: aplicar la
+            # orientacion declarada en el RAW original.
+            op = ORIENTATION_OPS.get(_read_orientation(abs_path))
+            if op is not None:
+                img = img.transpose(op)
+    if img is None:
+        img = _fit(_open_scaled(abs_path, box), box)
+    if fmt == "JPEG" and img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    buf = io.BytesIO()
+    if fmt == "WEBP":
+        # method=4 tarda el doble que method=2 y aqui, a 2048 px, la diferencia
+        # de tamano es de decimas de porcentaje: no compensa hacer esperar al
+        # visor un cuarto de segundo mas por cada foto que se abre.
+        img.save(buf, format="WEBP", quality=88, method=PREVIEW_WEBP_METHOD)
+    else:
+        img.save(buf, format="JPEG", quality=88, optimize=True)
+    _cache_store(cache_file, buf.getvalue())
 
 @app.route("/api/geocode")
 def geocode():
@@ -1952,14 +2116,32 @@ def rotate_files():
 
 @app.route("/api/imginfo")
 def imginfo():
-    """Dimensiones de la foto tal como se ve (ya orientada). Solo LECTURA."""
+    """Dimensiones de la foto tal como se ve (ya orientada). Solo LECTURA.
+
+    El editor pide esto nada mas abrirse, asi que tiene que ser instantaneo: el
+    ancho y el alto estan en la cabecera del archivo, no hace falta
+    descomprimir un solo pixel. Antes se abria la foto entera para leer dos
+    numeros, lo que en una de 48 Mpx eran 1,7 s y 380 MB de memoria cada vez
+    que se pulsaba "Editar"."""
     rel = request.args.get("path", "")
     abs_path = _resolve_path(rel)
     if abs_path is None or not abs_path.exists():
         return jsonify({"error": "no existe"}), 404
     try:
-        img = _open_for_edit(abs_path)
-        return jsonify({"width": img.size[0], "height": img.size[1]})
+        if abs_path.suffix.lower() in RAW_EXTS:
+            # En un RAW lo editable es la vista previa incrustada, asi que es
+            # SU tamano el que hay que informar.
+            data = _extract_raw_preview(abs_path)
+            if not data:
+                return jsonify({"error": "no se pudo leer la vista previa del RAW"}), 500
+            with Image.open(io.BytesIO(data)) as img:
+                w, h = img.size
+            if _read_orientation(abs_path) in SWAP_ORIENTATIONS:
+                w, h = h, w
+        else:
+            with Image.open(str(abs_path)) as img:
+                w, h = _oriented_size(img)
+        return jsonify({"width": w, "height": h})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1971,9 +2153,11 @@ def auto_levels():
     if abs_path is None or not abs_path.exists():
         return jsonify({"error": "no existe"}), 404
     try:
-        img = _open_for_edit(abs_path)
-        img.thumbnail((512, 512))
-        return jsonify(_auto_levels(img))
+        # El histograma se mira sobre una version pequena, asi que la foto se
+        # abre ya reducida en vez de descomprimirla entera para tirarla.
+        with _decode_slot():
+            img = _open_for_edit(abs_path, (512, 512))
+            return jsonify(_auto_levels(img))
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -2029,40 +2213,43 @@ def edit_image():
             return jsonify({"error": str(e)}), 500
         return jsonify({"ok": True, "lossless": True, "path": rel, "name": abs_path.name})
 
-    # Via con recodificacion
+    # Via con recodificacion. Aqui SI hace falta la foto entera (es lo que se
+    # va a guardar), por eso pasa por el turno: dos ediciones simultaneas de
+    # fotos grandes se comen la memoria del contenedor.
     try:
-        img = _open_for_edit(abs_path)
-        if rotate == "90":
-            img = img.transpose(Image.ROTATE_270)
-        elif rotate == "180":
-            img = img.transpose(Image.ROTATE_180)
-        elif rotate == "270":
-            img = img.transpose(Image.ROTATE_90)
-        if flip_h:
-            img = img.transpose(Image.FLIP_LEFT_RIGHT)
-        if flip_v:
-            img = img.transpose(Image.FLIP_TOP_BOTTOM)
+        with _decode_slot():
+            img = _open_for_edit(abs_path)
+            if rotate == "90":
+                img = img.transpose(Image.ROTATE_270)
+            elif rotate == "180":
+                img = img.transpose(Image.ROTATE_180)
+            elif rotate == "270":
+                img = img.transpose(Image.ROTATE_90)
+            if flip_h:
+                img = img.transpose(Image.FLIP_LEFT_RIGHT)
+            if flip_v:
+                img = img.transpose(Image.FLIP_TOP_BOTTOM)
 
-        img = _straighten(img, angle)
+            img = _straighten(img, angle)
 
-        if crop:
-            w, h = img.size
-            x0 = int(round(max(0.0, min(1.0, float(crop.get("x", 0)))) * w))
-            y0 = int(round(max(0.0, min(1.0, float(crop.get("y", 0)))) * h))
-            x1 = x0 + int(round(max(0.0, min(1.0, float(crop.get("w", 1)))) * w))
-            y1 = y0 + int(round(max(0.0, min(1.0, float(crop.get("h", 1)))) * h))
-            x1 = min(w, max(x0 + 1, x1))
-            y1 = min(h, max(y0 + 1, y1))
-            if (x0, y0, x1, y1) != (0, 0, w, h):
-                img = img.crop((x0, y0, x1, y1))
+            if crop:
+                w, h = img.size
+                x0 = int(round(max(0.0, min(1.0, float(crop.get("x", 0)))) * w))
+                y0 = int(round(max(0.0, min(1.0, float(crop.get("y", 0)))) * h))
+                x1 = x0 + int(round(max(0.0, min(1.0, float(crop.get("w", 1)))) * w))
+                y1 = y0 + int(round(max(0.0, min(1.0, float(crop.get("h", 1)))) * h))
+                x1 = min(w, max(x0 + 1, x1))
+                y1 = min(h, max(y0 + 1, y1))
+                if (x0, y0, x1, y1) != (0, 0, w, h):
+                    img = img.crop((x0, y0, x1, y1))
 
-        # La nitidez va ANTES de los ajustes tonales: asi el editor puede
-        # cachear su resultado y los sliders de luz y color siguen costando
-        # solo el LUT (ademas de ser el orden habitual, enfocar el escaneado y
-        # graduarlo despues)
-        img = _apply_sharpen(img, sharpen)
-        img = _apply_adjustments(img, adj)
-        dest, derived = _save_edit(img, abs_path)
+            # La nitidez va ANTES de los ajustes tonales: asi el editor puede
+            # cachear su resultado y los sliders de luz y color siguen costando
+            # solo el LUT (ademas de ser el orden habitual, enfocar el escaneado y
+            # graduarlo despues)
+            img = _apply_sharpen(img, sharpen)
+            img = _apply_adjustments(img, adj)
+            dest, derived = _save_edit(img, abs_path)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -2221,13 +2408,12 @@ def auto_edit_files():
             errors.append({"file": path.name, "error": "formato no soportado"})
             continue
         try:
-            img = _open_for_edit(path)
-            sample = img.copy()
-            sample.thumbnail((512, 512))
-            adj = _auto_levels(sample)
-            img = _apply_sharpen(img, sharpen)
-            img = _apply_adjustments(img, adj)
-            dest, derived = _save_edit(img, path)
+            with _decode_slot():
+                img = _open_for_edit(path)
+                adj = _auto_levels(_downscaled(img, (512, 512)))
+                img = _apply_sharpen(img, sharpen)
+                img = _apply_adjustments(img, adj)
+                dest, derived = _save_edit(img, path)
             ok.append({"name": path.name, "new": dest.name,
                        "path": str(dest.relative_to(root)), "derived": derived})
         except Exception as e:
@@ -2425,35 +2611,79 @@ def download_zip():
     Crea un ZIP con los archivos seleccionados y lo sirve como descarga.
     Usa ZIP_STORED (sin comprimir) porque los RAW ya están comprimidos;
     evita consumo innecesario de CPU en el NAS.
+
+    El ZIP se monta EN DISCO. Armandolo en memoria, veinte fotos de 25 MB eran
+    medio giga retenido en el contenedor hasta que el navegador terminara de
+    bajarlo, que con una conexion lenta puede ser un buen rato.
     """
     data = request.json
     files = data.get("files", [])
     if not files:
         return jsonify({"error": "sin archivos"}), 400
 
-    buf = io.BytesIO()
-    seen_names = {}
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED) as zf:
-        for rel in files:
-            path = _resolve_path(rel)
-            if not path or not path.exists() or not path.is_file():
-                continue
-            name = path.name
-            if name in seen_names:
-                seen_names[name] += 1
-                name = path.stem + "_" + str(seen_names[path.name]) + path.suffix
-            else:
-                seen_names[path.name] = 1
-            zf.write(str(path), name)
-    buf.seek(0)
-
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return send_file(
-        buf,
+    fd, tmp_path = tempfile.mkstemp(prefix="zip_", suffix=".zip", dir=TMP_DIR)
+    os.close(fd)
+    try:
+        seen_names = {}
+        with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_STORED,
+                             allowZip64=True) as zf:
+            for rel in files:
+                path = _resolve_path(rel)
+                if not path or not path.exists() or not path.is_file():
+                    continue
+                name = path.name
+                if name in seen_names:
+                    seen_names[name] += 1
+                    name = path.stem + "_" + str(seen_names[path.name]) + path.suffix
+                else:
+                    seen_names[path.name] = 1
+                zf.write(str(path), name)
+    except Exception as e:
+        _discard(tmp_path)
+        return jsonify({"error": str(e)}), 500
+
+    # El temporal se borra AHORA, con la descarga todavia por delante: en Linux
+    # el archivo sigue existiendo mientras alguien lo tenga abierto, asi que el
+    # ZIP se sirve entero y el espacio se libera solo al terminar. Pase lo que
+    # pase -que el navegador cancele, que se caiga el contenedor- no queda
+    # basura en el disco del NAS.
+    try:
+        handle = open(tmp_path, "rb")
+        size = os.fstat(handle.fileno()).st_size
+    except OSError as e:
+        _discard(tmp_path)
+        return jsonify({"error": str(e)}), 500
+    _discard(tmp_path)
+    resp = send_file(
+        handle,
         mimetype="application/zip",
         as_attachment=True,
         download_name="GeoTagger_" + ts + ".zip"
     )
+    # Sin ruta que mirar, send_file no sabe cuanto ocupa y manda la respuesta
+    # "a trozos", sin tamano: el navegador se queda sin barra de progreso y sin
+    # tiempo estimado. Se lo decimos nosotros, que el descriptor sigue abierto.
+    resp.content_length = size
+    return resp
+
+def _discard(path):
+    """Borra un temporal sin quejarse si ya no esta."""
+    try:
+        os.unlink(str(path))
+    except OSError:
+        pass
+
+def _clean_tmp_dir():
+    """Temporales que quedaron de una descarga cortada o de un reinicio."""
+    try:
+        for f in Path(TMP_DIR).iterdir():
+            if f.is_file():
+                _discard(f)
+    except Exception:
+        pass
+
+_clean_tmp_dir()
 
 def _safe_upload_name(filename):
     """Limpia el nombre de un archivo subido.
