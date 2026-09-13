@@ -2672,6 +2672,27 @@ def gps_map():
         "index": _index_status_dict(),
     })
 
+# Momento en que arranco este proceso: sirve para distinguir "se reconstruyo la
+# imagen" de "solo se reinicio el contenedor".
+ARRANQUE = time.time()
+
+@app.route("/api/version")
+def version():
+    """Que version se esta ejecutando AHORA MISMO.
+
+    Sin esto, comprobar que el NAS se ha actualizado de verdad es adivinar: el
+    script puede decir "listo" habiendo fallado el pull, o el contenedor puede
+    haberse reiniciado con la imagen vieja, y por fuera todo se ve igual. Aqui
+    responde el propio proceso que esta atendiendo, asi que si contesta con el
+    commit correcto es que ese codigo es el que corre."""
+    return jsonify({
+        "commit": os.environ.get("GEOTAGGER_COMMIT", "desconocido"),
+        "branch": os.environ.get("GEOTAGGER_BRANCH", "desconocido"),
+        "built": os.environ.get("GEOTAGGER_BUILD", "desconocido"),
+        "started": datetime.fromtimestamp(ARRANQUE).strftime("%Y-%m-%d %H:%M:%S"),
+        "uptime_s": int(time.time() - ARRANQUE),
+    })
+
 @app.route("/api/index_status")
 def index_status():
     """Como va el indice, para que la interfaz avise y se refresque sola."""

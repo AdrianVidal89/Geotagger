@@ -25,6 +25,23 @@ ENV PYTHONUNBUFFERED=1
 # devuelve: medido en el NAS, 129 MB -> 51 MB despues de llenar la galeria.
 ENV MALLOC_ARENA_MAX=2
 
+# Sello de version. Lo pasa el script de actualizacion
+# (--build-arg GIT_COMMIT=...) y la app lo publica en /api/version, que es la
+# unica forma FIABLE de saber que el NAS esta corriendo lo que crees.
+# Van al final a proposito: cambiar el sello no invalida la cache de las capas
+# de arriba, asi que reconstruir sigue costando segundos y no minutos.
+ARG GIT_COMMIT=desconocido
+ARG GIT_BRANCH=desconocido
+ARG BUILD_DATE=desconocido
+ENV GEOTAGGER_COMMIT=$GIT_COMMIT \
+    GEOTAGGER_BRANCH=$GIT_BRANCH \
+    GEOTAGGER_BUILD=$BUILD_DATE
+
 EXPOSE 5000
+
+# Container Station enseña el estado en la lista de contenedores, y el script
+# de actualizacion lo espera antes de dar el despliegue por bueno.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:5000/api/version',timeout=4)" || exit 1
 
 CMD ["python", "app.py"]

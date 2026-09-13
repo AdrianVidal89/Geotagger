@@ -5,7 +5,14 @@
 # anade   version: "3.8"   como primera linea.
 services:
   geotagger:
-    build: .
+    build:
+      context: .
+      # Las rellena actualizar.sh. Si se construye a mano quedan en
+      # "desconocido", y /api/version lo dice en vez de inventarse nada.
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-desconocido}
+        GIT_BRANCH: ${GIT_BRANCH:-desconocido}
+        BUILD_DATE: ${BUILD_DATE:-desconocido}
     image: geotagger:latest
     container_name: geotagger
     restart: unless-stopped

@@ -290,6 +290,56 @@ y el pico de memoria sigue siendo 8 veces menor.
   medida estaba hecha sobre ruido sintetico. En una foto de verdad son 0,17 s y
   ahorran un 16% de tamano: compensa, se queda como estaba.
 
+## Actualizar el NAS y comprobar que se ha actualizado
+
+`actualizar.sh` hace el despliegue y, sobre todo, **comprueba que ha salido
+bien**. El problema del script anterior no era que fallase: era que no se
+enteraba de que habia fallado.
+
+```
+⬇️  Pulling from GitHub...
+^Ccontext canceled        <- el pull se cancelo
+🔄 Restarting...          <- siguio adelante igual
+✅ Done                   <- y dijo que todo bien
+```
+
+Ese despliegue reinicio el contenedor con la imagen VIEJA y termino en verde.
+Por fuera no hay forma de distinguirlo de uno bueno, porque la aplicacion
+arranca igual de bien con el codigo de antes.
+
+La pieza que faltaba es que la aplicacion pueda decir que version es. Al
+construir la imagen se le sella el commit (`--build-arg GIT_COMMIT=...`) y lo
+publica en `/api/version`. Como responde el propio proceso que esta atendiendo,
+si contesta con el commit correcto es que ESE codigo es el que corre; no hay
+que fiarse de nada mas.
+
+```sh
+sh actualizar.sh              # actualiza a lo ultimo de la rama actual
+sh actualizar.sh --forzar     # reconstruye aunque no haya cambios
+sh actualizar.sh --verificar  # no toca nada: solo dice que hay corriendo
+```
+
+Lo que hace distinto:
+
+- **`set -eu` y un fallo por paso.** Si no puede con GitHub, si la rama ha
+  divergido, si hay cambios locales sin guardar o si la construccion se cae o
+  se cancela, para ahi y lo dice. El contenedor se queda como estaba, que es lo
+  correcto: mejor la version de ayer funcionando que un despliegue a medias.
+- **`git merge --ff-only`** en vez de `git pull`: o avanza limpio, o falla. No
+  deja nunca un merge a medio hacer en el NAS.
+- **Comprueba el resultado.** Espera a que `/api/version` conteste con el
+  commit que se acaba de construir. Si pasa el tiempo y no cuadra, termina en
+  error, enseña que version hay de verdad y saca las ultimas lineas del log.
+- **Tambien comprueba cuando no hay cambios.** "Ya estabas al dia" no significa
+  que el contenedor este corriendo eso: si el despliegue anterior se quedo a
+  medias, lo detecta y reconstruye.
+- **Silencia el aviso de QNAP** (`.docker/config.json: permission denied`)
+  apuntando `DOCKER_CONFIG` a un sitio escribible. Era inofensivo, pero
+  ensuciaba la salida y escondia los errores de verdad.
+
+Ajustables por variable de entorno: `GEOTAGGER_REPO` (donde esta el clon),
+`GEOTAGGER_PUERTO` y `GEOTAGGER_ESPERA`.
+
 ## Filtros de fecha
 
 Los filtros **Desde** y **Hasta** (y el orden) van por la fecha de los
