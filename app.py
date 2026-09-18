@@ -292,11 +292,18 @@ def _exiftool_updated_none(stdout):
 DATE_SHAPE = re.compile(r"^\d{4}[:-]\d{2}[:-]\d{2}[ T]\d{2}:\d{2}:\d{2}")
 
 def _clean_date(raw):
-    """Devuelve la fecha si tiene forma de fecha; si no, cadena vacia."""
+    """Devuelve la fecha si tiene forma de fecha; si no, cadena vacia.
+    Se queda SOLO con los 19 caracteres de la fecha: hay campos que anaden la
+    zona horaria ("2026:09:17 19:57:00+02:00") o las decimas, y eso no cabe ni
+    en el indice ni en un nombre de archivo. La 'T' que usan XMP e IPTC como
+    separador se cambia por un espacio para que todo hable el mismo idioma."""
     if not raw:
         return ""
-    txt = str(raw).strip()
-    if not DATE_SHAPE.match(txt) or txt.startswith("0000"):
+    m = DATE_SHAPE.match(str(raw).strip())
+    if not m:
+        return ""
+    txt = m.group(0).replace("T", " ")
+    if txt.startswith("0000"):
         return ""
     return txt
 
@@ -307,30 +314,103 @@ def _ui_date(raw):
         return ""
     return re.sub(r"^(\d{4}):(\d{2}):(\d{2})", r"\1-\2-\3", txt)
 
-def _read_dates_batch(paths):
-    """Fechas de un lote con UNA sola llamada. Devuelve por foto la fecha de
-    toma y la primera que haya de las tres que toca -AllDates: si no hay
-    ninguna, un desplazamiento no cambiaria nada."""
+# =============================================================================
+# DE DONDE SALE LA FECHA DE UNA FOTO
+# No todas las fotos guardan la fecha en EXIF:DateTimeOriginal, ni mucho menos.
+# Un JPEG exportado por un editor (Affinity Photo, Photoshop, Lightroom) suele
+# llevarla SOLO en XMP; un escaneo catalogado, en IPTC; y una foto reguardada a
+# veces solo conserva el DateTime de IFD0, que ExifTool llama ModifyDate.
+# Mirar un unico campo hacia que la app dijera "sin fecha EXIF" de fotos que SI
+# tienen fecha -la misma que ensena Fotos de Apple- y ademas las dejaba fuera
+# del orden por fecha, de los filtros y del renombrado.
+# El orden de la lista es el orden de preferencia: primero la fecha de TOMA,
+# luego las de creacion, y la de ultima modificacion al final, que es la menos
+# fiable (la cambia cualquier programa al reguardar).
+# =============================================================================
+PHOTO_DATE_TAGS = (
+    ("EXIF:DateTimeOriginal",     "EXIF DateTimeOriginal"),
+    ("EXIF:CreateDate",           "EXIF CreateDate"),
+    ("XMP:DateTimeOriginal",      "XMP DateTimeOriginal"),
+    ("XMP:DateCreated",           "XMP DateCreated"),
+    ("XMP:CreateDate",            "XMP CreateDate"),
+    ("Composite:DateTimeCreated", "IPTC DateCreated"),
+    ("QuickTime:CreateDate",      "QuickTime CreateDate"),
+    ("PNG:CreationTime",          "PNG CreationTime"),
+    ("EXIF:ModifyDate",           "EXIF ModifyDate"),
+    ("XMP:ModifyDate",            "XMP ModifyDate"),
+)
+# Hay que pedir los campos CON su grupo y sacar la respuesta con -G0: sin eso,
+# "DateCreated" a secas puede venir de XMP o de IPTC y ExifTool se queda solo
+# con uno de los dos sin decir cual.
+PHOTO_DATE_ARGS = ["-G0"] + ["-" + tag for tag, _ in PHOTO_DATE_TAGS]
+
+# Campos de fecha de fuera de EXIF que hay que mantener al dia cuando se cambia
+# la fecha de una foto que YA los trae; si no, cada programa ensenaria una fecha
+# distinta de la misma foto. Nunca se crean: solo se actualizan si ya estaban.
+XMP_DATE_TAGS = ("XMP:DateTimeOriginal", "XMP:DateCreated", "XMP:CreateDate",
+                 "XMP:ModifyDate")
+# IPTC parte la fecha en dos campos (uno con el dia y otro con la hora), asi que
+# un desplazamiento que cruce la medianoche descuadraria uno de los dos: al
+# DESPLAZAR se dejan en paz y solo se tocan al poner una fecha concreta.
+IPTC_DATE_TAGS = ("IPTC:DateCreated", "IPTC:TimeCreated")
+SIDE_DATE_TAGS = XMP_DATE_TAGS + IPTC_DATE_TAGS
+
+def _tag_value(row, name):
+    """El valor de un campo en una respuesta pedida con -G0, mire donde mire el
+    grupo: ExifTool devuelve "EXIF:ThumbnailImage", no "ThumbnailImage"."""
+    if name in row:
+        return row[name]
+    sufijo = ":" + name
+    for key, val in row.items():
+        if key.endswith(sufijo):
+            return val
+    return None
+
+def _gps_value(row, name):
+    """La coordenada de una respuesta con -G0. Composite primero: es la unica
+    que trae el signo (sur y oeste son negativos); EXIF la guarda sin signo y el
+    hemisferio aparte, en GPSLatitudeRef."""
+    for grupo in ("Composite:", "XMP:", "EXIF:"):
+        val = row.get(grupo + name)
+        if val is not None:
+            return val
+    return _tag_value(row, name)
+
+def _resolve_photo_date(row):
+    """De lo que devuelve ExifTool, la primera fecha valida por orden de
+    preferencia. Devuelve (fecha, de que campo salio)."""
+    for tag, label in PHOTO_DATE_TAGS:
+        fecha = _clean_date(row.get(tag))
+        if fecha:
+            return fecha, label
+    return "", ""
+
+def _read_photo_dates_batch(paths, ui=False):
+    """Fechas de un lote con UNA sola llamada. Por foto: la fecha que vale
+    (mirando TODOS los campos, no solo DateTimeOriginal), de que campo salio y
+    lo que hay en cada uno. Con ui=True vienen en el formato de la interfaz."""
     out = {}
-    if not paths:
-        return out
-    cmd = ["exiftool", "-fast2", "-json", "-q", "-q", "-SourceFile",
-           "-DateTimeOriginal", "-CreateDate", "-ModifyDate"] + [str(p) for p in paths]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True,
-                                timeout=max(120, 5 * len(paths)))
-        for row in json.loads(result.stdout or "[]"):
-            origen = row.get("SourceFile")
-            if not origen:
-                continue
-            toma = _clean_date(row.get("DateTimeOriginal"))
-            out[os.path.realpath(origen)] = {
-                "toma": toma,
-                "alguna": toma or _clean_date(row.get("CreateDate"))
-                          or _clean_date(row.get("ModifyDate")),
-            }
-    except Exception:
-        pass
+    paths = list(paths)
+    for trozo in _chunks(paths, EXIFTOOL_CHUNK):
+        cmd = ["exiftool", "-fast2", "-json", "-q", "-q", "-SourceFile"]
+        if ui:
+            cmd += ["-d", UI_DATE_FMT]
+        cmd += PHOTO_DATE_ARGS + [str(p) for p in trozo]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True,
+                                    timeout=max(120, 5 * len(trozo)))
+            for row in json.loads(result.stdout or "[]"):
+                origen = row.get("SourceFile")
+                if not origen:
+                    continue
+                fecha, fuente = _resolve_photo_date(row)
+                out[os.path.realpath(origen)] = {
+                    "fecha": fecha,
+                    "fuente": fuente,
+                    "tags": {tag: _clean_date(row.get(tag)) for tag, _ in PHOTO_DATE_TAGS},
+                }
+        except Exception:
+            pass
     return out
 
 # Escribir metadatos en un PNG grande no es cuestion de disco: ExifTool recorre
@@ -784,26 +864,76 @@ def _build_shift(shift):
     return op, "0:0:" + str(days) + " " + str(hours) + ":" + str(minutes) + ":0"
 
 def _read_dates(path):
-    """Lee (sin modificar) las fechas del archivo: la de la foto (EXIF) y la
-    del propio fichero. Devuelve un dict con las que existan."""
+    """Lee (sin modificar) las fechas de un archivo: la de la FOTO -la primera
+    que valga de todos los campos posibles, no solo DateTimeOriginal- y la del
+    propio fichero. Devuelve un dict con las que existan."""
     out = {}
+    datos = _read_photo_dates_batch([path], ui=True).get(os.path.realpath(str(path)))
+    if datos:
+        if datos["fecha"]:
+            out["date"] = datos["fecha"]
+            out["date_source"] = datos["fuente"]
+        # Se siguen dando por separado para quien las quiera ver tal cual
+        tags = datos["tags"]
+        if tags.get("EXIF:CreateDate"):
+            out["create_date"] = tags["EXIF:CreateDate"]
+        if tags.get("EXIF:ModifyDate"):
+            out["modify_date"] = tags["EXIF:ModifyDate"]
+    # La fecha del ARCHIVO la sabe el sistema: no hace falta otra llamada.
     try:
-        result = subprocess.run(
-            ["exiftool", "-json", "-d", UI_DATE_FMT,
-             "-DateTimeOriginal", "-CreateDate", "-ModifyDate", "-FileModifyDate",
-             str(path)],
-            capture_output=True, text=True, timeout=15
-        )
-        data = json.loads(result.stdout)[0]
-    except Exception:
-        return out
-    pairs = (("date", "DateTimeOriginal"), ("create_date", "CreateDate"),
-             ("modify_date", "ModifyDate"), ("file_date", "FileModifyDate"))
-    for key, tag in pairs:
-        val = data.get(tag)
-        if isinstance(val, str) and DATE_SHAPE.match(val.strip()) and not val.startswith("0000"):
-            out[key] = val.strip()
+        out["file_date"] = datetime.fromtimestamp(
+            os.stat(str(path)).st_mtime).strftime(UI_DATE_FMT)
+    except OSError:
+        pass
     return out
+
+def _date_write_args(exif_date=None, shift=None, sync_file=True):
+    """Argumentos de ExifTool para cambiar la fecha.
+    -AllDates cubre los tres campos EXIF de una vez. Al DESPLAZAR se anaden
+    ademas los de XMP: desplazar NO crea nada (ExifTool solo mueve lo que ya
+    existe), asi que ponerlos siempre sale gratis y hace que tambien se
+    desplacen las fotos cuya fecha vive solo en XMP -que antes daban
+    "no tiene fecha previa que desplazar" teniendola."""
+    args = []
+    if shift:
+        op, val = shift
+        args.append("-AllDates" + op + val)
+        args += ["-" + tag + op + val for tag in XMP_DATE_TAGS]
+        if sync_file:
+            args.append("-FileModifyDate" + op + val)
+    else:
+        args.append("-AllDates=" + exif_date)
+        if sync_file:
+            args.append("-FileModifyDate=" + exif_date)
+    return args
+
+# Campos de PHOTO_DATE_TAGS que no son EXIF: si una foto trae alguno, al ponerle
+# una fecha concreta hay que actualizarlo tambien.
+PHOTO_DATE_TAGS_APARTE = tuple(tag for tag, _ in PHOTO_DATE_TAGS
+                               if not tag.startswith("EXIF:"))
+
+def _tiene_fechas_aparte(datos):
+    """Si la foto guarda la fecha tambien fuera de EXIF (XMP o IPTC)."""
+    tags = (datos or {}).get("tags") or {}
+    return any(tags.get(tag) for tag in PHOTO_DATE_TAGS_APARTE)
+
+def _sync_fechas_aparte(paths, exif_date):
+    """Pone la misma fecha en los campos de XMP e IPTC de las fotos que YA los
+    tienen. -wm w (write mode: solo escribir) es la clave: actualiza los campos
+    que existen y no crea ninguno, asi que una foto sin XMP no se llena de
+    metadatos que no pidio nadie.
+    Va ANTES de la escritura principal a proposito: esta pasada tambien toca la
+    fecha del archivo, y la que vale es la que deje la escritura de despues.
+    Es un extra: si falla, la fecha EXIF se escribe igual."""
+    args = ["-" + tag + "=" + exif_date for tag in SIDE_DATE_TAGS]
+    for trozo in _chunks(list(paths), EXIFTOOL_CHUNK):
+        try:
+            subprocess.run(["exiftool", "-wm", "w"] + args +
+                           ["-overwrite_original"] + [str(p) for p in trozo],
+                           capture_output=True, text=True,
+                           timeout=max(120, 20 * len(trozo)))
+        except Exception:
+            pass
 
 def _write_date_exiftool(path, exif_date=None, shift=None, sync_file=True):
     """
@@ -815,16 +945,11 @@ def _write_date_exiftool(path, exif_date=None, shift=None, sync_file=True):
     NO recomprime ni re-codifica la imagen.
     """
     path = sanitize_path(path)
-    cmd = ["exiftool"]
-    if shift:
-        op, val = shift
-        cmd.append("-AllDates" + op + val)
-        if sync_file:
-            cmd.append("-FileModifyDate" + op + val)
-    else:
-        cmd.append("-AllDates=" + exif_date)
-        if sync_file:
-            cmd.append("-FileModifyDate=" + exif_date)
+    if not shift:
+        datos = _read_photo_dates_batch([path]).get(os.path.realpath(str(path)))
+        if _tiene_fechas_aparte(datos):
+            _sync_fechas_aparte([path], exif_date)
+    cmd = ["exiftool"] + _date_write_args(exif_date, shift, sync_file)
     cmd += ["-overwrite_original", str(path)]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
@@ -1347,9 +1472,31 @@ def _index_db():
             # segundo entre peticiones, asi que conviene no repetirlas nunca
             conn.execute("""CREATE TABLE IF NOT EXISTS places (
                 key TEXT PRIMARY KEY, name TEXT, at INTEGER)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY, value TEXT)""")
             conn.commit()
+        _index_migrate_dates(conn)
         _index_conn = conn
     return conn
+
+# Cuando cambia la lista de campos de fecha que se leen, las fotos que se
+# indexaron con la lista anterior y se quedaron SIN fecha hay que volver a
+# leerlas: su archivo no ha cambiado, asi que el repaso normal ni las miraria.
+# Se marcan como sucias (mtime = -1) y el siguiente repaso las relee.
+DATE_TAGS_VERSION = "2"
+
+def _index_migrate_dates(conn):
+    try:
+        row = conn.execute("SELECT value FROM meta WHERE key = 'date_tags'").fetchone()
+        if row and row[0] == DATE_TAGS_VERSION:
+            return
+        with _index_write:
+            conn.execute("UPDATE photos SET mtime = -1 WHERE date IS NULL OR date = ''")
+            conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('date_tags', ?)",
+                         (DATE_TAGS_VERSION,))
+            conn.commit()
+    except sqlite3.Error:
+        pass
 
 def _index_range(base):
     """Limites para consultar por prefijo de ruta sin usar LIKE (una ruta puede
@@ -1420,9 +1567,12 @@ def _index_read_batch(paths):
     # -fast2 corta la lectura en cuanto tiene los metadatos: en un RAW o un PNG
     # grande evita leerse el archivo entero. -b devuelve la miniatura
     # incrustada en base64 dentro del mismo JSON.
+    # Las fechas se piden CON grupo (ver PHOTO_DATE_TAGS): una foto de un editor
+    # puede no tener DateTimeOriginal y aun asi tener fecha. Lo demas se lee en
+    # la misma llamada, que no cuesta mas.
     cmd = ["exiftool", "-fast2", "-json", "-n", "-q", "-q", "-b",
            "-ThumbnailImage",
-           "-GPSLatitude", "-GPSLongitude", "-DateTimeOriginal", "-SourceFile"] + paths
+           "-GPSLatitude", "-GPSLongitude", "-SourceFile"] + PHOTO_DATE_ARGS + paths
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         items = json.loads(result.stdout) if result.stdout.strip() else []
@@ -1433,13 +1583,16 @@ def _index_read_batch(paths):
         src = item.get("SourceFile")
         if not src:
             continue
-        lat, lon = item.get("GPSLatitude"), item.get("GPSLongitude")
+        # Con -G0 las coordenadas llegan por duplicado: EXIF:GPSLatitude viene
+        # SIN signo (el hemisferio va aparte, en GPSLatitudeRef) y la de
+        # Composite ya viene con el signo puesto. Hay que quedarse con esa.
+        lat, lon = _gps_value(item, "GPSLatitude"), _gps_value(item, "GPSLongitude")
         try:
             lat = float(lat) if lat is not None else None
             lon = float(lon) if lon is not None else None
         except (TypeError, ValueError):
             lat = lon = None
-        crudo = item.get("ThumbnailImage") or ""
+        crudo = _tag_value(item, "ThumbnailImage") or ""
         if crudo.startswith("base64:"):
             try:
                 crudo = base64.b64decode(crudo[7:])
@@ -1447,7 +1600,7 @@ def _index_read_batch(paths):
                 crudo = b""
         else:
             crudo = b""
-        read[os.path.abspath(src)] = (lat, lon, _clean_date(item.get("DateTimeOriginal")),
+        read[os.path.abspath(src)] = (lat, lon, _resolve_photo_date(item)[0],
                                       _lqip_from_bytes(crudo))
     return read
 
@@ -2315,15 +2468,7 @@ def write_date():
             errors.append({"file": path.name, "error": str(e)})
 
     # Mismo cambio para todas: una sola llamada a ExifTool por lote
-    if shift:
-        op, val = shift
-        args = ["-AllDates" + op + val]
-        if sync_file:
-            args.append("-FileModifyDate" + op + val)
-    else:
-        args = ["-AllDates=" + exif_date]
-        if sync_file:
-            args.append("-FileModifyDate=" + exif_date)
+    args = _date_write_args(exif_date, shift, sync_file)
 
     def _done(path, fecha):
         _after_write(path)
@@ -2333,19 +2478,26 @@ def write_date():
             _index_stale(path)
         ok.append(path.name)
 
-    # Un desplazamiento deja INTACTAS las fotos sin fecha previa, y ExifTool no
-    # dice cuales fueron: hay que saberlo de antemano
-    before = _read_dates_batch(targets) if shift else {}
+    # Se leen las fechas ANTES de tocar nada, por dos motivos: un desplazamiento
+    # deja intactas las fotos sin fecha previa y ExifTool no dice cuales fueron,
+    # y al poner una fecha concreta hay que saber cuales guardan ademas la fecha
+    # en XMP o IPTC para no dejar ahi la antigua.
+    before = _read_photo_dates_batch(targets)
     if shift:
         con_fecha = []
         for path in targets:
             previa = before.get(os.path.realpath(str(path))) or {}
-            if previa.get("alguna"):
+            if previa.get("fecha"):
                 con_fecha.append(path)
             else:
                 errors.append({"file": path.name,
                                "error": "la foto no tiene fecha previa que desplazar"})
         targets = con_fecha
+    else:
+        _sync_fechas_aparte(
+            [p for p in targets
+             if _tiene_fechas_aparte(before.get(os.path.realpath(str(p))))],
+            exif_date)
 
     for chunk in _chunks(targets, EXIFTOOL_CHUNK):
         try:
@@ -2360,15 +2512,15 @@ def write_date():
             # que si funcionaron), asi que en vez de reintentar se releen las
             # fechas del lote: dice cual cambio de verdad y ademas deja el
             # indice al dia, que es lo que evita releer foto a foto despues
-            after = _read_dates_batch(chunk)
+            after = _read_photo_dates_batch(chunk)
             for path in chunk:
                 key = os.path.realpath(str(path))
                 nueva = after.get(key) or {}
                 previa = before.get(key) or {}
-                if nueva.get("alguna") and nueva["alguna"] != previa.get("alguna"):
-                    # Solo se anota en el indice la fecha de TOMA, que es la que
+                if nueva.get("fecha") and nueva["fecha"] != previa.get("fecha"):
+                    # En el indice va la fecha que vale de verdad, que es la que
                     # usan la galeria y el renombrado
-                    _done(path, nueva["toma"])
+                    _done(path, nueva["fecha"])
                 else:
                     errors.append({"file": path.name,
                                    "error": "no se pudo desplazar la fecha"})
@@ -2803,11 +2955,11 @@ def rename_files():
             if known is not None:
                 dt_raw = known["date"]
             else:
-                result = subprocess.run(
-                    ["exiftool", "-fast2", "-DateTimeOriginal", "-s", "-s", "-s", str(path)],
-                    capture_output=True, text=True, timeout=10
-                )
-                dt_raw = result.stdout.strip()
+                # La fecha de la foto mirando TODOS los campos: un JPEG de un
+                # editor puede tenerla solo en XMP y antes se renombraba con la
+                # fecha de hoy como si no tuviera ninguna
+                leido = _read_photo_dates_batch([path]).get(os.path.realpath(str(path)))
+                dt_raw = (leido or {}).get("fecha", "")
             # Un valor que no sea una fecha no puede acabar en el nombre
             dt_raw = _clean_date(dt_raw)
             if dt_raw:
