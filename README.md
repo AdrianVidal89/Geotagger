@@ -302,6 +302,49 @@ si la foto no ha cambiado desde que se indexo; si de esa foto aun no se sabe
 nada, se recurre a la del nombre (si se renombro por EXIF) y por ultimo a la
 del archivo.
 
+### De donde sale la fecha de una foto
+
+No todas las fotos guardan la fecha en el mismo sitio, y mirar solo
+`EXIF:DateTimeOriginal` -que es lo que se hacia- dejaba sin fecha a fotos que
+SI la tienen: un JPEG exportado por un editor (Affinity Photo, Photoshop,
+Lightroom) suele llevarla solo en XMP, un escaneo catalogado en IPTC, y una foto
+reguardada a veces solo conserva el `DateTime` de IFD0 (que ExifTool llama
+`ModifyDate`). En la app eso se veia como "Sin fecha EXIF" al lado de la fecha
+del archivo, aunque Fotos del iPad ensenara la fecha buena de la misma foto; y
+ademas esas fotos se quedaban fuera del orden por fecha, de los filtros y del
+renombrado por EXIF.
+
+Ahora se miran todos estos campos, y vale el primero que traiga una fecha:
+
+| Orden | Campo | De donde viene |
+|---|---|---|
+| 1 | `EXIF:DateTimeOriginal` | camaras y moviles: cuando se disparo |
+| 2 | `EXIF:CreateDate` | cuando se digitalizo |
+| 3 | `XMP:DateTimeOriginal` | editores que copian la fecha de toma a XMP |
+| 4 | `XMP:DateCreated` | Affinity, Photoshop, Lightroom |
+| 5 | `XMP:CreateDate` | XMP basico |
+| 6 | `IPTC:DateCreated` + `TimeCreated` | catalogacion y agencias |
+| 7 | `QuickTime:CreateDate` | contenedores HEIC |
+| 8 | `PNG:CreationTime` | PNG |
+| 9 | `EXIF:ModifyDate` / `XMP:ModifyDate` | ultimo reguardado (lo menos fiable) |
+
+Los campos se piden a ExifTool CON su grupo (`-G0`): sin eso, `DateCreated` a
+secas puede venir de XMP o de IPTC y ExifTool devuelve uno de los dos sin decir
+cual. `/api/dateinfo` responde ademas con `date_source`, que dice de que campo
+salio la fecha que se ensena.
+
+Al cambiar la fecha se escribe `-AllDates` (los tres campos EXIF) y, solo en las
+fotos que YA los traen, tambien los de XMP e IPTC, con `-wm w` para que no se
+cree ninguno nuevo: asi no se queda la fecha antigua en un campo que otro
+programa lea antes. Un desplazamiento incluye ademas los campos de XMP -desplazar
+no crea nada- y por eso ya funciona en fotos cuya fecha vive solo ahi, que antes
+respondian "no tiene fecha previa que desplazar" teniendola.
+
+Las fotos que se indexaron con la lista de campos anterior y se quedaron sin
+fecha se marcan para releer la primera vez que arranca la version nueva (tabla
+`meta`, clave `date_tags`): su archivo no ha cambiado, asi que el repaso normal
+ni las miraria.
+
 ### Cuando la fecha no es una fecha
 
 Un campo EXIF puede traer texto con un prefijo de codificacion delante

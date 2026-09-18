@@ -2788,7 +2788,8 @@ async function checkDate(path) {
     box.innerHTML = CAL_ICON + humanDate(shot);
   } else if (d.file_date) {
     box.className = "gps-status no";
-    box.innerHTML = CAL_ICON + "Sin fecha EXIF (archivo: " + humanDate(d.file_date) + ")";
+    box.innerHTML = CAL_ICON + "Sin fecha en los metadatos (archivo: " +
+                    humanDate(d.file_date) + ")";
   } else {
     box.className = "gps-status no";
     box.innerHTML = CAL_ICON + "Sin fecha";
