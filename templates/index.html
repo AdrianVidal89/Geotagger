@@ -203,6 +203,76 @@ header .spacer{flex:1}
 }
 .fb-clear:hover{background:#e8f0fe}
 
+/* ── ESTRELLAS ────────────────────────────────
+   Una sola pinta de estrella para todos los sitios donde aparecen: la barra
+   de filtros, el panel, el visor y el diálogo de clasificar. */
+.stars-row{display:flex;align-items:center;gap:1px}
+.star{
+  background:none;border:none;cursor:pointer;padding:2px;line-height:0;
+  border-radius:50%;transition:transform .1s;
+}
+.star svg{width:20px;height:20px;fill:var(--border);transition:fill .12s}
+.star.on svg{fill:var(--yellow)}
+.star:active{transform:scale(.85)}
+
+/* ── BARRA DE ESTRELLAS (filtro) ──────────────
+   Va SIEMPRE visible y por encima de la barra de filtros, que es plegable:
+   es el filtro que más se usa para reencontrar las fotos buenas, así que
+   tiene que estar a un clic sin desplegar nada. */
+.rate-bar{
+  display:flex;align-items:center;gap:8px;flex-wrap:nowrap;overflow-x:auto;
+  padding:7px 16px;border-bottom:1px solid var(--border);
+  background:var(--bg);flex-shrink:0;-webkit-overflow-scrolling:touch;
+}
+.rate-bar::-webkit-scrollbar{display:none}
+.rb-ico{width:16px;height:16px;fill:var(--yellow);flex-shrink:0}
+.rb-lbl{
+  font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--text2);white-space:nowrap;
+}
+.rate-bar .star svg{width:26px;height:26px}
+.rate-bar .stars-row{flex-shrink:0}
+.rb-state{font-size:.78rem;color:var(--text2);white-space:nowrap}
+.rb-state.on{color:var(--text);font-weight:500}
+.rb-chip{
+  padding:4px 12px;border-radius:16px;border:1px solid var(--border);
+  background:var(--bg);color:var(--text2);font-size:.75rem;font-family:inherit;
+  cursor:pointer;white-space:nowrap;transition:all .15s;flex-shrink:0;
+}
+.rb-chip:hover{background:var(--surface);border-color:#bbb}
+.rb-chip.on{background:#fef7e0;border-color:var(--yellow);color:#8a6100}
+.rb-clear-btn{margin-left:auto}
+
+/* estrellas de la tarjeta: sólo texto, para no meter cinco botones por foto
+   en una rejilla que puede tener miles */
+.fc-stars{
+  position:absolute;left:6px;bottom:6px;
+  color:var(--yellow);font-size:.72rem;letter-spacing:1px;line-height:1;
+  text-shadow:0 1px 3px rgba(0,0,0,.7);pointer-events:none;
+  transition:opacity .2s;
+}
+.fc:hover .fc-stars,.fc.sel .fc-stars{opacity:0}
+
+/* estrellas del panel de selección */
+.pnl-rate{display:flex;align-items:center;gap:6px}
+.pnl-rate-lbl{font-size:.78rem;color:var(--text2);flex:1}
+.pnl-rate-clear{
+  background:none;border:none;color:var(--primary);cursor:pointer;
+  font-size:.75rem;font-family:inherit;padding:4px 6px;border-radius:12px;
+}
+.pnl-rate-clear:hover{background:#e8f0fe}
+.pnl-rate.off{opacity:.45;pointer-events:none}
+
+/* estrellas del visor */
+.vw-stars{flex-shrink:0;margin-right:2px}
+.vw-stars .star svg{width:24px;height:24px;fill:rgba(255,255,255,.4)}
+.vw-stars .star.on svg{fill:var(--yellow)}
+.vw-stars .star:hover svg{fill:rgba(255,255,255,.85)}
+@media(max-width:768px){.vw-stars .star{padding:1px}.vw-stars .star svg{width:21px;height:21px}}
+
+/* el diálogo de móvil se toca con el dedo: estrellas más grandes */
+#rate-modal-stars .star svg{width:32px;height:32px}
+
 /* location multi-select dropdown */
 .fb-loc{cursor:pointer}
 .fb-loc-btn{
@@ -1051,6 +1121,16 @@ header .spacer{flex:1}
       <!-- accept=image/* + sin capture => en iPhone/iPad abre la Fototeca (galeria) -->
       <input type="file" id="upload-input" accept="image/*,.heic,.heif,.cr3,.cr2,.nef,.arw,.raf,.dng,.jpr" multiple style="display:none">
     </div>
+    <!-- RATING BAR (siempre visible: ver .rate-bar) -->
+    <div class="rate-bar" id="rate-bar">
+      <svg class="rb-ico" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+      <span class="rb-lbl">Estrellas</span>
+      <div class="stars-row" id="rb-stars"></div>
+      <button class="rb-chip" id="rb-none" title="Sólo las fotos sin clasificar">Sin estrellas</button>
+      <span class="rb-state" id="rb-state">Todas las fotos</span>
+      <button class="rb-chip rb-clear-btn" id="rb-clear">Quitar filtro</button>
+    </div>
+
     <!-- FILTER BAR -->
     <div class="filter-bar" id="filter-bar">
       <div class="fb-field fb-loc" id="filter-loc-field">
@@ -1072,6 +1152,7 @@ header .spacer{flex:1}
           <option value="new">Más recientes</option>
           <option value="old">Más antiguas</option>
           <option value="name">Nombre A-Z</option>
+          <option value="stars">Más estrellas</option>
         </select>
       </div>
       <button class="fb-clear" id="filter-clear">Limpiar</button>
@@ -1131,6 +1212,11 @@ header .spacer{flex:1}
         <strong id="sel-count">0</strong>
         <span>fotos seleccionadas</span>
       </div>
+      <div class="pnl-rate off" id="pnl-rate">
+        <span class="pnl-rate-lbl">Estrellas</span>
+        <div class="stars-row" id="pnl-stars"></div>
+        <button class="pnl-rate-clear" id="pnl-stars-clear" title="Quitar las estrellas">Quitar</button>
+      </div>
       <button class="btn btn-secondary" id="btn-select-all">Seleccionar todas</button>
       <button class="btn btn-primary" id="btn-apply" disabled>
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>
@@ -1187,6 +1273,10 @@ header .spacer{flex:1}
   <button class="sbar-btn pri" id="sbar-gps" title="Aplicar GPS">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>
     <span class="sbar-lbl">GPS</span>
+  </button>
+  <button class="sbar-btn" id="sbar-rate" title="Clasificar con estrellas">
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+    <span class="sbar-lbl">Estrellas</span>
   </button>
   <button class="sbar-btn" id="sbar-download" title="Descargar">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
@@ -1260,6 +1350,7 @@ header .spacer{flex:1}
       <span class="vw-name" id="vw-name"></span>
       <span class="vw-meta"><span id="vw-count"></span><span class="vw-ext" id="vw-ext"></span><span id="vw-date"></span></span>
     </div>
+    <div class="stars-row vw-stars" id="vw-stars" title="Clasificar (teclas 1-5, 0 para quitar)"></div>
     <button class="vw-btn" id="vw-edit-btn" title="Editar foto (girar, recortar, luz y color)">
       <svg viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
     </button>
@@ -1666,6 +1757,32 @@ header .spacer{flex:1}
   </div>
 </div>
 
+<!-- RATE SELECTION MODAL -->
+<div class="modal-overlay" id="modal-rate">
+  <div class="modal">
+    <div class="modal-title">Clasificar fotos</div>
+    <label id="rate-modal-sub">Se aplicará a la selección</label>
+    <div class="stars-row" id="rate-modal-stars" style="justify-content:center;gap:6px;margin:14px 0"></div>
+    <div id="rate-modal-box" class="res-box" style="display:none"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="btn-rate-cancel">Cancelar</button>
+      <button class="btn btn-secondary" id="btn-rate-none">Quitar estrellas</button>
+    </div>
+  </div>
+</div>
+
+<!-- ASK TO RENAME AFTER APPLYING GPS -->
+<div class="modal-overlay" id="modal-rename-ask">
+  <div class="modal">
+    <div class="modal-title">GPS aplicado</div>
+    <label id="rename-ask-txt">¿Renombrar también estas fotos?</label>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="btn-rename-ask-no">Ahora no</button>
+      <button class="btn btn-primary" id="btn-rename-ask-yes">Sí, renombrar</button>
+    </div>
+  </div>
+</div>
+
 <!-- SETTINGS MODAL -->
 <div class="modal-overlay" id="modal-settings">
   <div class="modal">
@@ -1910,7 +2027,8 @@ function makeCard(f, i) {
     fondo +
     '<div class="fc-icon">' + (isRaw ? makeRawIcon() : makeImgIcon()) + '</div>' +
     '<div class="fc-overlay"><div class="fc-check"></div></div>' +
-    '<div class="fc-name">' + f.name + folderHtml + '</div>';
+    '<div class="fc-name">' + f.name + folderHtml + '</div>' +
+    (f.rating ? '<div class="fc-stars">' + starText(f.rating) + '</div>' : '');
   attachCardInteractions(card);
   return card;
 }
@@ -2060,6 +2178,8 @@ function updateSelUI() {
   document.getElementById("btn-delete").disabled = n === 0;
   document.getElementById("mob-btn-apply").disabled = n === 0 || !hasLoc;
   document.getElementById("mob-btn-download").disabled = n === 0;
+  document.getElementById("pnl-rate").classList.toggle("off", n === 0);
+  paintStars(pnlStars, selectionRating());
 
   const bar = document.getElementById("sel-bar");
   if (n > 0) { bar.classList.add("up"); } else { bar.classList.remove("up"); }
@@ -2271,6 +2391,8 @@ function refreshFilterChip() {
 
 function applyFilters() {
   let list = allFiles.slice();
+  if (ratingFilter > 0)      list = list.filter(f => (f.rating || 0) >= ratingFilter);
+  else if (ratingFilter < 0) list = list.filter(f => !(f.rating || 0));
   if (selectedLocations.size > 0) {
     list = list.filter(f => selectedLocations.has(fileLocation(f)));
   }
@@ -2285,6 +2407,9 @@ function applyFilters() {
   if (sort === "new")  list.sort((a, b) => fileTime(b) - fileTime(a));
   else if (sort === "old")  list.sort((a, b) => fileTime(a) - fileTime(b));
   else if (sort === "name") list.sort((a, b) => a.name.localeCompare(b.name, "es"));
+  // A igualdad de estrellas, las más recientes primero
+  else if (sort === "stars") list.sort((a, b) => ((b.rating || 0) - (a.rating || 0)) ||
+                                                 (fileTime(b) - fileTime(a)));
 
   currentFiles = list;
   const cnt = document.getElementById("filter-count");
@@ -2306,6 +2431,8 @@ function applyFilters() {
 
 document.getElementById("filter-clear").addEventListener("click", () => {
   if (fbSort) fbSort.value = "new";
+  ratingFilter = 0;
+  paintRatingFilter();
   resetFilters();
   applyFilters();
 });
@@ -2315,6 +2442,174 @@ document.getElementById("chip-filter").addEventListener("click", () => {
   bar.classList.toggle("on");
   if (!bar.classList.contains("on")) closeLocMenu();
 });
+
+// ── ESTRELLAS ─────────────────────────────────────────────────────────────────
+// La clasificación vive DENTRO de la foto (XMP:Rating, el campo estándar que
+// leen Lightroom, Bridge o el Explorador de Windows): sobrevive a mover el
+// archivo, renombrarlo o borrar el índice. Aquí sólo se pinta y se pide.
+const STAR_D = "M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z";
+const STAR_MAX = 5;
+
+function starText(n) { return n > 0 ? "★".repeat(n) : ""; }
+
+function paintStars(row, value, preview) {
+  if (!preview) row.dataset.value = value;
+  row.querySelectorAll(".star").forEach(b => b.classList.toggle("on", +b.dataset.n <= value));
+}
+
+// Fila de estrellas pulsables. onPick recibe 0 al volver a pulsar la que ya
+// estaba marcada: así la misma estrella pone y quita.
+function buildStars(row, onPick) {
+  let html = "";
+  for (let n = 1; n <= STAR_MAX; n++) {
+    html += '<button type="button" class="star" data-n="' + n + '" title="' +
+      n + (n === 1 ? " estrella" : " estrellas") +
+      '"><svg viewBox="0 0 24 24"><path d="' + STAR_D + '"/></svg></button>';
+  }
+  row.innerHTML = html;
+  row.addEventListener("mouseover", (e) => {
+    const b = e.target.closest(".star");
+    if (b) paintStars(row, +b.dataset.n, true);        // vista previa al pasar
+  });
+  row.addEventListener("mouseleave", () => paintStars(row, +(row.dataset.value || 0)));
+  row.addEventListener("click", (e) => {
+    const b = e.target.closest(".star");
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const n = +b.dataset.n;
+    onPick(n === +(row.dataset.value || 0) ? 0 : n);
+  });
+  paintStars(row, 0);
+}
+
+function paintCardStars(card, stars) {
+  let el = card.querySelector(".fc-stars");
+  if (!stars) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "fc-stars";
+    card.appendChild(el);
+  }
+  el.textContent = starText(stars);
+}
+
+// Al clasificar no se vuelve a filtrar la rejilla aunque haya un filtro de
+// estrellas puesto: que una foto desaparezca bajo el dedo justo al puntuarla
+// es peor que verla hasta el siguiente cambio de filtro o recarga.
+function setLocalRating(paths, stars) {
+  const set = new Set(paths);
+  [allFiles, currentFiles].forEach(arr => arr.forEach(f => {
+    if (set.has(f.path)) f.rating = stars;
+  }));
+  currentFiles.forEach((f, i) => {
+    if (!set.has(f.path)) return;
+    const card = document.querySelector('.fc[data-index="' + i + '"]');
+    if (card) paintCardStars(card, stars);
+  });
+}
+
+async function applyRating(paths, stars) {
+  if (!paths.length) return null;
+  try {
+    const res = await fetch("/api/rating", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ files: paths, rating: stars })
+    });
+    const data = await res.json();
+    const fallidas = new Set();
+    (data.errors || []).forEach(e => fallidas.add(e.file));
+    const hechas = paths.filter(p => !fallidas.has(p) && !fallidas.has(p.split("/").pop()));
+    setLocalRating(hechas, stars);
+    return data;
+  } catch (e) {
+    return { ok: [], errors: [{ file: "", error: "Error de conexión" }] };
+  }
+}
+
+// Las estrellas que comparte la selección (0 si no coinciden entre sí)
+function selectionRating() {
+  let val = null;
+  for (const f of currentFiles) {
+    if (!selectedFiles.has(f.path)) continue;
+    const r = f.rating || 0;
+    if (val === null) val = r;
+    else if (val !== r) return 0;
+  }
+  return val || 0;
+}
+
+async function rateSelection(stars) {
+  const paths = Array.from(selectedFiles);
+  if (!paths.length) return;
+  paintStars(pnlStars, stars);
+  const data = await applyRating(paths, stars);
+  const err = data && data.errors ? data.errors.length : 0;
+  if (err) alert("No se pudieron clasificar " + err + " foto(s).");
+  paintStars(pnlStars, selectionRating());
+}
+
+// ── Filtro por estrellas (barra siempre visible) ──────────────────────────────
+// 0 = todas · 1..5 = esa estrella o más · -1 = sólo las que no tienen ninguna
+let ratingFilter = 0;
+const rbStars = document.getElementById("rb-stars");
+const pnlStars = document.getElementById("pnl-stars");
+
+function paintRatingFilter() {
+  paintStars(rbStars, ratingFilter > 0 ? ratingFilter : 0);
+  document.getElementById("rb-none").classList.toggle("on", ratingFilter < 0);
+  const st = document.getElementById("rb-state");
+  st.textContent = ratingFilter > 0
+    ? ratingFilter + (ratingFilter === 1 ? " estrella o más" : " estrellas o más")
+    : (ratingFilter < 0 ? "Sólo sin clasificar" : "Todas las fotos");
+  st.classList.toggle("on", ratingFilter !== 0);
+  document.getElementById("rb-clear").style.visibility = ratingFilter === 0 ? "hidden" : "visible";
+}
+
+function setRatingFilter(v) {
+  ratingFilter = v;
+  paintRatingFilter();
+  applyFilters();
+}
+
+buildStars(rbStars, (n) => setRatingFilter(n));
+paintRatingFilter();
+document.getElementById("rb-none").addEventListener("click",
+  () => setRatingFilter(ratingFilter < 0 ? 0 : -1));
+document.getElementById("rb-clear").addEventListener("click", () => setRatingFilter(0));
+
+// ── Clasificar la selección ───────────────────────────────────────────────────
+buildStars(pnlStars, (n) => rateSelection(n));
+document.getElementById("pnl-stars-clear").addEventListener("click", () => rateSelection(0));
+
+// En móvil no hay panel lateral: la barra flotante abre este diálogo
+const rateModalStars = document.getElementById("rate-modal-stars");
+function openRateModal() {
+  const n = selectedFiles.size;
+  if (n === 0) return;
+  document.getElementById("rate-modal-sub").textContent =
+    "Se aplicará a " + n + (n === 1 ? " foto" : " fotos");
+  paintStars(rateModalStars, selectionRating());
+  document.getElementById("modal-rate").classList.add("on");
+}
+function closeRateModal() { document.getElementById("modal-rate").classList.remove("on"); }
+buildStars(rateModalStars, (n) => { closeRateModal(); rateSelection(n); });
+document.getElementById("btn-rate-cancel").addEventListener("click", closeRateModal);
+document.getElementById("btn-rate-none").addEventListener("click",
+  () => { closeRateModal(); rateSelection(0); });
+document.getElementById("sbar-rate").addEventListener("click", openRateModal);
+
+// ── Clasificar la foto abierta en el visor ────────────────────────────────────
+const vwStars = document.getElementById("vw-stars");
+async function rateViewerPhoto(stars) {
+  const f = currentFiles[viewerIndex];
+  if (!f) return;
+  paintStars(vwStars, stars);                 // respuesta inmediata
+  await applyRating([f.path], stars);
+  if (currentFiles[viewerIndex] === f) paintStars(vwStars, f.rating || 0);
+}
+buildStars(vwStars, (n) => rateViewerPhoto(n));
 
 // ── Location search ───────────────────────────────────────────────────────────
 function setupSearch(inputId, sugsId, coordsCardId, latId, lonId, applyBtnId) {
@@ -2379,6 +2674,7 @@ async function applyGps(btnId, boxId, altId) {
   const btn = document.getElementById(btnId);
   const box = document.getElementById(boxId);
   const files = Array.from(selectedFiles);
+  let hechas = [];
   btn.disabled = true;
   btn.innerHTML = '<div class="spinner"></div> Aplicando...';
   box.style.display = "flex";
@@ -2392,6 +2688,10 @@ async function applyGps(btnId, boxId, altId) {
     });
     const data = await res.json();
     const ok = data.ok.length, err = data.errors.length;
+    // Las que sí recibieron las coordenadas: son las que tiene sentido ofrecer
+    // para renombrar, porque el nombre sale del lugar que se acaba de escribir
+    const fallidas = new Set(data.errors.map(e => e.file));
+    hechas = files.filter(p => !fallidas.has(p) && !fallidas.has(p.split("/").pop()));
     if (err === 0) {
       box.className = "res-box res-ok";
       box.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>' + ok + ' foto(s) actualizadas';
@@ -2411,7 +2711,36 @@ async function applyGps(btnId, boxId, altId) {
   selectedFiles.clear();
   document.querySelectorAll(".fc.sel").forEach(c => c.classList.remove("sel"));
   updateSelUI();
+  // El flujo de trabajo normal es subir, poner GPS y renombrar. Ya tenemos el
+  // lugar escrito en la foto, así que se ofrece encadenar el renombrado en vez
+  // de obligar a volver a seleccionarlas.
+  if (hechas.length) askRenameAfterGps(hechas);
 }
+
+// ── ¿Renombrar también? ───────────────────────────────────────────────────────
+let renameAskFiles = null;
+
+function askRenameAfterGps(paths) {
+  renameAskFiles = paths;
+  closeGpsSheet();
+  document.getElementById("rename-ask-txt").textContent =
+    "Se ha guardado la ubicación en " + paths.length +
+    (paths.length === 1 ? " foto." : " fotos.") +
+    " ¿Quieres renombrarlas también por fecha y lugar?";
+  document.getElementById("modal-rename-ask").classList.add("on");
+}
+
+function closeRenameAsk() {
+  document.getElementById("modal-rename-ask").classList.remove("on");
+  renameAskFiles = null;
+}
+
+document.getElementById("btn-rename-ask-no").addEventListener("click", closeRenameAsk);
+document.getElementById("btn-rename-ask-yes").addEventListener("click", () => {
+  const paths = renameAskFiles || [];
+  closeRenameAsk();
+  if (paths.length) runRename(paths);
+});
 
 document.getElementById("btn-apply").addEventListener("click", () => applyGps("btn-apply", "result-box", "alt-input"));
 document.getElementById("mob-btn-apply").addEventListener("click", () => applyGps("mob-btn-apply", "mob-result-box", "mob-alt-input"));
@@ -2419,10 +2748,17 @@ document.getElementById("mob-btn-apply").addEventListener("click", () => applyGp
 // ── Rename ────────────────────────────────────────────────────────────────────
 async function doRename() {
   if (selectedFiles.size === 0) return;
+  if (!confirm("Renombrar " + selectedFiles.size + " foto(s) basándose en EXIF y ubicación?")) return;
+  await runRename(Array.from(selectedFiles));
+}
+
+// El renombrado en sí, sobre una lista explícita de fotos: así lo puede llamar
+// tanto el botón (con la selección) como el paso siguiente a aplicar GPS.
+async function runRename(paths) {
+  if (!paths.length) return;
   const locName = currentLocationName ||
     document.getElementById("location-search").value.trim() ||
     document.getElementById("mob-location-search").value.trim() || "";
-  if (!confirm("Renombrar " + selectedFiles.size + " foto(s) basándose en EXIF y ubicación?")) return;
 
   const btn = document.getElementById("btn-rename");
   const box = document.getElementById("rename-box");
@@ -2436,7 +2772,7 @@ async function doRename() {
     const res = await fetch("/api/rename", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ location_name: locName, files: Array.from(selectedFiles) })
+      body: JSON.stringify({ location_name: locName, files: paths })
     });
     const data = await res.json();
     const errFiles = data.errors.map(e => e.file);
@@ -2984,6 +3320,11 @@ function viewerKeys(e) {
   if (e.key === "Escape") closeViewer();
   else if (e.key === "ArrowLeft") viewerNav(-1);
   else if (e.key === "ArrowRight") viewerNav(1);
+  // Clasificar sin soltar el teclado: 1-5 pone estrellas, 0 las quita
+  else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key >= "0" && e.key <= "5") {
+    e.preventDefault();
+    rateViewerPhoto(+e.key);
+  }
 }
 
 function viewerNav(dir) {
@@ -3014,6 +3355,7 @@ function showViewerPhoto() {
   document.getElementById("vw-prev").classList.toggle("hidden", viewerIndex === 0);
   document.getElementById("vw-next").classList.toggle("hidden", viewerIndex === currentFiles.length - 1);
   updateViewerSelBtn();
+  paintStars(vwStars, f.rating || 0);
   showViewerDate(f);
 
   const spinner = document.getElementById("vw-spinner");
@@ -3405,6 +3747,7 @@ let mapAlbum = null;
 
 function mapPhotoToFile(ph) {
   return {name: ph.name, path: ph.path, ext: ph.ext || "", mtime: ph.mtime || 0,
+          rating: ph.rating || 0,
           date: (ph.date || "").replace(/^(\d{4}):(\d{2}):(\d{2})/, "$1-$2-$3")};
 }
 

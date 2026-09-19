@@ -362,6 +362,61 @@ fecha solo si tiene forma de fecha; si no la tiene:
 Lo mismo con el renombrado: un valor que no es una fecha no puede acabar en el
 nombre del archivo.
 
+## Estrellas
+
+Cada foto se puede clasificar de 1 a 5 estrellas para marcar las buenas y
+volver a encontrarlas despues.
+
+Donde se ponen:
+
+- **En el visor**: la fila de estrellas de la barra superior, o directamente con
+  el teclado —teclas `1` a `5` para puntuar y `0` para quitar la puntuacion—,
+  sin soltar las flechas de pasar fotos.
+- **Sobre una seleccion**: la fila de estrellas del panel derecho (en movil, el
+  boton **Estrellas** de la barra flotante) aplica la misma puntuacion a todas
+  las fotos seleccionadas de una vez.
+
+En la rejilla, las fotos puntuadas ensenan sus estrellas en la esquina inferior.
+
+**El filtro de estrellas va SIEMPRE visible**, en su propia barra encima de la
+de filtros: es lo primero que se ve al entrar en una carpeta y no hay que
+desplegar nada para usarlo. Pulsando una estrella se ven las fotos con **esa
+puntuacion o mas** (volver a pulsarla quita el filtro); **Sin estrellas** deja
+solo las que no tienen ninguna. El filtro se conserva al cambiar de carpeta,
+igual que el criterio de orden, y en el desplegable de **Filtros** hay ademas
+un orden **Mas estrellas**.
+
+### Donde se guardan
+
+En `XMP:Rating`, que es el campo **estandar** de 0 a 5: el mismo que leen y
+escriben Lightroom, Bridge, digiKam o el Explorador de Windows. La clasificacion
+viaja por tanto DENTRO del archivo, asi que sobrevive a mover la foto a otro
+disco, renombrarla o borrar el indice, y las fotos que ya llegaran puntuadas
+desde otro programa aparecen ya clasificadas. Quitar las estrellas borra el
+campo en vez de dejar un `0` escrito.
+
+El indice guarda una copia de la puntuacion (columna `rating`) para que filtrar
+sea instantaneo: preguntarsela a ExifTool foto a foto seria un proceso por
+tarjeta. La primera vez que arranca esta version, el indice marca sus fotos para
+releerlas una vez y recoger las puntuaciones que ya tuvieran.
+
+Al escribir la puntuacion se conserva **exacta** la fecha de modificacion del
+archivo (`-P` y `os.utime`). No es un detalle menor: la clave de la cache de
+miniaturas incluye esa fecha, y clasificar una carpeta a base de clics obligaria
+a regenerar las miniaturas de unas fotos que no han cambiado de aspecto. Lo que
+si cambia es el tamano del archivo, asi que una copia de seguridad que compare
+tamano y fecha (rsync, Hyper Backup) sigue viendo la foto como modificada.
+
+## Renombrar despues de aplicar GPS
+
+El flujo normal es subir la foto, ponerle la ubicacion y renombrarla. Por eso,
+al terminar de **Aplicar GPS** —a una foto o a una seleccion entera— la app
+pregunta si se quieren **renombrar tambien** esas mismas fotos. Aceptando, se
+encadena el renombrado por EXIF sobre exactamente las fotos que recibieron las
+coordenadas (las que fallaron quedan fuera), sin tener que volver a
+seleccionarlas. El nombre sale del lugar que se acaba de escribir, que ya esta
+en la foto.
+
 ## Favoritos
 
 La estrella del panel de carpetas marca la carpeta que se esta viendo. Los

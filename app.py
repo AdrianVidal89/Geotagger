@@ -376,6 +376,37 @@ def _gps_value(row, name):
             return val
     return _tag_value(row, name)
 
+# =============================================================================
+# LAS ESTRELLAS (clasificacion de 1 a 5)
+# Se guardan en XMP:Rating, que es el campo ESTANDAR (0-5) que leen y escriben
+# Lightroom, Bridge, digiKam o el Explorador de Windows. Asi la clasificacion
+# viaja DENTRO de la foto: sigue ahi si el archivo se copia a otro disco, se
+# renombra o se borra el indice de esta aplicacion.
+# =============================================================================
+
+RATING_MAX = 5
+RATING_ARGS = ["-XMP:Rating", "-EXIF:Rating"]
+
+def _clamp_rating(value):
+    """Un numero de 0 a 5, o None si no hay nada que entender. El -1 de XMP
+    ("rechazada") se queda en 0: aqui solo hay estrellas o ninguna."""
+    if value is None or value == "":
+        return None
+    try:
+        n = int(round(float(value)))
+    except (TypeError, ValueError):
+        return None
+    return max(0, min(RATING_MAX, n))
+
+def _rating_value(row):
+    """Las estrellas de una respuesta pedida con -G0. XMP manda: es donde las
+    escribe esta aplicacion y donde las buscan los demas programas."""
+    for grupo in ("XMP:", "EXIF:"):
+        n = _clamp_rating(row.get(grupo + "Rating"))
+        if n is not None:
+            return n
+    return _clamp_rating(_tag_value(row, "Rating"))
+
 def _resolve_photo_date(row):
     """De lo que devuelve ExifTool, la primera fecha valida por orden de
     preferencia. Devuelve (fecha, de que campo salio)."""
@@ -1461,11 +1492,15 @@ def _index_db():
                 path TEXT PRIMARY KEY,
                 mtime INTEGER, size INTEGER,
                 lat REAL, lon REAL, date TEXT,
-                blur TEXT)""")
+                blur TEXT, rating INTEGER)""")
             try:
                 # Bases de datos de versiones anteriores: se les anade la
                 # columna y el proximo repaso la va rellenando.
                 conn.execute("ALTER TABLE photos ADD COLUMN blur TEXT")
+            except sqlite3.OperationalError:
+                pass                                 # ya la tiene
+            try:
+                conn.execute("ALTER TABLE photos ADD COLUMN rating INTEGER")
             except sqlite3.OperationalError:
                 pass                                 # ya la tiene
             # Nombres de lugar ya consultados: Nominatim obliga a esperar un
@@ -1476,6 +1511,7 @@ def _index_db():
                 key TEXT PRIMARY KEY, value TEXT)""")
             conn.commit()
         _index_migrate_dates(conn)
+        _index_migrate_ratings(conn)
         _index_conn = conn
     return conn
 
@@ -1494,6 +1530,25 @@ def _index_migrate_dates(conn):
             conn.execute("UPDATE photos SET mtime = -1 WHERE date IS NULL OR date = ''")
             conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('date_tags', ?)",
                          (DATE_TAGS_VERSION,))
+            conn.commit()
+    except sqlite3.Error:
+        pass
+
+# Las estrellas llegaron despues que el indice: las fotos ya indexadas tienen
+# la columna vacia y su archivo no ha cambiado, asi que el repaso normal ni las
+# miraria. Se marcan sucias UNA sola vez y el siguiente repaso las relee (con
+# ellas se recupera tambien lo que ya estuviera puntuado en Lightroom o Windows).
+RATING_TAGS_VERSION = "1"
+
+def _index_migrate_ratings(conn):
+    try:
+        row = conn.execute("SELECT value FROM meta WHERE key = 'rating_tags'").fetchone()
+        if row and row[0] == RATING_TAGS_VERSION:
+            return
+        with _index_write:
+            conn.execute("UPDATE photos SET mtime = -1")
+            conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('rating_tags', ?)",
+                         (RATING_TAGS_VERSION,))
             conn.commit()
     except sqlite3.Error:
         pass
@@ -1572,7 +1627,8 @@ def _index_read_batch(paths):
     # la misma llamada, que no cuesta mas.
     cmd = ["exiftool", "-fast2", "-json", "-n", "-q", "-q", "-b",
            "-ThumbnailImage",
-           "-GPSLatitude", "-GPSLongitude", "-SourceFile"] + PHOTO_DATE_ARGS + paths
+           "-GPSLatitude", "-GPSLongitude", "-SourceFile"] \
+          + RATING_ARGS + PHOTO_DATE_ARGS + paths
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         items = json.loads(result.stdout) if result.stdout.strip() else []
@@ -1601,7 +1657,7 @@ def _index_read_batch(paths):
         else:
             crudo = b""
         read[os.path.abspath(src)] = (lat, lon, _resolve_photo_date(item)[0],
-                                      _lqip_from_bytes(crudo))
+                                      _lqip_from_bytes(crudo), _rating_value(item))
     return read
 
 def _index_scan(base):
@@ -1634,13 +1690,14 @@ def _index_scan(base):
         read = _index_read_batch(batch)
         rows = []
         for path in batch:
-            lat, lon, date, blur = read.get(path, (None, None, "", None))
+            lat, lon, date, blur, rating = read.get(path, (None, None, "", None, None))
             mtime, size = current[path]
-            rows.append((path, mtime, size, lat, lon, date, blur))
+            rows.append((path, mtime, size, lat, lon, date, blur, rating))
         with _index_write:
             conn.executemany(
-                "INSERT OR REPLACE INTO photos (path, mtime, size, lat, lon, date, blur) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+                "INSERT OR REPLACE INTO photos "
+                "(path, mtime, size, lat, lon, date, blur, rating) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
             conn.commit()
         _index_state["done"] += len(batch)
         # Un respiro entre lotes: el repaso es de fondo y no debe comerse el
@@ -1678,7 +1735,7 @@ def _index_photos(base):
     """Fotos CON coordenadas bajo base, tal como las conoce el indice."""
     lo, hi = _index_range(base)
     return _index_db().execute(
-        "SELECT path, lat, lon, date, mtime FROM photos "
+        "SELECT path, lat, lon, date, mtime, rating FROM photos "
         "WHERE path >= ? AND path < ? AND lat IS NOT NULL AND lon IS NOT NULL",
         (lo, hi)).fetchall()
 
@@ -1691,13 +1748,13 @@ def _index_dates(folder):
     out, sucias = {}, []
     try:
         lo, hi = _index_range(folder)
-        for path, mtime, size, date, blur in _index_db().execute(
-                "SELECT path, mtime, size, date, blur FROM photos "
+        for path, mtime, size, date, blur, rating in _index_db().execute(
+                "SELECT path, mtime, size, date, blur, rating FROM photos "
                 "WHERE path >= ? AND path < ?", (lo, hi)).fetchall():
             if date and not _clean_date(date):
                 sucias.append(path)
                 continue
-            out[path] = (mtime, size, date or "", blur)
+            out[path] = (mtime, size, date or "", blur, _clamp_rating(rating) or 0)
     except Exception:
         pass
     for path in sucias:
@@ -1740,8 +1797,8 @@ def _index_without_gps(base):
     """Fotos que el indice sabe que NO tienen coordenadas."""
     lo, hi = _index_range(base)
     return _index_db().execute(
-        "SELECT path, mtime, date FROM photos WHERE path >= ? AND path < ? AND lat IS NULL",
-        (lo, hi)).fetchall()
+        "SELECT path, mtime, date, rating FROM photos "
+        "WHERE path >= ? AND path < ? AND lat IS NULL", (lo, hi)).fetchall()
 
 # ~1,1 km: el nombre que devuelve Nominatim a este nivel de zoom es el del
 # pueblo o barrio, asi que afinar mas solo multiplica las consultas
@@ -1818,6 +1875,26 @@ def _index_set_date(path, exif_date):
     except Exception:
         pass
 
+def _index_set_rating(path, rating):
+    """Tras escribir las estrellas ya las sabemos: se anotan en el indice en vez
+    de marcar la foto para releerla. Si la foto todavia no estaba indexada se
+    deja marcada para releer (mtime = -1): apuntarla como al dia con el resto de
+    campos vacios haria que el repaso no llegase nunca a leerle la fecha."""
+    try:
+        st = os.stat(str(path))
+        conn = _index_db()
+        with _index_write:
+            cur = conn.execute(
+                "UPDATE photos SET mtime = ?, size = ?, rating = ? WHERE path = ?",
+                (int(st.st_mtime), st.st_size, int(rating), str(path)))
+            if cur.rowcount == 0:
+                conn.execute(
+                    "INSERT OR REPLACE INTO photos (path, mtime, size, rating) "
+                    "VALUES (?, -1, ?, ?)", (str(path), st.st_size, int(rating)))
+            conn.commit()
+    except Exception:
+        pass
+
 def _index_stale(path):
     """Marca una foto para que el proximo repaso la relea (sin perder lo que ya
     sabemos de ella, que sigue siendo valido para el mapa)."""
@@ -1857,8 +1934,9 @@ def _index_copy(old, new):
         conn = _index_db()
         with _index_write:
             conn.execute(
-                "INSERT OR REPLACE INTO photos (path, mtime, size, lat, lon, date, blur) "
-                "SELECT ?, ?, ?, lat, lon, date, blur FROM photos WHERE path = ?",
+                "INSERT OR REPLACE INTO photos "
+                "(path, mtime, size, lat, lon, date, blur, rating) "
+                "SELECT ?, ?, ?, lat, lon, date, blur, rating FROM photos WHERE path = ?",
                 (str(new), int(st.st_mtime), st.st_size, str(old)))
             conn.commit()
     except Exception:
@@ -2094,6 +2172,10 @@ def browse():
                 "date": _ui_date(fila[2]) if al_dia else "",
                 # 142 bytes que evitan un hueco gris (ver LA MINIATURA DIMINUTA)
                 "blur": (fila[3] or "") if al_dia else "",
+                # Las estrellas van en el listado para que el filtro sea
+                # instantaneo: preguntarlas foto a foto seria una peticion por
+                # tarjeta (ver LAS ESTRELLAS)
+                "rating": fila[4] if al_dia else 0,
             })
     # Las fotos mas recientes primero (por fecha de modificacion del archivo).
     files.sort(key=lambda f: f["mtime"], reverse=True)
@@ -2409,6 +2491,85 @@ def gpsinfo():
         return jsonify({"has_gps": True, "lat": str(lat), "lon": str(lon)})
     except Exception as e:
         return jsonify({"has_gps": False, "error": str(e)})
+
+@app.route("/api/rating", methods=["POST"])
+def write_rating():
+    """Pone las mismas estrellas (0-5) a las fotos elegidas.
+
+    Se escribe en XMP:Rating con -overwrite_original, igual que el GPS: es una
+    anotacion de metadatos, NO se toca ni un pixel.
+
+    La fecha de modificacion del archivo se deja EXACTAMENTE como estaba (-P la
+    conserva al segundo, y luego se restaura al nanosegundo). No es un capricho:
+    las miniaturas y las vistas previas se guardan con una clave que incluye esa
+    fecha, y clasificar una carpeta a base de clics obligaria a regenerarlas
+    todas para unas fotos que no han cambiado de aspecto. Lo que si cambia es el
+    tamano del archivo, asi que una copia de seguridad que compare tamano y
+    fecha -rsync, Hyper Backup- sigue viendo la foto como modificada.
+    """
+    data = request.json or {}
+    stars = _clamp_rating(data.get("rating"))
+    if stars is None:
+        return jsonify({"error": "estrellas no validas"}), 400
+    files = data.get("files") or []
+
+    targets, sellos, ok, errors = [], {}, [], []
+    for rel in files:
+        path = _resolve_path(rel)
+        if path is None or not path.exists():
+            errors.append({"file": rel, "error": "no existe o ruta invalida"})
+            continue
+        if path.suffix.lower() not in SUPPORTED_EXTS:
+            errors.append({"file": path.name, "error": "formato no soportado"})
+            continue
+        try:
+            path = sanitize_path(path)
+            st = os.stat(str(path))
+            sellos[str(path)] = (st.st_atime_ns, st.st_mtime_ns)
+            targets.append(path)
+        except Exception as e:
+            errors.append({"file": path.name, "error": str(e)})
+
+    # Quitar las estrellas BORRA el campo en vez de dejar un 0 escrito: una foto
+    # sin clasificar tiene que quedar como estaba antes de tocarla.
+    args = ["-P", "-XMP:Rating=" + (str(stars) if stars else "")]
+
+    def anotar(path):
+        sello = sellos.get(str(path))
+        if sello:
+            try:
+                os.utime(str(path), ns=sello)
+            except OSError:
+                pass                       # no es grave: solo cuesta rehacer la miniatura
+        # A diferencia del GPS no se llama a _after_write: los pixeles no han
+        # cambiado, asi que las miniaturas guardadas siguen siendo validas.
+        _trigger_reindex(path)
+        _index_set_rating(path, stars)
+        ok.append(path.name)
+
+    for chunk in _chunks(targets, EXIFTOOL_CHUNK):
+        try:
+            result = _run_exiftool_batch(args, chunk)
+        except Exception as e:
+            for path in chunk:
+                errors.append({"file": path.name, "error": str(e)})
+            continue
+        # Volver a poner las mismas estrellas no cambia nada ("unchanged"), asi
+        # que aqui no sirve contar las actualizadas: lo que delata un fallo es
+        # el codigo de salida, y entonces se repite una a una para saber cual.
+        if result.returncode != 0:
+            for path in chunk:
+                try:
+                    uno = _exiftool_write(args, [path])
+                    if uno.returncode != 0:
+                        raise RuntimeError(uno.stderr or "ExifTool no pudo escribir")
+                    anotar(path)
+                except Exception as e:
+                    errors.append({"file": path.name, "error": str(e)})
+            continue
+        for path in chunk:
+            anotar(path)
+    return jsonify({"ok": ok, "errors": errors, "rating": stars})
 
 @app.route("/api/dateinfo")
 def dateinfo():
@@ -2799,7 +2960,7 @@ def gps_map():
     # repaso en segundo plano: la interfaz va completando el mapa sola
     _index_request(root)
     photos = []
-    for path, lat, lon, date, mtime in _index_photos(base):
+    for path, lat, lon, date, mtime, rating in _index_photos(base):
         try:
             relative = Path(path).relative_to(root)
         except Exception:
@@ -2816,6 +2977,7 @@ def gps_map():
             # mapa se puede abrir como un album sin volver a leer nada
             "mtime": mtime or 0,
             "ext": os.path.splitext(path)[1].lower(),
+            "rating": _clamp_rating(rating) or 0,
         })
     return jsonify({
         "photos": photos,
@@ -2879,7 +3041,7 @@ def missing_gps():
     # Del indice: antes esto lanzaba un ExifTool POR FOTO
     _index_request(root)
     found = []
-    for path, mtime, date in _index_without_gps(base):
+    for path, mtime, date, rating in _index_without_gps(base):
         item = Path(path)
         if not item.exists():
             continue
@@ -2895,6 +3057,7 @@ def missing_gps():
             "folder": "" if folder == "." else folder,
             "mtime": mtime if mtime and mtime > 0 else 0,
             "date": _ui_date(date),
+            "rating": _clamp_rating(rating) or 0,
         })
     found.sort(key=lambda f: f["mtime"], reverse=True)
     return jsonify({"files": found, "count": len(found), "index": _index_status_dict()})
