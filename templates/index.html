@@ -4,6 +4,23 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>GeoTagger</title>
+<script>
+// Tema elegido, aplicado ANTES de pintar nada (si no, se veria un fogonazo del
+// tema claro). Las fuentes del tema Tron solo se piden si esta activo.
+function loadTronFonts() {
+  if (document.getElementById("tron-fonts")) return;
+  const l = document.createElement("link");
+  l.id = "tron-fonts"; l.rel = "stylesheet";
+  l.href = "https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700&family=Rajdhani:wght@500;600;700&display=swap";
+  document.head.appendChild(l);
+}
+try {
+  if (localStorage.getItem("gt-theme") === "tron") {
+    document.documentElement.dataset.theme = "tron";
+    loadTronFonts();
+  }
+} catch (e) {}
+</script>
 <style>
 :root {
   --bg: #fff;
@@ -1048,6 +1065,286 @@ header .spacer{flex:1}
   .files-grid{grid-template-columns:repeat(3,1fr);gap:2px}
 }
 </style>
+<style>
+/* =============================================================================
+   TEMA TRON (LEGACY)
+   Todo cuelga de html[data-theme="tron"]: con el tema clásico nada de esto
+   aplica y la app se pinta exactamente igual que antes.
+   Pensado para NO costar velocidad en una galería de miles de fotos:
+   - Las tarjetas no llevan sombras ni filtros en reposo: el brillo neón solo
+     aparece al pasar el ratón o al seleccionar (una tarjeta cada vez).
+   - La rejilla del fondo es un degradado pintado una sola vez con las
+     tarjetas (attachment:local): hacer scroll no la repinta.
+   - Nada de selectores universales (*, ::selection, ::-webkit-scrollbar):
+     se evalúan en cada elemento de la rejilla.
+   - Lo único animado es la estela de luz de la cabecera, un elemento de 2 px
+     que se mueve con transform (lo mueve la GPU, sin repintar nada). Se para
+     en móvil y con "reducir movimiento".
+   - Las fuentes se piden solo al activar el tema y con display=swap: nunca
+     bloquean el primer pintado.
+   ============================================================================= */
+html[data-theme="tron"]{
+  --bg:#05080d;
+  --surface:#0a1520;
+  --border:#123445;
+  --primary:#00e5ff;
+  --primary-dk:#00b8d4;
+  --accent:#ff6a00;
+  --text:#d6f7ff;
+  --text2:#6fa6b8;
+  --green:#00ffa3;
+  --yellow:#ffd23f;
+  --tint:rgba(0,229,255,.1);
+  --glow:0 0 6px rgba(0,229,255,.55),0 0 18px rgba(0,229,255,.25);
+  --glow-o:0 0 6px rgba(255,106,0,.6),0 0 18px rgba(255,106,0,.25);
+  --on-primary:#00131a;
+  --shadow:0 0 0 1px rgba(0,229,255,.08);
+  --shadow-md:0 0 0 1px rgba(0,229,255,.35),0 8px 30px rgba(0,0,0,.7);
+  --tron-font:'Rajdhani',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --tron-title:'Orbitron','Rajdhani',sans-serif;
+  color-scheme:dark;
+}
+html[data-theme="tron"] body{font-family:var(--tron-font);font-weight:500;background:var(--bg)}
+html[data-theme="tron"] button,
+html[data-theme="tron"] input,
+html[data-theme="tron"] select{font-family:inherit}
+
+/* scrollbars de neón. scrollbar-color se hereda: basta con ponerlo en <html>.
+   Nada de "html[...] *" ni "::-webkit-scrollbar" sueltos: son selectores que
+   el navegador evalúa en CADA elemento, y medido en una carpeta de 1.500 fotos
+   subían un 50 % el recálculo de estilos al hacer scroll. Por eso tampoco hay
+   un ::selection de color: costaba lo mismo */
+html[data-theme="tron"]{scrollbar-color:#1b5a70 transparent}
+
+/* ── cabecera: línea de luz y estela de moto ── */
+html[data-theme="tron"] header{
+  position:relative;background:linear-gradient(#071019,#05080d);
+  border-bottom:1px solid var(--primary);box-shadow:0 1px 12px rgba(0,229,255,.35);
+  overflow:hidden;
+}
+html[data-theme="tron"] header::after{
+  content:"";position:absolute;left:0;bottom:-1px;height:2px;width:30%;
+  background:linear-gradient(90deg,transparent,var(--accent) 70%,#fff);
+  box-shadow:var(--glow-o);transform:translateX(-100%);
+  animation:tron-cycle 7s cubic-bezier(.6,0,.4,1) infinite;pointer-events:none;
+}
+@keyframes tron-cycle{0%{transform:translateX(-100%)}55%,100%{transform:translateX(340%)}}
+html[data-theme="tron"] .logo-mark{
+  background:transparent;border:2px solid var(--primary);box-shadow:var(--glow),inset 0 0 8px rgba(0,229,255,.4);
+}
+html[data-theme="tron"] .logo-mark svg{fill:var(--primary)}
+html[data-theme="tron"] .logo:hover .logo-mark{background:var(--tint);border-color:var(--accent);box-shadow:var(--glow-o)}
+html[data-theme="tron"] .logo:hover .logo-mark svg{fill:var(--accent)}
+html[data-theme="tron"] .logo-name{
+  font-family:var(--tron-title);font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+  font-size:.95rem;color:var(--primary);text-shadow:0 0 8px rgba(0,229,255,.6);
+}
+html[data-theme="tron"] .hdr-btn:hover{background:var(--tint);color:var(--primary)}
+
+/* ── rótulos en mayúsculas espaciadas, estilo HUD ── */
+html[data-theme="tron"] .sidebar-lbl,
+html[data-theme="tron"] .wr-lbl,
+html[data-theme="tron"] .sec-lbl,
+html[data-theme="tron"] .rb-lbl,
+html[data-theme="tron"] .loc-menu-head{font-family:var(--tron-title);letter-spacing:.16em;color:var(--primary);opacity:.8}
+html[data-theme="tron"] .modal-title,
+html[data-theme="tron"] .sheet-title{font-family:var(--tron-title);letter-spacing:.08em;text-transform:uppercase;color:var(--primary);font-size:.9rem}
+
+/* ── fondo: rejilla de la Red bajo la galería ──
+   Va en el propio contenedor que hace scroll y con attachment:local, de modo
+   que se pinta UNA vez junto con las tarjetas y el scroll lo mueve la GPU.
+   Detrás de un contenedor transparente habría que recomponerla en cada paso. */
+html[data-theme="tron"] .content{
+  background:
+    linear-gradient(rgba(0,229,255,.05) 1px,transparent 1px) 0 0/40px 40px local,
+    linear-gradient(90deg,rgba(0,229,255,.05) 1px,transparent 1px) 0 0/40px 40px local,
+    var(--bg);
+}
+html[data-theme="tron"] .top-bar,
+html[data-theme="tron"] .rate-bar{background:rgba(5,8,13,.85)}
+html[data-theme="tron"] .sidebar,
+html[data-theme="tron"] .panel{background:linear-gradient(180deg,#060c13,#05080d)}
+html[data-theme="tron"] .sidebar{border-right-color:rgba(0,229,255,.35)}
+html[data-theme="tron"] .panel{border-left-color:rgba(0,229,255,.35)}
+
+/* ── tintes que el tema clásico tiene fijos en azul claro ── */
+html[data-theme="tron"] .wr-star:hover,
+html[data-theme="tron"] .wr-change:hover,
+html[data-theme="tron"] .fb-clear:hover,
+html[data-theme="tron"] .pnl-rate-clear:hover,
+html[data-theme="tron"] .btn-secondary:not(:disabled):hover{background:var(--tint);border-color:var(--primary)}
+html[data-theme="tron"] .fav-item.cur,
+html[data-theme="tron"] .tree-item.active{
+  background:var(--tint);color:var(--primary);box-shadow:inset 3px 0 0 var(--primary);
+  text-shadow:0 0 6px rgba(0,229,255,.5);
+}
+html[data-theme="tron"] .tree-item:hover,
+html[data-theme="tron"] .fav-item:hover{background:rgba(0,229,255,.05)}
+html[data-theme="tron"] .index-note,
+html[data-theme="tron"] .res-progress{background:var(--tint);color:var(--primary);border:1px solid rgba(0,229,255,.3)}
+
+/* ── chips y campos ── */
+html[data-theme="tron"] .chip,
+html[data-theme="tron"] .rb-chip{background:transparent;border-color:var(--border)}
+html[data-theme="tron"] .chip:hover,
+html[data-theme="tron"] .rb-chip:hover{background:var(--tint);border-color:var(--primary);color:var(--primary)}
+html[data-theme="tron"] .chip.on{background:var(--tint);border-color:var(--primary);color:var(--primary);box-shadow:var(--glow)}
+html[data-theme="tron"] .rb-chip.on{background:rgba(255,210,63,.1);border-color:var(--yellow);color:var(--yellow)}
+html[data-theme="tron"] .chip-upload{background:transparent;border-color:var(--accent);color:var(--accent);box-shadow:var(--glow-o)}
+html[data-theme="tron"] .chip-upload:hover{background:rgba(255,106,0,.15);border-color:var(--accent)}
+html[data-theme="tron"] .filter-bar{background:rgba(10,21,32,.9)}
+html[data-theme="tron"] .fb-field,
+html[data-theme="tron"] .input-field,
+html[data-theme="tron"] .srch-input,
+html[data-theme="tron"] .loc-search{background:#040a10;border-color:var(--border)}
+html[data-theme="tron"] .input-field:focus,
+html[data-theme="tron"] .srch-input:focus,
+html[data-theme="tron"] .loc-search:focus{border-color:var(--primary);box-shadow:var(--glow);background:#040a10}
+html[data-theme="tron"] input[type=date],
+html[data-theme="tron"] input[type=datetime-local]{color-scheme:dark}
+html[data-theme="tron"] .star svg{fill:#18384a}
+html[data-theme="tron"] .star.on svg{fill:var(--yellow);filter:drop-shadow(0 0 3px rgba(255,210,63,.7))}
+
+/* ── botones: contorno luminoso, relleno al pasar ── */
+html[data-theme="tron"] .btn{text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+html[data-theme="tron"] .btn-primary{background:var(--primary);color:var(--on-primary);box-shadow:var(--glow)}
+html[data-theme="tron"] .btn-primary:not(:disabled):hover{background:#7ff3ff}
+html[data-theme="tron"] .btn-secondary{border-color:rgba(0,229,255,.5)}
+html[data-theme="tron"] .btn-warn{background:transparent;color:var(--yellow);border:1px solid var(--yellow)}
+html[data-theme="tron"] .btn-warn:not(:disabled):hover{background:rgba(255,210,63,.12)}
+html[data-theme="tron"] .btn-dl{background:transparent;color:var(--green);border:1px solid var(--green)}
+html[data-theme="tron"] .btn-dl:not(:disabled):hover{background:rgba(0,255,163,.12)}
+html[data-theme="tron"] .btn-danger{background:transparent;color:var(--accent);border:1px solid var(--accent);box-shadow:var(--glow-o)}
+html[data-theme="tron"] .btn-danger:not(:disabled):hover{background:rgba(255,106,0,.15)}
+
+/* ── estados ── */
+html[data-theme="tron"] .gps-status.has,
+html[data-theme="tron"] .res-ok{background:rgba(0,255,163,.08);color:var(--green);border:1px solid rgba(0,255,163,.35)}
+html[data-theme="tron"] .gps-status.no,
+html[data-theme="tron"] .res-err{background:rgba(255,106,0,.08);color:#ff9a4d;border:1px solid rgba(255,106,0,.4)}
+html[data-theme="tron"] .del-warning{background:rgba(255,106,0,.08);border:1px solid rgba(255,106,0,.4)}
+html[data-theme="tron"] .del-warning p{color:#ff9a4d}
+html[data-theme="tron"] .edit-warn{background:rgba(255,210,63,.07);border:1px solid rgba(255,210,63,.35)}
+html[data-theme="tron"] .edit-warn strong,
+html[data-theme="tron"] .edit-warn p{color:var(--yellow)}
+html[data-theme="tron"] .coords-card,
+html[data-theme="tron"] .sel-info{border:1px solid var(--border)}
+html[data-theme="tron"] .sel-info strong{font-family:var(--tron-title);text-shadow:0 0 10px rgba(0,229,255,.7)}
+
+/* spinner: disco de identidad girando */
+html[data-theme="tron"] .spinner{
+  border-color:rgba(0,229,255,.15);border-top-color:var(--primary);border-right-color:var(--accent);
+}
+
+/* ── tarjetas de foto ── */
+html[data-theme="tron"] .fc{background:#07111a;border-radius:2px}
+html[data-theme="tron"] .fc-skeleton{
+  background:linear-gradient(90deg,#07111a 25%,#0d2230 50%,#07111a 75%);background-size:200% 100%;
+}
+/* marco de luz: solo en hover/selección, nunca en reposo. Con outline y no con
+   un ::after, que serían miles de cajas extra en una carpeta grande */
+html[data-theme="tron"] .fc:hover{outline:1px solid var(--primary);outline-offset:-1px}
+html[data-theme="tron"] .fc.sel{outline:2px solid var(--primary);outline-offset:-2px;box-shadow:0 0 12px rgba(0,229,255,.55)}
+html[data-theme="tron"] .fc:hover .fc-overlay{background:rgba(0,229,255,.06)}
+html[data-theme="tron"] .fc.sel .fc-overlay{background:rgba(0,229,255,.14)}
+html[data-theme="tron"] .fc.sel .fc-check{box-shadow:var(--glow)}
+html[data-theme="tron"] .fc.sel .fc-check::after{border-color:var(--on-primary)}
+html[data-theme="tron"] .fc-name{background:linear-gradient(transparent,rgba(0,12,18,.85));color:var(--text);letter-spacing:.03em}
+html[data-theme="tron"] .fc-stars{text-shadow:0 0 4px rgba(255,210,63,.8),0 1px 3px #000}
+
+/* ── barra de selección, toasts, menús y modales ── */
+html[data-theme="tron"] .sel-bar,
+html[data-theme="tron"] .upload-toast{
+  background:rgba(4,10,16,.96);color:var(--text);
+  border:1px solid var(--primary);box-shadow:var(--glow),0 8px 30px rgba(0,0,0,.7);
+}
+html[data-theme="tron"] .sel-bar-count{font-family:var(--tron-title);color:var(--primary)}
+html[data-theme="tron"] .sbar-btn{background:rgba(0,229,255,.08);color:var(--text);border:1px solid rgba(0,229,255,.25)}
+html[data-theme="tron"] .sbar-btn:hover{background:rgba(0,229,255,.2);border-color:var(--primary)}
+html[data-theme="tron"] .sbar-btn.pri{background:var(--primary);color:var(--on-primary);border-color:var(--primary)}
+html[data-theme="tron"] .sbar-btn.pri:hover{background:#7ff3ff}
+html[data-theme="tron"] .sbar-btn.danger{background:rgba(255,106,0,.12);color:var(--accent);border-color:rgba(255,106,0,.5)}
+html[data-theme="tron"] .sbar-btn.danger:hover{background:rgba(255,106,0,.28)}
+html[data-theme="tron"] .upload-toast.ok .upload-toast-row{color:var(--green)}
+html[data-theme="tron"] .upload-toast.err .upload-toast-row{color:#ff9a4d}
+html[data-theme="tron"] .upload-bar-fill{box-shadow:var(--glow)}
+html[data-theme="tron"] .modal-overlay{background:rgba(0,4,8,.78)}
+html[data-theme="tron"] .modal,
+html[data-theme="tron"] .loc-menu,
+html[data-theme="tron"] .suggestions,
+html[data-theme="tron"] .gps-sheet{
+  background:#060d15;border:1px solid var(--primary);box-shadow:var(--shadow-md),var(--glow);
+}
+html[data-theme="tron"] .modal{border-radius:4px;position:relative}
+/* esquinas recortadas tipo interfaz de la Red */
+html[data-theme="tron"] .modal::before{
+  content:"";position:absolute;top:-1px;right:-1px;width:22px;height:22px;pointer-events:none;
+  border-top:3px solid var(--accent);border-right:3px solid var(--accent);
+  filter:drop-shadow(0 0 4px rgba(255,106,0,.8));
+}
+html[data-theme="tron"] .date-tabs{border:1px solid var(--border)}
+html[data-theme="tron"] .date-tab.on{background:var(--tint);color:var(--primary);box-shadow:inset 0 -2px 0 var(--primary)}
+html[data-theme="tron"] .root-list,
+html[data-theme="tron"] .del-file-list{background:#040a10}
+
+/* ── visor, editor y mapa ── */
+html[data-theme="tron"] .viewer{background:rgba(1,4,7,.96)}
+html[data-theme="tron"] .vw-btn,
+html[data-theme="tron"] .vw-nav,
+html[data-theme="tron"] .ed-icon-btn{background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.35);color:var(--primary)}
+html[data-theme="tron"] .vw-btn:hover,
+html[data-theme="tron"] .vw-nav:hover,
+html[data-theme="tron"] .ed-icon-btn:hover{background:rgba(0,229,255,.2);box-shadow:var(--glow)}
+html[data-theme="tron"] .vw-btn.sel-on{background:var(--primary);color:var(--on-primary)}
+html[data-theme="tron"] .vw-spinner{border-color:rgba(0,229,255,.2);border-top-color:var(--primary)}
+html[data-theme="tron"] .editor,
+html[data-theme="tron"] .map-view{background:#03070b}
+html[data-theme="tron"] .ed-top,
+html[data-theme="tron"] .map-top{border-bottom-color:rgba(0,229,255,.35)}
+html[data-theme="tron"] .ed-save,
+html[data-theme="tron"] .map-pop-open{background:var(--primary);color:var(--on-primary);box-shadow:var(--glow)}
+html[data-theme="tron"] .ed-tab.on{background:var(--tint);color:var(--primary)}
+html[data-theme="tron"] .ed-chip.on{background:var(--primary);color:var(--on-primary);border-color:var(--primary)}
+html[data-theme="tron"] .ed-btn{border-color:rgba(0,229,255,.25);background:rgba(0,229,255,.04)}
+html[data-theme="tron"] .ed-btn:hover{background:rgba(0,229,255,.14)}
+html[data-theme="tron"] .map-stage{background:#02060a}
+/* mapa en modo "Red": los mosaicos de OSM invertidos y virados a cian. El
+   filtro se rasteriza con cada mosaico al cargarlo; arrastrar solo mueve la
+   capa (transform) y no lo recalcula */
+html[data-theme="tron"] .map-tile{filter:invert(1) hue-rotate(180deg) brightness(.8) contrast(1.15) saturate(.6) sepia(.25) hue-rotate(150deg)}
+html[data-theme="tron"] .map-mark{
+  background:#02060a;color:var(--primary);border:2px solid var(--primary);box-shadow:var(--glow);
+}
+html[data-theme="tron"] .map-mark:hover{background:var(--accent);border-color:var(--accent);color:#000;box-shadow:var(--glow-o)}
+html[data-theme="tron"] .map-zoom button{background:rgba(2,6,10,.85);color:var(--primary);border:1px solid rgba(0,229,255,.4)}
+html[data-theme="tron"] .map-pop{background:#060d15;border:1px solid var(--primary);box-shadow:var(--glow)}
+
+/* ── selector de tema en Ajustes ── */
+.theme-pick{display:flex;gap:8px}
+.theme-opt{
+  flex:1;border:1px solid var(--border);background:var(--surface);color:var(--text);
+  border-radius:var(--radius);padding:10px;cursor:pointer;font-size:.82rem;font-weight:500;
+  display:flex;flex-direction:column;align-items:center;gap:6px;font-family:inherit;
+}
+.theme-opt.on{border-color:var(--primary);color:var(--primary)}
+.theme-swatch{width:100%;height:28px;border-radius:4px}
+.theme-swatch.classic{background:linear-gradient(90deg,#fff 0 50%,#1a73e8 50% 75%,#ea4335 75%);border:1px solid #e0e0e0}
+.theme-swatch.tron{background:
+  linear-gradient(90deg,transparent 0 70%,#ff6a00 70% 72%,transparent 72%),
+  linear-gradient(#00e5ff,#00e5ff) 0 100%/100% 2px no-repeat,#05080d;
+  box-shadow:0 0 8px rgba(0,229,255,.45)}
+html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
+
+/* En móvil y con "reducir movimiento": nada de animación de adorno, y el
+   degradado del shimmer también quieto */
+@media (max-width:768px){
+  html[data-theme="tron"] header::after{animation:none;display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  html[data-theme="tron"] header::after{animation:none;display:none}
+  html[data-theme="tron"] .fc-skeleton{animation:none}
+}
+</style>
 </head>
 <body>
 
@@ -1063,6 +1360,9 @@ header .spacer{flex:1}
     <span class="logo-name">GeoTagger</span>
   </div>
   <div class="spacer"></div>
+  <button class="hdr-btn" id="btn-theme" title="Cambiar tema (Clásico / Tron)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><path d="M12 3v4.5M12 16.5V21M3 12h4.5M16.5 12H21"/></svg>
+  </button>
   <button class="hdr-btn" id="btn-settings" title="Ajustes">
     <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" fill="currentColor"/></svg>
   </button>
@@ -1787,6 +2087,11 @@ header .spacer{flex:1}
 <div class="modal-overlay" id="modal-settings">
   <div class="modal">
     <div class="modal-title">Ajustes</div>
+    <label>Tema:</label>
+    <div class="theme-pick" style="margin-bottom:16px">
+      <button type="button" class="theme-opt" data-theme-opt="classic"><span class="theme-swatch classic"></span>Clásico</button>
+      <button type="button" class="theme-opt" data-theme-opt="tron"><span class="theme-swatch tron"></span>Tron</button>
+    </div>
     <label>Email para reportes:</label>
     <input type="email" class="input-field" id="setting-email" placeholder="tu@email.com">
     <div class="modal-actions">
@@ -1797,6 +2102,14 @@ header .spacer{flex:1}
 </div>
 
 <script>
+// ── Escapar texto para innerHTML ─────────────────────────────────────────────
+// Nombres de fotos y carpetas, errores del servidor y resultados de Nominatim
+// vienen de fuera: un archivo llamado "<img onerror=...>.jpg" ejecutaba código
+// al pintarse. Todo lo que no sea HTML nuestro pasa por aquí (también sirve
+// dentro de atributos: escapa las comillas). Una regex, coste despreciable.
+const ESC_MAP = {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"};
+function esc(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, c => ESC_MAP[c]); }
+
 // ── State ────────────────────────────────────────────────────────────────────
 let currentPath = "";
 let selectedFiles = new Set();
@@ -1953,13 +2266,13 @@ function renderBreadcrumb(path) {
   const back = document.getElementById("btn-back");
   back.style.display = parts.length ? "flex" : "none";
   back.dataset.path = parts.slice(0, -1).join("/");
-  let html = '<span class="bc-item' + (parts.length === 0 ? ' cur' : '') + '" data-path="">' + workRootName + '</span>';
+  let html = '<span class="bc-item' + (parts.length === 0 ? ' cur' : '') + '" data-path="">' + esc(workRootName) + '</span>';
   let acc = "";
   parts.forEach((p, i) => {
     acc += (acc ? "/" : "") + p;
     const isCur = i === parts.length - 1;
     html += '<span class="bc-sep">›</span>';
-    html += '<span class="bc-item' + (isCur ? ' cur' : '') + '" data-path="' + acc + '">' + p + '</span>';
+    html += '<span class="bc-item' + (isCur ? ' cur' : '') + '" data-path="' + esc(acc) + '">' + esc(p) + '</span>';
   });
   const bc = document.getElementById("breadcrumb");
   bc.innerHTML = html;
@@ -1975,17 +2288,17 @@ function renderSidebar(dirs, activePath) {
   if (activePath) {
     const parent = parentOf(activePath);
     const parentName = parent ? parent.split("/").pop() : workRootName;
-    html += '<div class="tree-item tree-up" data-path="' + parent + '">' +
+    html += '<div class="tree-item tree-up" data-path="' + esc(parent) + '">' +
       '<svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>' +
-      parentName + '</div>';
+      esc(parentName) + '</div>';
   }
   if (dirs.length === 0) {
     html += '<div style="color:var(--text2);font-size:.8rem;padding:12px 16px">Sin subcarpetas</div>';
   } else {
     html += dirs.map(d =>
-      '<div class="tree-item' + (d.path === activePath ? ' active' : '') + '" data-path="' + d.path + '">' +
+      '<div class="tree-item' + (d.path === activePath ? ' active' : '') + '" data-path="' + esc(d.path) + '">' +
       '<svg viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>' +
-      d.name + '</div>'
+      esc(d.name) + '</div>'
     ).join("");
   }
   tree.innerHTML = html;
@@ -2016,18 +2329,18 @@ function makeCard(f, i) {
   card.dataset.index = i;
   card.dataset.src = bust("/api/thumb?path=" + encodeURIComponent(f.path), f.path);
   const isRaw = RAW_EXTS.includes(f.ext);
-  const folderHtml = f.folder && f.folder !== "." ? '<br><small style="opacity:.7">' + f.folder + '</small>' : '';
+  const folderHtml = f.folder && f.folder !== "." ? '<br><small style="opacity:.7">' + esc(f.folder) + '</small>' : '';
   // Con la miniatura de 16px la tarjeta nace con la foto (borrosa) dentro; el
   // shimmer gris queda solo para las que aún no están indexadas.
   const fondo = f.blur
     ? '<div class="fc-blur" style="background-image:url(data:image/webp;base64,' + f.blur + ')"></div>'
     : '<div class="fc-skeleton"></div>';
   card.innerHTML =
-    '<img alt="' + f.name + '" decoding="async">' +
+    '<img alt="' + esc(f.name) + '" decoding="async">' +
     fondo +
     '<div class="fc-icon">' + (isRaw ? makeRawIcon() : makeImgIcon()) + '</div>' +
     '<div class="fc-overlay"><div class="fc-check"></div></div>' +
-    '<div class="fc-name">' + f.name + folderHtml + '</div>' +
+    '<div class="fc-name">' + esc(f.name) + folderHtml + '</div>' +
     (f.rating ? '<div class="fc-stars">' + starText(f.rating) + '</div>' : '');
   attachCardInteractions(card);
   return card;
@@ -2627,9 +2940,9 @@ function setupSearch(inputId, sugsId, coordsCardId, latId, lonId, applyBtnId) {
         const data = await res.json();
         if (!data.length) { sugs.style.display = "none"; return; }
         sugs.innerHTML = data.map(r =>
-          '<div class="sug-item" data-lat="' + r.lat + '" data-lon="' + r.lon + '" data-name="' + (r.name.split(",")[0].replace(/"/g,"")) + '">' +
+          '<div class="sug-item" data-lat="' + r.lat + '" data-lon="' + r.lon + '" data-name="' + esc(r.name.split(",")[0]) + '">' +
           '<svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>' +
-          '<span class="sug-text">' + r.name + '</span>' +
+          '<span class="sug-text">' + esc(r.name) + '</span>' +
           '</div>'
         ).join("");
         sugs.querySelectorAll(".sug-item").forEach(el => {
@@ -2860,7 +3173,7 @@ function requestDelete() {
   const moreEl = document.getElementById("del-more");
   const shown = files.slice(0, MAX_LIST);
   listEl.innerHTML = shown.map(p =>
-    '<div>🗑 ' + p.split("/").pop() + '</div>'
+    '<div>🗑 ' + esc(p.split("/").pop()) + '</div>'
   ).join("");
   if (files.length > MAX_LIST) {
     moreEl.style.display = "block";
@@ -2964,12 +3277,12 @@ async function loadWorkRoot() {
 
 function renderRootCrumb(path) {
   const parts = path ? path.split("/").filter(Boolean) : [];
-  let html = '<span class="rc-item' + (parts.length ? '' : ' cur') + '" data-path="">' + NAS_LABEL + '</span>';
+  let html = '<span class="rc-item' + (parts.length ? '' : ' cur') + '" data-path="">' + esc(NAS_LABEL) + '</span>';
   let acc = "";
   parts.forEach((seg, i) => {
     acc += (acc ? "/" : "") + seg;
     html += '<span class="rc-sep">›</span>';
-    html += '<span class="rc-item' + (i === parts.length - 1 ? ' cur' : '') + '" data-path="' + acc + '">' + seg + '</span>';
+    html += '<span class="rc-item' + (i === parts.length - 1 ? ' cur' : '') + '" data-path="' + esc(acc) + '">' + esc(seg) + '</span>';
   });
   const crumb = document.getElementById("root-crumb");
   crumb.innerHTML = html;
@@ -2993,7 +3306,7 @@ async function browseNas(path) {
     d = await res.json();
     if (d.error) throw new Error(d.error);
   } catch(e) {
-    list.innerHTML = '<div class="root-empty">No se pudo abrir la carpeta: ' + e.message + '</div>';
+    list.innerHTML = '<div class="root-empty">No se pudo abrir la carpeta: ' + esc(e.message) + '</div>';
     return;
   }
 
@@ -3002,13 +3315,13 @@ async function browseNas(path) {
 
   let html = "";
   if (d.parent !== null && d.parent !== undefined) {
-    html += '<div class="root-item up" data-path="' + d.parent + '">' +
+    html += '<div class="root-item up" data-path="' + esc(d.parent) + '">' +
       '<svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>' +
       '<span class="ri-name">Subir un nivel</span></div>';
   }
   html += d.dirs.map(dir =>
-    '<div class="root-item" data-path="' + dir.path + '">' + RI_FOLDER +
-    '<span class="ri-name">' + dir.name + '</span>' +
+    '<div class="root-item" data-path="' + esc(dir.path) + '">' + RI_FOLDER +
+    '<span class="ri-name">' + esc(dir.name) + '</span>' +
     '<span class="ri-count">' + photoCountLabel(dir.photos) + '</span></div>'
   ).join("");
   if (!d.dirs.length && (d.parent === null || d.parent === undefined)) {
@@ -3024,7 +3337,7 @@ async function browseNas(path) {
   const here = rootBrowsePath || "la raíz del NAS (" + d.nas_root + ")";
   const count = d.photos ? " (" + photoCountLabel(d.photos) + " sueltas aquí)" : "";
   document.getElementById("root-sel").innerHTML =
-    "Se usará <strong>" + here + "</strong>" + count +
+    "Se usará <strong>" + esc(here) + "</strong>" + count +
     (d.work_root === rootBrowsePath ? " — es la carpeta de trabajo actual" : "");
 }
 
@@ -3044,7 +3357,7 @@ async function applyWorkRoot() {
     if (d.error) {
       box.style.display = "flex";
       box.className = "res-box res-err";
-      box.innerHTML = '<span>' + d.error + '</span>';
+      box.innerHTML = '<span>' + esc(d.error) + '</span>';
     } else {
       showWorkRoot(d);
       document.getElementById("modal-root").classList.remove("on");
@@ -3146,7 +3459,7 @@ function showDateBox(cls, iconPath, text) {
   box.className = "res-box " + cls;
   box.innerHTML = (iconPath
     ? '<svg viewBox="0 0 24 24" fill="currentColor"><path d="' + iconPath + '"/></svg>'
-    : '<div class="spinner"></div>') + '<span>' + text + '</span>';
+    : '<div class="spinner"></div>') + '<span>' + esc(text) + '</span>';
 }
 
 function closeDateModal() {
@@ -3181,8 +3494,8 @@ async function openDateModal(targets) {
   }
   const name = targets[0].split("/").pop();
   document.getElementById("date-current").innerHTML = shot
-    ? "Fecha actual de <strong>" + name + "</strong>: " + humanDate(shot)
-    : "<strong>" + name + "</strong> no tiene fecha en los metadatos";
+    ? "Fecha actual de <strong>" + esc(name) + "</strong>: " + humanDate(shot)
+    : "<strong>" + esc(name) + "</strong> no tiene fecha en los metadatos";
 }
 
 async function applyDate() {
@@ -3728,8 +4041,8 @@ function mapShowPop(ph, x, y) {
   pop.innerHTML =
     '<img src="' + bust("/api/thumb?path=" + encodeURIComponent(ph.path), ph.path) + '" alt="">' +
     '<div class="map-pop-body">' +
-      '<div class="map-pop-name">' + ph.name + '</div>' +
-      '<div class="map-pop-sub">' + (ph.folder || workRootName) +
+      '<div class="map-pop-name">' + esc(ph.name) + '</div>' +
+      '<div class="map-pop-sub">' + esc(ph.folder || workRootName) +
         (ph.date ? " · " + humanDate(ph.date.replace(/^(\d{4}):(\d{2}):(\d{2})/, "$1-$2-$3")) : "") +
       '</div>' +
       '<button class="map-pop-open">Abrir foto</button>' +
@@ -3934,8 +4247,8 @@ function renderFavorites() {
   } else {
     const here = favCurrentFull();
     list.innerHTML = favorites.map(f =>
-      '<div class="fav-item' + (f.path === here ? ' cur' : '') + '" data-path="' + f.path + '">' +
-      FAV_STAR + '<span class="fav-name" title="' + (f.path || "NAS") + '">' + f.name + '</span>' +
+      '<div class="fav-item' + (f.path === here ? ' cur' : '') + '" data-path="' + esc(f.path) + '">' +
+      FAV_STAR + '<span class="fav-name" title="' + esc(f.path || "NAS") + '">' + esc(f.name) + '</span>' +
       '<button class="fav-del" title="Quitar de favoritos">✕</button></div>'
     ).join("");
     list.querySelectorAll(".fav-item").forEach(el => {
@@ -4017,7 +4330,7 @@ function showBox(id, cls, text) {
   const box = document.getElementById(id);
   box.style.display = "flex";
   box.className = "res-box " + cls;
-  box.innerHTML = "<span>" + text + "</span>";
+  box.innerHTML = "<span>" + esc(text) + "</span>";
 }
 
 // ── Nueva carpeta ────────────────────────────────────────────────────────────
@@ -4074,12 +4387,12 @@ document.getElementById("modal-newfolder").addEventListener("click", e => {
 // ── Selector de destino ──────────────────────────────────────────────────────
 function renderDestCrumb(path) {
   const parts = path ? path.split("/").filter(Boolean) : [];
-  let html = '<span class="rc-item' + (parts.length ? '' : ' cur') + '" data-path="">' + workRootName + '</span>';
+  let html = '<span class="rc-item' + (parts.length ? '' : ' cur') + '" data-path="">' + esc(workRootName) + '</span>';
   let acc = "";
   parts.forEach((seg, i) => {
     acc += (acc ? "/" : "") + seg;
     html += '<span class="rc-sep">›</span><span class="rc-item' +
-      (i === parts.length - 1 ? ' cur' : '') + '" data-path="' + acc + '">' + seg + '</span>';
+      (i === parts.length - 1 ? ' cur' : '') + '" data-path="' + esc(acc) + '">' + esc(seg) + '</span>';
   });
   const crumb = document.getElementById("dest-crumb");
   crumb.innerHTML = html;
@@ -4112,8 +4425,8 @@ async function browseDest(path) {
       '<span class="ri-name">Subir un nivel</span></div>';
   }
   html += d.dirs.map(dir =>
-    '<div class="root-item" data-path="' + dir.path + '">' + RI_FOLDER +
-    '<span class="ri-name">' + dir.name + '</span></div>'
+    '<div class="root-item" data-path="' + esc(dir.path) + '">' + RI_FOLDER +
+    '<span class="ri-name">' + esc(dir.name) + '</span></div>'
   ).join("");
   if (!d.dirs.length) html += '<div class="root-empty">Sin subcarpetas aquí</div>';
   list.innerHTML = html;
@@ -5200,6 +5513,28 @@ document.getElementById("sbar-close").addEventListener("click", () => {
 });
 
 // ── Settings modal ────────────────────────────────────────────────────────────
+// ── Tema ──────────────────────────────────────────────────────────────────────
+// Solo cambia un atributo en <html>: el CSS del tema ya está cargado, así que
+// no hay que volver a pedir ni repintar la galería desde JS.
+function currentTheme() { return document.documentElement.dataset.theme === "tron" ? "tron" : "classic"; }
+function paintThemePicker() {
+  const t = currentTheme();
+  document.querySelectorAll("[data-theme-opt]").forEach(b => b.classList.toggle("on", b.dataset.themeOpt === t));
+}
+function setTheme(t) {
+  if (t === "tron") { loadTronFonts(); document.documentElement.dataset.theme = "tron"; }
+  else delete document.documentElement.dataset.theme;
+  try { localStorage.setItem("gt-theme", t); } catch (e) {}
+  paintThemePicker();
+}
+document.getElementById("btn-theme").addEventListener("click", () => {
+  setTheme(currentTheme() === "tron" ? "classic" : "tron");
+});
+document.querySelectorAll("[data-theme-opt]").forEach(b => {
+  b.addEventListener("click", () => setTheme(b.dataset.themeOpt));
+});
+paintThemePicker();
+
 document.getElementById("btn-settings").addEventListener("click", async () => {
   document.getElementById("modal-settings").classList.add("on");
   try {
@@ -5258,7 +5593,7 @@ function finishUploadToast(cls, iconPath, text) {
   toast.className = "upload-toast up " + cls;
   document.getElementById("upload-bar").style.display = "none";
   document.getElementById("upload-toast-row").innerHTML =
-    '<svg viewBox="0 0 24 24"><path d="' + iconPath + '"/></svg><span>' + text + '</span>';
+    '<svg viewBox="0 0 24 24"><path d="' + iconPath + '"/></svg><span>' + esc(text) + '</span>';
   clearTimeout(uploadToastTimer);
   uploadToastTimer = setTimeout(() => toast.classList.remove("up"), 4000);
 }
