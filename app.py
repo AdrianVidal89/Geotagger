@@ -82,6 +82,11 @@ if HEIF_SUPPORT:
 # mas los formatos habituales de la galeria de iPhone/iPad (HEIC/HEIF).
 UPLOAD_EXTS = SUPPORTED_EXTS | HEIC_EXTS | WEBP_EXTS
 
+# Hosts (host:puerto) extra desde los que se aceptan peticiones que cambian
+# algo, separados por comas. Solo hace falta con un proxy inverso raro.
+ALLOWED_ORIGINS = {h.strip().split("://", 1)[-1].rstrip("/")
+                   for h in os.environ.get("ALLOWED_ORIGINS", "").split(",") if h.strip()}
+
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
 SMTP_USER = os.environ.get("SMTP_USER", "ecostruxureatlas@gmail.com")
@@ -176,14 +181,25 @@ def _load_settings():
     data.update(_settings_cache["data"] or {})
     return data
 
+_settings_lock = threading.Lock()
+
 def _save_settings(data):
     """Guarda mezclando con lo que ya habia: asi guardar el email no borra la
-    carpeta de trabajo (y al reves)."""
-    current = _load_settings()
-    current.update(data or {})
-    with open(SETTINGS_FILE, "w") as f:
-        json.dump(current, f)
-    _settings_cache["mtime"] = None
+    carpeta de trabajo (y al reves).
+    Se escribe a un temporal y se cambia de golpe (os.replace es atomico): si
+    dos peticiones guardan a la vez o el contenedor se cae a mitad, antes podia
+    quedar un JSON cortado, y al no poder leerlo la app volvia EN SILENCIO a los
+    valores por defecto (sin carpeta de trabajo, sin favoritos, sin email)."""
+    with _settings_lock:
+        current = _load_settings()
+        current.update(data if isinstance(data, dict) else {})
+        tmp = SETTINGS_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(current, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, SETTINGS_FILE)
+        _settings_cache["mtime"] = None
 
 def _send_report(subject, body_html):
     settings = _load_settings()
@@ -204,11 +220,17 @@ def _send_report(subject, body_html):
         print("Email error:", str(e))
 
 def sanitize_path(path):
+    """Quita del nombre los caracteres que dan guerra (: * ? ...). Si hay que
+    renombrar, el indice y la cache de miniaturas siguen a la foto: antes la
+    fila del indice se quedaba con la ruta vieja. Y si ya existe un archivo con
+    el nombre limpio se usa otro libre: rename() lo habria sobrescrito."""
     p = Path(path)
     clean_name = re.sub(r'[:\*\?"<>\|]', '-', p.name)
     if clean_name != p.name:
-        new_path = p.parent / clean_name
+        new_path = _unique_target(p.parent, clean_name)
         p.rename(new_path)
+        _evict_thumb_cache(p)
+        _index_move(p, new_path)
         return new_path
     return p
 
@@ -2013,6 +2035,27 @@ def _clean_flat_cache():
 # Limpieza unica de la cache antigua, ya con la funcion definida
 _clean_flat_cache()
 
+@app.before_request
+def _same_origin_only():
+    """Las peticiones que CAMBIAN algo solo se aceptan desde la propia app.
+    Un formulario multipart (subir fotos) lo puede mandar cualquier web que se
+    abra en el mismo navegador sin que el usuario se entere; el navegador
+    siempre adjunta Origin en esos envios, asi que basta con compararlo con el
+    host al que va la peticion. Sin Origin (curl, scripts) se deja pasar."""
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    origin = request.headers.get("Origin")
+    if not origin:
+        return None
+    host = origin.split("://", 1)[-1].rstrip("/")
+    # Detras de un proxy inverso el Host puede llegar cambiado: vale tambien
+    # el que el proxy dice haber recibido, y los que se anadan a mano
+    validos = {request.host, request.headers.get("X-Forwarded-Host", "")}
+    validos |= ALLOWED_ORIGINS
+    if host not in validos:
+        return jsonify({"error": "origen no permitido"}), 403
+    return None
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -2144,16 +2187,28 @@ def browse():
     abs_path = _resolve_path(rel)
     if abs_path is None or not abs_path.exists():
         return jsonify({"error": "Ruta no existe"}), 404
+    if not abs_path.is_dir():
+        return jsonify({"error": "no es una carpeta"}), 400
+    try:
+        entradas = sorted(abs_path.iterdir())
+    except PermissionError:
+        return jsonify({"error": "sin permisos para leer esta carpeta"}), 403
+    except OSError as e:
+        return jsonify({"error": str(e)}), 500
     dirs, files = [], []
     # La fecha que importa al filtrar y ordenar es la de la FOTO, no la del
     # archivo: una foto de 2005 copiada al NAS tiene fecha de archivo de hoy.
     # El indice ya la sabe, asi que no cuesta nada acompanarla.
     _blur_flush()          # que lo recien generado viaje ya en este listado
     fechas = _index_dates(abs_path)
-    for item in sorted(abs_path.iterdir()):
+    for item in entradas:
         if item.name.startswith("@") or item.name.startswith("."):
             continue
-        if item.is_dir():
+        try:
+            es_dir = item.is_dir()
+        except OSError:
+            continue
+        if es_dir:
             dirs.append({"name": item.name, "path": str(Path(rel) / item.name)})
         elif item.suffix.lower() in SUPPORTED_EXTS:
             try:
@@ -2415,11 +2470,20 @@ def write_gps():
     """Escribe las mismas coordenadas en las fotos elegidas. Se hace por lotes:
     ExifTool acepta muchos archivos en una sola llamada, y arrancar un proceso
     por foto era lo que hacia lento aplicar GPS a una seleccion grande."""
-    data = request.json
-    lat   = float(data["lat"])
-    lon   = float(data["lon"])
-    alt   = float(data["alt"]) if data.get("alt") else None
-    files = data["files"]
+    data = request.json or {}
+    try:
+        lat = float(data["lat"])
+        lon = float(data["lon"])
+        # 0 m (nivel del mar) es una altitud valida: solo falta si no viene
+        raw_alt = data.get("alt")
+        alt = None if raw_alt is None or str(raw_alt).strip() == "" else float(raw_alt)
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "coordenadas no validas"}), 400
+    # isfinite descarta NaN e infinito, que float() acepta sin quejarse
+    if not all(math.isfinite(v) for v in (lat, lon) + ((alt,) if alt is not None else ())) \
+            or not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+        return jsonify({"error": "coordenadas fuera de rango"}), 400
+    files = data.get("files") or []
 
     targets, ok, errors = [], [], []
     for rel in files:
@@ -3133,10 +3197,15 @@ def rename_files():
             ext = path.suffix
             candidate = path.parent / (base_name + ext)
             counter = 2
-            while candidate.exists() or str(candidate) in seen.values():
+            # La propia foto no cuenta como "ocupado": si ya se llama asi (o
+            # asi con su sufijo), renombrarla otra vez le ponia un _2 nuevo
+            while candidate != path and (candidate.exists() or str(candidate) in seen.values()):
                 candidate = path.parent / (base_name + "_" + str(counter) + ext)
                 counter += 1
             seen[rel] = str(candidate)
+            if candidate == path:
+                ok.append({"old": path.name, "new": candidate.name})
+                continue
             path.rename(candidate)
             # Invalidate old thumbnail cache
             _evict_thumb_cache(path)

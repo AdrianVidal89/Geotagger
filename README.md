@@ -518,11 +518,49 @@ Mientras se arrastra un control que si obliga a recalcular (enderezar o la
 propia nitidez) la vista previa baja de resolucion, y al soltar se vuelve a la
 resolucion completa.
 
+## Tema Tron
+
+Además del tema clásico hay uno oscuro estilo *Tron Legacy*: neón cian y
+naranja, una rejilla bajo la galería y una estela de luz que recorre la
+cabecera. Se cambia con el botón del disco de la cabecera o en **Ajustes**, y
+queda recordado en el navegador (cada dispositivo elige el suyo).
+
+Está hecho para no costar velocidad en carpetas grandes:
+
+- Todo el tema es CSS bajo `html[data-theme="tron"]`; cambiar de tema solo
+  cambia ese atributo, sin volver a pedir ni pintar la galería desde JS.
+- Las tarjetas no llevan sombras en reposo: el brillo aparece solo al pasar el
+  ratón o al seleccionar. La rejilla va pintada con las tarjetas
+  (`background-attachment: local`), así que el scroll no la repinta.
+- No hay selectores universales. Un `::selection` y los `::-webkit-scrollbar`
+  sueltos subían un 50 % el recálculo de estilos al hacer scroll por 1.500
+  fotos, y se quitaron.
+- La animación de la cabecera solo mueve un elemento con `transform`, y se
+  para en móvil y con "reducir movimiento".
+- Las fuentes (Orbitron y Rajdhani) solo se piden con el tema activo, y con
+  `display=swap`.
+
+Medido haciendo scroll por una carpeta de 1.500 fotos, el recálculo de
+estilos y el layout son iguales en los dos temas, y el tiempo por fotograma
+queda dentro del ruido de la medida (±4 %). El tema clásico da los mismos
+números que antes del cambio.
+
+## Seguridad
+
+- Los nombres de fotos y carpetas, los errores y los resultados de búsqueda de
+  lugares se escapan antes de pintarlos. Antes, una foto llamada
+  `<img src=x onerror=...>.jpg` ejecutaba código en el navegador.
+- Las peticiones que modifican algo (subir, borrar, mover, escribir GPS...) se
+  rechazan si llegan desde otra web (cabecera `Origin` distinta). Sin esta
+  comprobación, cualquier página abierta en el mismo navegador podía subir
+  fotos al NAS con un formulario.
+
 ## Otras variables de entorno
 
 | Variable | Para qué sirve |
 |---|---|
 | `SMTP_USER` / `SMTP_PASS` | Cuenta desde la que se envían los reportes por email (el destinatario se configura en Ajustes). |
+| `ALLOWED_ORIGINS` | Solo con un proxy inverso que cambie el `Host`: hosts (`host:puerto`, separados por comas) desde los que se aceptan peticiones que modifican fotos. |
 
 ## Construir y arrancar
 
