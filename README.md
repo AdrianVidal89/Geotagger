@@ -266,6 +266,13 @@ entero que nunca se habia abierto era ir a tirones. Ahora:
 - **La vista previa que traen las camaras**: los JPEG de Canon, Nikon, Sony,
   Fuji... llevan dentro una copia de ~1.600 px (MPF). Para la miniatura se usa
   esa: 18 ms en vez de 197 ms en un JPEG de 24 Mpx, con el mismo resultado.
+  Solo si el propio MPF la declara "miniatura grande" y es en color: los
+  moviles (iPhone, Pixel, Samsung) guardan ahi tambien el "gain map" del HDR,
+  una imagen gris con la misma forma que la foto, y usarla dejaba miniaturas
+  en blanco y negro. Al arrancar, un repaso UNICO de fondo (solo cabeceras)
+  borra las miniaturas que se hicieron asi para que se rehagan bien, y la URL
+  de las miniaturas lleva una version (`t=`) para que el navegador no siga
+  ensenando las que tenia guardadas.
 - **Lo que se ve, primero**: la cola de carga del navegador solo guarda las
   tarjetas que estan en pantalla; las que se pasan bajando rapido salen de ella,
   asi que al pararse se cargan ya las de ese punto.
