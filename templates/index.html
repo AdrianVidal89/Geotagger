@@ -568,6 +568,11 @@ header .spacer{flex:1}
 .btn-danger:not(:disabled):hover{background:#c62828}
 .btn svg{width:16px;height:16px;flex-shrink:0}
 
+/* rostros (ajustes) */
+.faces-status{font-size:.82rem;color:var(--text2);line-height:1.45;margin-bottom:8px}
+.faces-actions{display:flex;flex-wrap:wrap;gap:8px}
+.faces-actions .btn{text-decoration:none}
+
 /* result boxes */
 .res-box{
   border-radius:var(--radius);padding:12px 14px;font-size:.85rem;
@@ -2094,6 +2099,18 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
     </div>
     <label>Email para reportes:</label>
     <input type="email" class="input-field" id="setting-email" placeholder="tu@email.com">
+    <!-- Rostros: los calcula un equipo Linux; aqui solo se importan (ver FACES.md) -->
+    <label style="margin-top:16px">Rostros:</label>
+    <div class="faces-status" id="faces-status">—</div>
+    <div class="faces-actions">
+      <button type="button" class="btn btn-primary" id="btn-faces-import">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+        Actualizar información de rostros
+      </button>
+      <a class="btn btn-secondary" id="btn-faces-export" href="/api/faces/export" download>Descargar estado</a>
+    </div>
+    <input type="file" id="faces-input" accept=".json,.gz,application/json,application/gzip" style="display:none">
+    <div id="faces-box" class="res-box" style="display:none;margin-top:10px"></div>
     <div class="modal-actions">
       <button class="btn btn-primary" id="btn-save-settings">Guardar</button>
       <button class="btn btn-secondary" id="btn-close-settings">Cerrar</button>
@@ -2229,18 +2246,29 @@ async function navigate(path, opts) {
       history.pushState(entry, "", hashForPath(path));
     }
   }
+  // keepView: recarga de la MISMA carpeta tras una operacion (mover, editar,
+  // subir...). Se conservan filtros y la rejilla actual hasta que llega el
+  // listado nuevo, y renderFiles devuelve el scroll a donde estaba.
+  const keep = !!opts.keepView && path === currentPath;
   currentPath = path;
   selectedFiles.clear();
   indexNote = "";
-  allFiles = [];
-  currentFiles = [];
+  if (!keep) {
+    allFiles = [];
+    currentFiles = [];
+  }
   missingMode = false;
   mapAlbum = null;
   document.getElementById("chip-missing").classList.remove("on");
-  resetFilters();
+  if (!keep) {
+    galleryAnchor = null;
+    resetFilters();
+  }
   updateSelUI();
   const c = document.getElementById("content");
-  c.innerHTML = '<div class="empty-state"><div class="spinner"></div><p style="margin-top:12px">Cargando...</p></div>';
+  if (!keep) {
+    c.innerHTML = '<div class="empty-state"><div class="spinner"></div><p style="margin-top:12px">Cargando...</p></div>';
+  }
   try {
     // prefetch=1: avisa al servidor de que estas fotos se van a ENSEÑAR, para
     // que vaya dejando hechas las miniaturas que falten mientras se mira la
@@ -2392,11 +2420,59 @@ function attachCardInteractions(card) {
 // instead of freezing for 100-200ms rendering 500 cards at once.
 const RENDER_CHUNK = 60;
 
+// ── Mantener la posición de la galería ───────────────────────────────────────
+// Tras mover, editar o subir, la carpeta se vuelve a pedir y la rejilla se
+// reconstruye: sin esto el scroll volvía arriba del todo y había que buscar
+// otra vez por dónde se iba. Se recuerda la primera foto visible (y las que le
+// siguen, por si esa es justo la que se ha movido) y, al pintar la rejilla
+// nueva, se deja esa foto a la misma altura en pantalla.
+let galleryAnchor = null;
+
+function captureGalleryAnchor() {
+  const c = document.getElementById("content");
+  const cards = c.querySelectorAll(".fc");
+  if (!cards.length) { galleryAnchor = null; return; }
+  const top = c.getBoundingClientRect().top;
+  let idx = -1, offset = 0;
+  for (const card of cards) {
+    const r = card.getBoundingClientRect();
+    if (r.bottom > top + 1) { idx = parseInt(card.dataset.index, 10); offset = r.top - top; break; }
+  }
+  if (idx < 0 || !currentFiles[idx]) { galleryAnchor = null; return; }
+  // Candidatas en orden de preferencia: la visible, las siguientes y, si no
+  // queda ninguna (se movió el final de la carpeta), las anteriores.
+  const after = currentFiles.slice(idx).map(f => f.path);
+  const before = currentFiles.slice(0, idx).map(f => f.path).reverse();
+  galleryAnchor = { paths: after.concat(before), offset: offset, scrollTop: c.scrollTop };
+}
+
+function anchorTargetIndex(anchor, files) {
+  const pos = new Map(files.map((f, i) => [f.path, i]));
+  for (const p of anchor.paths) {
+    if (pos.has(p)) return pos.get(p);
+  }
+  return -1;
+}
+
+function restoreGalleryAnchor(c, card, offset) {
+  const top = c.getBoundingClientRect().top;
+  c.scrollTop += card.getBoundingClientRect().top - top - offset;
+}
+
 async function renderFiles(files) {
   currentFiles = files;
   // Reset the load queue for the new folder
   loadQueue.length = 0;
   const c = document.getElementById("content");
+  const anchor = galleryAnchor;
+  galleryAnchor = null;
+  let anchorIdx = anchor ? anchorTargetIndex(anchor, files) : -1;
+  const placeAnchor = (rendered) => {
+    if (anchorIdx < 0 || anchorIdx >= rendered) return;
+    const card = c.querySelector('.fc[data-index="' + anchorIdx + '"]');
+    if (card) restoreGalleryAnchor(c, card, anchor.offset);
+    anchorIdx = -1;
+  };
 
   if (files.length === 0) {
     c.innerHTML = '<div class="empty-state">' +
@@ -2425,6 +2501,8 @@ async function renderFiles(files) {
     grid.appendChild(card);
     thumbObserver.observe(card);
   }
+  if (anchor && anchorIdx < 0) c.scrollTop = anchor.scrollTop;   // sin ancla: misma altura
+  placeAnchor(firstEnd);
 
   // Render remaining chunks with rAF pauses so scroll stays smooth
   for (let i = firstEnd; i < files.length; i += RENDER_CHUNK) {
@@ -2435,6 +2513,7 @@ async function renderFiles(files) {
       grid.appendChild(card);
       thumbObserver.observe(card);
     }
+    placeAnchor(end);
   }
 }
 
@@ -3614,6 +3693,10 @@ function openViewer(i) {
 
 // Cierre "real" del visor (solo DOM); lo invoca el manejador de popstate
 function hideViewer() {
+  // Si en el visor se avanzó a otras fotos, al salir la galería se coloca en
+  // la última vista: así se selecciona sin tener que buscarla.
+  const seen = document.querySelector('.fc[data-index="' + viewerIndex + '"]');
+  if (seen && viewerEl.classList.contains("on")) seen.scrollIntoView({ block: "nearest" });
   viewerEl.classList.remove("on");
   viewerIndex = -1;
   vwImg.removeAttribute("src");
@@ -4121,9 +4204,10 @@ function renderMapAlbumCrumb(n) {
 
 // Tras cualquier operacion, volver a lo que se estaba viendo
 function refreshCurrentView() {
+  captureGalleryAnchor();      // volver al mismo punto de la galería
   if (mapAlbum) loadMapAlbum();
   else if (missingMode) loadMissing(currentPath);
-  else navigate(currentPath);
+  else navigate(currentPath, { keepView: true });
 }
 
 async function openPhotoFromMap(ph) {
@@ -5535,8 +5619,73 @@ document.querySelectorAll("[data-theme-opt]").forEach(b => {
 });
 paintThemePicker();
 
+// ── Rostros ──────────────────────────────────────────────────────────────────
+// El reconocimiento lo hace un equipo Linux (el NAS no carga con la IA). Aquí
+// se elige en el equipo el fichero que generó y se sube; el servidor lo
+// fusiona y deja la copia oficial en <carpeta de trabajo>/.geotagger/ para
+// que la siguiente pasada del Linux solo analice lo nuevo.
+function facesStatusText(d) {
+  if (!d || d.error) return "No se pudo leer el estado de rostros.";
+  let t = d.analyzed + " fotos analizadas · " + d.faces + " caras · " +
+          d.persons + " personas (" + d.named + " con nombre) · " + d.pending + " por analizar.";
+  const li = d.last_import;
+  if (li && li.at) t += " Última importación: " + new Date(li.at * 1000).toLocaleString("es-ES") + ".";
+  else t += " Aún no se ha importado nada.";
+  t += " Copia para el Linux: " + d.shared_file + (d.shared_exists ? "" : " (todavía no existe)") + ".";
+  return t;
+}
+
+async function loadFacesStatus() {
+  const el = document.getElementById("faces-status");
+  try {
+    const res = await fetch("/api/faces/status");
+    el.textContent = facesStatusText(await res.json());
+  } catch(e) {
+    el.textContent = facesStatusText(null);
+  }
+}
+
+document.getElementById("btn-faces-import").addEventListener("click", () => {
+  document.getElementById("faces-input").click();
+});
+
+document.getElementById("faces-input").addEventListener("change", async (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = "";               // poder elegir el mismo fichero otra vez
+  if (!file) return;
+  const btn = document.getElementById("btn-faces-import");
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div>';
+  showBox("faces-box", "res-progress", "Importando " + file.name + " (" +
+          Math.max(1, Math.round(file.size / 1048576)) + " MB)...");
+  const fd = new FormData();
+  fd.append("file", file);
+  let data = {};
+  try {
+    const res = await fetch("/api/faces/import", { method: "POST", body: fd });
+    data = await res.json();
+  } catch(err) {
+    data = { error: "Error de conexión" };
+  }
+  btn.disabled = false;
+  btn.innerHTML = orig;
+  if (data.error) { showBox("faces-box", "res-err", data.error); return; }
+  let msg = data.photos + " fotos y " + data.faces + " caras importadas, " + data.persons + " personas.";
+  if (data.removed) msg += " " + data.removed + " fotos retiradas (ya no estaban).";
+  if (data.missing) msg += " " + data.missing + " rutas no encontradas en la carpeta de trabajo (p. ej. " +
+                           (data.missing_examples || []).slice(0, 2).join(", ") + ").";
+  if (data.invalid) msg += " " + data.invalid + " entradas no válidas.";
+  if (data.shared_ok === false) msg += " Ojo: no se pudo guardar la copia para el Linux: " + data.shared_error;
+  showBox("faces-box", data.missing && !data.photos ? "res-err" : "res-ok", msg);
+  if (data.status) document.getElementById("faces-status").textContent = facesStatusText(data.status);
+  sendReport("Importar rostros", data.photos, data.photos, 0, []);
+});
+
 document.getElementById("btn-settings").addEventListener("click", async () => {
   document.getElementById("modal-settings").classList.add("on");
+  document.getElementById("faces-box").style.display = "none";
+  loadFacesStatus();
   try {
     const res = await fetch("/api/settings");
     const data = await res.json();

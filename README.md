@@ -43,6 +43,32 @@ carpeta.
   casos se abre ni se recodifica la imagen. Si en el destino ya hay un archivo
   con el mismo nombre, se anade un sufijo en vez de sobrescribirlo.
 
+- **La galeria no pierde el sitio**: despues de mover, copiar, editar o subir
+  fotos la carpeta se vuelve a cargar, pero el scroll vuelve a la misma foto (o
+  a la siguiente, si esa es justo la que se ha movido) y se conservan los
+  filtros. Al cerrar el visor, la galeria queda en la ultima foto que se vio.
+
+## Rostros
+
+El reconocimiento facial **no corre en el NAS**: lo hace un equipo Linux que
+tiene montada por red la misma carpeta de fotos, y Geotagger solo importa el
+resultado. Asi el NAS no carga con la IA.
+
+1. El Linux analiza las fotos y genera un fichero `faces.json.gz` (formato
+   `geotagger-faces`, ver [FACES.md](FACES.md)).
+2. En **Ajustes -> Actualizar informacion de rostros** se elige ese fichero en
+   el equipo y se sube. Geotagger lo fusiona en su indice.
+3. Geotagger deja el estado fusionado en
+   `<carpeta de trabajo>/.geotagger/faces.json.gz` (tambien se descarga con
+   *Descargar estado*). El Linux lo lee en la siguiente pasada para analizar
+   **solo** las fotos nuevas o cambiadas y mantener los ids de persona y los
+   nombres puestos en Geotagger.
+
+Mover, copiar, renombrar o borrar fotos desde Geotagger arrastra sus rostros.
+Editar una foto cambia su fecha de modificacion, y el Linux la vuelve a
+analizar (un recorte o un giro mueven las caras de sitio). El prompt para
+montar el lado Linux esta en [PROMPT_LINUX_ROSTROS.md](PROMPT_LINUX_ROSTROS.md).
+
 ## Indice de metadatos
 
 Leer el GPS de cada foto con ExifTool es proporcional al numero de archivos, y
