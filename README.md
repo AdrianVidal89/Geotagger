@@ -69,6 +69,19 @@ Editar una foto cambia su fecha de modificacion, y el Linux la vuelve a
 analizar (un recorte o un giro mueven las caras de sitio). El prompt para
 montar el lado Linux esta en [PROMPT_LINUX_ROSTROS.md](PROMPT_LINUX_ROSTROS.md).
 
+- **Incluir subcarpetas**: el boton *Subcarpetas* de la barra superior
+  muestra, ademas de las fotos de la carpeta, todas las de sus subcarpetas a
+  cualquier profundidad, en una sola rejilla (p. ej. en `2026`, las de todos
+  los meses y dias). Cada tarjeta indica de que subcarpeta viene; filtros,
+  estrellas, seleccion, mover, editar y descargar funcionan igual. Se saltan
+  las carpetas ocultas y las del sistema del QNAP (`@Recycle`...). Tope de
+  20.000 fotos por listado. El modo va en la URL (`#/2026?sub`) y cambiar de
+  carpeta vuelve a la vista normal.
+- **Favoritos con subcarpetas**: con *Subcarpetas* activo, la estrella guarda
+  la carpeta en ese modo; en la lista lleva la marca *todo* y se abre ya con
+  todas las fotos anidadas. Una misma carpeta puede estar dos veces (normal y
+  con subcarpetas).
+
 ## Indice de metadatos
 
 Leer el GPS de cada foto con ExifTool es proporcional al numero de archivos, y
