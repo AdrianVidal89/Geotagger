@@ -70,6 +70,9 @@ export class Editor {
         const ret = wasm.editor_bw(this.__wbg_ptr);
         return ret !== 0;
     }
+    clear_mattes() {
+        wasm.editor_clear_mattes(this.__wbg_ptr);
+    }
     /**
      * Color (OkLab) que tomaria una mascara de rango de color en el punto
      * normalizado (x, y) de la foto. Vacio si cae fuera.
@@ -164,6 +167,19 @@ export class Editor {
         }
     }
     /**
+     * La foto tal cual (sin ajustes, giro ni recorte) dentro de `max_w × max_h`:
+     * la entrada de los modelos de segmentacion.
+     * @param {number} max_w
+     * @param {number} max_h
+     * @returns {Uint8Array}
+     */
+    neutral_rgba(max_w, max_h) {
+        const ret = wasm.editor_neutral_rgba(this.__wbg_ptr, max_w, max_h);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
      * Decodifica `bytes`. `orientation`: valor EXIF 1..8 a aplicar, o 0 para
      * usar el del propio archivo. `max_side`: lado mayor de trabajo (0 =
      * resolucion completa; la vista previa trabaja con ~2000 px).
@@ -196,6 +212,26 @@ export class Editor {
     out_width() {
         const ret = wasm.editor_out_width(this.__wbg_ptr);
         return ret >>> 0;
+    }
+    /**
+     * Origen para la correccion `spot_json` (desplazamiento normalizado
+     * [dx, dy]): el que mejor encaja con el entorno de la mancha, o con
+     * `avoid` el mejor que este lejos del actual ("buscar otro origen").
+     * Vacio si no cabe ninguno. Se fija al crear la correccion para que la
+     * vista previa y la foto guardada usen el mismo.
+     * @param {string} spot_json
+     * @param {number} avoid_x
+     * @param {number} avoid_y
+     * @param {boolean} use_avoid
+     * @returns {Float64Array}
+     */
+    pick_spot_source(spot_json, avoid_x, avoid_y, use_avoid) {
+        const ptr0 = passStringToWasm0(spot_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.editor_pick_spot_source(this.__wbg_ptr, ptr0, len0, avoid_x, avoid_y, use_avoid);
+        var v2 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v2;
     }
     /**
      * @returns {string}
@@ -293,6 +329,24 @@ export class Editor {
         }
     }
     /**
+     * Mascara de segmentacion calculada fuera (IA en el navegador): `kind`
+     * "person" (la usan Sujeto y Fondo) o "sky". `data`: alfa 0..255 de
+     * `w × h` que cubre la foto entera ya orientada (a cualquier resolucion).
+     * @param {string} kind
+     * @param {number} w
+     * @param {number} h
+     * @param {Uint8Array} data
+     * @returns {boolean}
+     */
+    set_matte(kind, w, h, data) {
+        const ptr0 = passStringToWasm0(kind, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.editor_set_matte(this.__wbg_ptr, ptr0, len0, w, h, ptr1, len1);
+        return ret !== 0;
+    }
+    /**
      * Giro/volteo del usuario, como valor EXIF 1..8 sobre la foto ya orientada.
      * @param {number} exif
      */
@@ -315,6 +369,18 @@ export class Editor {
         const ptr0 = passStringToWasm0(id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         wasm.editor_set_profile(this.__wbg_ptr, ptr0, len0, amount);
+    }
+    /**
+     * Correcciones de manchas (formato `Spot` de LightCraft, en JSON).
+     * @param {string} json
+     */
+    set_spots_json(json) {
+        const ptr0 = passStringToWasm0(json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.editor_set_spots_json(this.__wbg_ptr, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
     }
     /**
      * Todos los ajustes en JSON (para deshacer y para pasar la edicion al

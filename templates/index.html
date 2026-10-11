@@ -573,6 +573,10 @@ header .spacer{flex:1}
 .faces-actions{display:flex;flex-wrap:wrap;gap:8px}
 .faces-actions .btn{text-decoration:none}
 
+/* incluir subcarpetas */
+.bc-sub{margin-left:10px;font-size:.78rem;color:var(--primary);white-space:nowrap}
+.fav-sub{font-size:.66rem;text-transform:uppercase;letter-spacing:.04em;color:var(--primary);border:1px solid currentColor;border-radius:8px;padding:0 5px;margin-left:4px;flex-shrink:0}
+
 /* result boxes */
 .res-box{
   border-radius:var(--radius);padding:12px 14px;font-size:.85rem;
@@ -1418,6 +1422,10 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
           <svg viewBox="0 0 24 24"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z" fill="currentColor"/></svg>
           Filtros
         </div>
+        <div class="chip" id="chip-sub" title="Mostrar también las fotos de todas las subcarpetas">
+          <svg viewBox="0 0 24 24"><path d="M3 3h7l2 2h9v6h-2V7h-7.83l-2-2H5v12h6v2H3V3zm10 10h8v8h-8v-8zm2 2v4h4v-4h-4zM7 9h3v2H7V9zm0 4h3v2H7v-2z" fill="currentColor"/></svg>
+          Subcarpetas
+        </div>
         <div class="chip" id="chip-missing" title="Mostrar solo fotos sin GPS">
           <svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z" fill="currentColor"/></svg>
           Sin GPS
@@ -2211,9 +2219,16 @@ const thumbObserver = new IntersectionObserver((entries) => {
 // Cada carpeta visitada (y el visor abierto) se apunta en el historial del
 // navegador para que el gesto/botón "atrás" del móvil navegue DENTRO de la
 // app (subir de carpeta, cerrar el visor) en vez de salir de ella.
-function hashForPath(path) { return path ? "#/" + encodeURIComponent(path) : "#/"; }
+// "Incluir subcarpetas" viaja en la URL (#/2026?sub): atras/adelante y
+// recargar la pagina lo respetan
+let subMode = false;
+function hashForPath(path, sub) {
+  if (sub === undefined) sub = subMode;
+  return (path ? "#/" + encodeURIComponent(path) : "#/") + (sub ? "?sub" : "");
+}
+function subFromHash() { return /\?sub$/.test(location.hash); }
 function pathFromHash() {
-  const h = location.hash;
+  const h = location.hash.replace(/\?sub$/, "");
   if (!h || h === "#" || h === "#/") return "";
   try { return decodeURIComponent(h.replace(/^#\//, "")); } catch (e) { return ""; }
 }
@@ -2222,26 +2237,32 @@ function parentOf(path) {
 }
 
 window.addEventListener("popstate", (e) => {
-  const st = e.state || { view: "folder", path: pathFromHash() };
+  const st = e.state || { view: "folder", path: pathFromHash(), sub: subFromHash() };
   // Si el visor está abierto, "atrás" lo cierra (sin recargar la carpeta)
   if (document.getElementById("viewer").classList.contains("on") && st.view !== "viewer") {
     hideViewer();
-    if (st.path !== currentPath) navigate(st.path, { fromHistory: true });
+    if (st.path !== currentPath || !!st.sub !== subMode) navigate(st.path, { fromHistory: true, sub: !!st.sub });
     return;
   }
   if (st.view === "folder") {
     closeGpsSheet();
     closeSidebar();
-    if (st.path !== currentPath) navigate(st.path, { fromHistory: true });
+    if (st.path !== currentPath || !!st.sub !== subMode) navigate(st.path, { fromHistory: true, sub: !!st.sub });
   }
 });
 
 async function navigate(path, opts) {
   opts = opts || {};
+  // Con subcarpetas: solo si se pide (boton, favorito, URL) o al recargar la
+  // misma carpeta; cambiar de carpeta vuelve a la vista normal
+  const sub = opts.sub !== undefined ? !!opts.sub : (opts.keepView ? subMode : false);
+  const subChanged = sub !== subMode;
+  subMode = sub;
+  document.getElementById("chip-sub").classList.toggle("on", subMode);
   if (!opts.fromHistory) {
-    const entry = { view: "folder", path: path };
+    const entry = { view: "folder", path: path, sub: subMode };
     // Recargas de la misma carpeta (subir/renombrar) no ensucian el historial
-    if (opts.replace || path === currentPath) {
+    if (opts.replace || (path === currentPath && !subChanged)) {
       history.replaceState(entry, "", hashForPath(path));
     } else {
       history.pushState(entry, "", hashForPath(path));
@@ -2250,7 +2271,7 @@ async function navigate(path, opts) {
   // keepView: recarga de la MISMA carpeta tras una operacion (mover, editar,
   // subir...). Se conservan filtros y la rejilla actual hasta que llega el
   // listado nuevo, y renderFiles devuelve el scroll a donde estaba.
-  const keep = !!opts.keepView && path === currentPath;
+  const keep = !!opts.keepView && path === currentPath && !subChanged;
   currentPath = path;
   selectedFiles.clear();
   indexNote = "";
@@ -2275,9 +2296,10 @@ async function navigate(path, opts) {
     // que vaya dejando hechas las miniaturas que falten mientras se mira la
     // primera pantalla. Sin esto, cada foto grande cuesta su descompresión la
     // primera vez que aparece.
-    const res = await fetch("/api/browse?prefetch=1&path=" + encodeURIComponent(path));
+    const res = await fetch("/api/browse?prefetch=1&path=" + encodeURIComponent(path) + (subMode ? "&recursive=1" : ""));
     const data = await res.json();
     renderBreadcrumb(path);
+    if (subMode) markSubCrumb(data.files.length, data.truncated);
     renderSidebar(data.dirs, path);
     if (typeof renderFavorites === "function") renderFavorites();
     allFiles = data.files;
@@ -2308,6 +2330,15 @@ function renderBreadcrumb(path) {
   bc.querySelectorAll(".bc-item:not(.cur)").forEach(el => {
     el.addEventListener("click", () => navigate(el.dataset.path));
   });
+}
+
+// "· con subcarpetas · 1.234 fotos" al final de la ruta
+function markSubCrumb(n, truncated) {
+  const bc = document.getElementById("breadcrumb");
+  const tag = document.createElement("span");
+  tag.className = "bc-sub";
+  tag.textContent = "con subcarpetas · " + n.toLocaleString("es-ES") + (truncated ? "+ fotos (máximo)" : n === 1 ? " foto" : " fotos");
+  bc.appendChild(tag);
 }
 
 function renderSidebar(dirs, activePath) {
@@ -2602,12 +2633,21 @@ function handleSelectAll() {
 document.getElementById("chip-selall").addEventListener("click", handleSelectAll);
 document.getElementById("btn-select-all").addEventListener("click", handleSelectAll);
 
+// ── Incluir subcarpetas ──────────────────────────────────────────────────────
+document.getElementById("chip-sub").addEventListener("click", () => {
+  if (missingMode) {
+    missingMode = false;
+    document.getElementById("chip-missing").classList.remove("on");
+  }
+  navigate(currentPath, { sub: !subMode });
+});
+
 // ── Missing GPS filter ────────────────────────────────────────────────────────
 document.getElementById("chip-missing").addEventListener("click", function() {
   missingMode = !missingMode;
   mapAlbum = null;                     // el filtro manda sobre el album del mapa
   this.classList.toggle("on", missingMode);
-  if (missingMode) { loadMissing(currentPath); } else { navigate(currentPath); }
+  if (missingMode) { loadMissing(currentPath); } else { navigate(currentPath, { sub: subMode }); }
 });
 
 async function loadMissing(path) {
@@ -3688,7 +3728,7 @@ function openViewer(i) {
   viewerEl.classList.add("on");
   document.addEventListener("keydown", viewerKeys);
   // Entrada en el historial: el gesto "atrás" del móvil cierra el visor
-  history.pushState({ view: "viewer", path: currentPath }, "", hashForPath(currentPath));
+  history.pushState({ view: "viewer", path: currentPath, sub: subMode }, "", hashForPath(currentPath));
   showViewerPhoto();
 }
 
@@ -4209,7 +4249,7 @@ function refreshCurrentView() {
   captureGalleryAnchor();      // volver al mismo punto de la galería
   if (mapAlbum) loadMapAlbum();
   else if (missingMode) loadMissing(currentPath);
-  else navigate(currentPath, { keepView: true });
+  else navigate(currentPath, { keepView: true, sub: subMode });
 }
 
 async function openPhotoFromMap(ph) {
@@ -4333,20 +4373,25 @@ function renderFavorites() {
   } else {
     const here = favCurrentFull();
     list.innerHTML = favorites.map(f =>
-      '<div class="fav-item' + (f.path === here ? ' cur' : '') + '" data-path="' + esc(f.path) + '">' +
-      FAV_STAR + '<span class="fav-name" title="' + esc(f.path || "NAS") + '">' + esc(f.name) + '</span>' +
+      '<div class="fav-item' + (f.path === here && !!f.recursive === subMode ? ' cur' : '') + '" data-path="' + esc(f.path) + '" data-rec="' + (f.recursive ? 1 : 0) + '">' +
+      FAV_STAR + '<span class="fav-name" title="' + esc(f.path || "NAS") + (f.recursive ? " (con subcarpetas)" : "") + '">' + esc(f.name) + '</span>' +
+      (f.recursive ? '<span class="fav-sub" title="Se abre con todas las fotos de sus subcarpetas">todo</span>' : '') +
       '<button class="fav-del" title="Quitar de favoritos">✕</button></div>'
     ).join("");
     list.querySelectorAll(".fav-item").forEach(el => {
       el.addEventListener("click", (e) => {
-        if (e.target.closest(".fav-del")) { removeFavorite(el.dataset.path); return; }
-        goToFavorite(el.dataset.path);
+        const rec = el.dataset.rec === "1";
+        if (e.target.closest(".fav-del")) { removeFavorite(el.dataset.path, rec); return; }
+        goToFavorite(el.dataset.path, rec);
       });
     });
   }
-  // La estrella se enciende si la carpeta que se está viendo ya es favorita
+  // La estrella se enciende si la carpeta que se está viendo (en este modo,
+  // con o sin subcarpetas) ya es favorita
   const here = favCurrentFull();
-  document.getElementById("btn-fav-add").classList.toggle("on", favorites.some(f => f.path === here));
+  const star = document.getElementById("btn-fav-add");
+  star.classList.toggle("on", favorites.some(f => f.path === here && !!f.recursive === subMode));
+  star.title = subMode ? "Añadir a favoritos esta carpeta con todas sus subcarpetas" : "Añadir esta carpeta a favoritos";
 }
 
 async function loadFavorites() {
@@ -4359,24 +4404,24 @@ async function loadFavorites() {
 
 async function addFavorite() {
   const here = favCurrentFull();
-  if (favorites.some(f => f.path === here)) { removeFavorite(here); return; }
+  if (favorites.some(f => f.path === here && !!f.recursive === subMode)) { removeFavorite(here, subMode); return; }
   try {
     const res = await fetch("/api/favorites", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ action: "add", path: currentPath })
+      body: JSON.stringify({ action: "add", path: currentPath, recursive: subMode })
     });
     const d = await res.json();
     if (!d.error) { favorites = d.favorites || []; renderFavorites(); }
   } catch(e) {}
 }
 
-async function removeFavorite(path) {
+async function removeFavorite(path, recursive) {
   try {
     const res = await fetch("/api/favorites", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ action: "remove", path: path })
+      body: JSON.stringify({ action: "remove", path: path, recursive: !!recursive })
     });
     const d = await res.json();
     favorites = d.favorites || [];
@@ -4384,7 +4429,7 @@ async function removeFavorite(path) {
   } catch(e) {}
 }
 
-async function goToFavorite(path) {
+async function goToFavorite(path, recursive) {
   try {
     const res = await fetch("/api/work_root", {
       method: "POST",
@@ -4395,7 +4440,7 @@ async function goToFavorite(path) {
     if (d.error) return;
     showWorkRoot(d);
     selectedFiles.clear();
-    await navigate("", { replace: true });
+    await navigate("", { replace: true, sub: !!recursive });
     renderFavorites();
   } catch(e) {}
   closeSidebar();
@@ -5832,7 +5877,7 @@ function uploadPhotos(files) {
 // sin perder el sitio); con URL limpia arranca en la raíz.
 loadWorkRoot();
 loadFavorites();
-navigate(pathFromHash(), { replace: true });
+navigate(pathFromHash(), { replace: true, sub: subFromHash() });
 </script>
 <!-- Editor LightCraft (motor en WebAssembly, ver lightcraft-bridge/) -->
 <script src="/static/lightcraft/editor.js"></script>

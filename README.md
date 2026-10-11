@@ -69,6 +69,19 @@ Editar una foto cambia su fecha de modificacion, y el Linux la vuelve a
 analizar (un recorte o un giro mueven las caras de sitio). El prompt para
 montar el lado Linux esta en [PROMPT_LINUX_ROSTROS.md](PROMPT_LINUX_ROSTROS.md).
 
+- **Incluir subcarpetas**: el boton *Subcarpetas* de la barra superior
+  muestra, ademas de las fotos de la carpeta, todas las de sus subcarpetas a
+  cualquier profundidad, en una sola rejilla (p. ej. en `2026`, las de todos
+  los meses y dias). Cada tarjeta indica de que subcarpeta viene; filtros,
+  estrellas, seleccion, mover, editar y descargar funcionan igual. Se saltan
+  las carpetas ocultas y las del sistema del QNAP (`@Recycle`...). Tope de
+  20.000 fotos por listado. El modo va en la URL (`#/2026?sub`) y cambiar de
+  carpeta vuelve a la vista normal.
+- **Favoritos con subcarpetas**: con *Subcarpetas* activo, la estrella guarda
+  la carpeta en ese modo; en la lista lleva la marca *todo* y se abre ya con
+  todas las fotos anidadas. Una misma carpeta puede estar dos veces (normal y
+  con subcarpetas).
+
 ## Indice de metadatos
 
 Leer el GPS de cada foto con ExifTool es proporcional al numero de archivos, y
@@ -488,9 +501,20 @@ o doble clic lo quita; doble clic en el fondo deja el canal recto. Se dibuja
 con la misma interpolacion (Hermite monotona) que aplica el motor. Debajo
 sigue la curva parametrica (iluminaciones, claros, oscuros, sombras).
 
+**Fuerza de los controles**: los RAW (CR3 incluido) se editan a partir de su
+vista previa JPEG incrustada, asi que todo trabaja sobre imagenes ya
+reveladas, y LightCraft calibra varios controles para luz RAW lineal. Medidos
+sobre JPEG frente a Lightroom se quedaban cortos y se han recalibrado: Sombras
+(+100 levantaba la zona de sombras 7-15 niveles; ahora ~30-55, con una curva
+suave sobre las sombras porque forzar el control del motor creaba halos),
+Iluminaciones y Claridad (x1,5), y Contraste (ahora una curva en S que pivota
+en el tono medio de cada foto: antes, en una foto oscura, +100 oscurecia
+tambien los medios). Los ajustes de las mascaras, igual.
+
 **Blancos y Negros**: los del motor estan pensados para RAW y con un JPEG
 apenas movian los extremos (Negros +-100 = dos niveles). Aqui actuan como en
-Lightroom con JPEG: Blancos lleva las luces altas hasta quemar o apagar el
+Lightroom con JPEG: Blancos lleva las luces altas de cada foto (hasta su
+blanco real, tambien en una foto subexpuesta) hasta quemar o apagar el
 blanco y Negros hunde o levanta las sombras profundas. Se aplican antes de la
 curva maestra.
 
@@ -500,7 +524,24 @@ blancos, negros, textura, claridad, neblina, tono, saturacion, enfoque,
 ruido). Cada capa suma o resta componentes: pincel (pintar y borrar, tamaño,
 desvanecer, flujo), degradado lineal y radial (con tiradores sobre la foto, o
 trazandolos arrastrando), rango de color (tocar la foto), rango de luminancia,
-y cielo, sujeto y fondo automaticos (deteccion heuristica del motor, sin IA).
+y **cielo, sujeto y fondo con IA**.
+
+**Sujeto, Cielo y Fondo** usan dos modelos de segmentacion pequeños que corren
+en el navegador con ONNX Runtime Web (nunca en el NAS): U^2-Net ligero para el
+motivo principal (personas, animales, objetos) y U^2-Net entrenado para cielos
+(convertido de ncnn a ONNX con `tools/ncnn2onnx.py`). El resultado se le da a
+LightCraft como mascara de segmentacion y vale para la vista previa y para la
+foto guardada. Los bordes se ajustan a los de la foto ("Ajustar bordes"). Se
+descargan (20 MB) solo la primera vez que se usan; luego quedan en la cache
+del navegador. Licencias en `static/lightcraft/ai/NOTICE.md`. Limitacion
+conocida: los cielos nocturnos estrellados no los detecta.
+
+**Corregir** (tecla `H`): pincel corrector de imperfecciones de LightCraft.
+Se pinta sobre la mancha y se rellena a partir de otra zona: *Eliminar* busca
+solo el origen que mejor encaja con el entorno y funde el tono, *Reparar* hace
+lo mismo con el origen que se elija, *Clonar* copia tal cual. Tamaño,
+desvanecer y opacidad; el origen se ve como contorno discontinuo y se puede
+arrastrar o pedir otro ("Buscar otro origen").
 La superposicion roja muestra la seleccion; al mover un ajuste se oculta
 para ver el efecto. Capas visibles u ocultas, invertir, renombrar, borrar.
 

@@ -153,7 +153,10 @@ def _favorites():
             continue
         path = str(f.get("path", "")).strip().strip("/")
         name = str(f.get("name", "")).strip() or (path.split("/")[-1] if path else "NAS")
-        out.append({"path": path, "name": name})
+        fav = {"path": path, "name": name}
+        if f.get("recursive"):
+            fav["recursive"] = True
+        out.append(fav)
     return out
 
 def _resolve_path(rel, base=None):
@@ -2517,7 +2520,8 @@ def favorites():
 
     if action == "remove":
         path = str(data.get("path", "")).strip().strip("/")
-        favs = [f for f in favs if f["path"] != path]
+        rec = data.get("recursive")
+        favs = [f for f in favs if not (f["path"] == path and (rec is None or bool(f.get("recursive")) == bool(rec)))]
         _save_settings({"favorites": favs})
         return jsonify({"favorites": favs})
 
@@ -2532,14 +2536,44 @@ def favorites():
         full = "" if target == base else str(target.relative_to(base))
     except ValueError:
         return jsonify({"error": "fuera del NAS"}), 400
-    if any(f["path"] == full for f in favs):
+    recursive = bool(data.get("recursive"))
+    if any(f["path"] == full and bool(f.get("recursive")) == recursive for f in favs):
         return jsonify({"favorites": favs, "already": True})
     name = str(data.get("name", "")).strip() or (full.split("/")[-1] if full else (base.name or "NAS"))
     if len(favs) >= 40:
         return jsonify({"error": "demasiados favoritos"}), 400
-    favs.append({"path": full, "name": name})
+    fav = {"path": full, "name": name}
+    if recursive:
+        fav["recursive"] = True       # se abre con "Incluir subcarpetas"
+    favs.append(fav)
     _save_settings({"favorites": favs})
     return jsonify({"favorites": favs})
+
+# Con "Incluir subcarpetas": tope de fotos por listado (una carpeta raiz con
+# decenas de miles de fotos haria un listado de varios MB y una rejilla lenta)
+RECURSIVE_MAX = 20000
+
+def _is_dir(p):
+    try:
+        return p.is_dir()
+    except OSError:
+        return False
+
+def _browse_item(item, rel_path, mtime, size, fila):
+    """Una foto del listado, con lo que el indice sabe de ella si sigue al dia."""
+    al_dia = fila and fila[0] == mtime and fila[1] == size
+    return {
+        "name": item.name,
+        "path": rel_path,
+        "ext": item.suffix.lower(),
+        "mtime": mtime,
+        "date": _ui_date(fila[2]) if al_dia else "",
+        # 142 bytes que evitan un hueco gris (ver LA MINIATURA DIMINUTA)
+        "blur": (fila[3] or "") if al_dia else "",
+        # Las estrellas van en el listado para que el filtro sea instantaneo:
+        # preguntarlas foto a foto seria una peticion por tarjeta
+        "rating": fila[4] if al_dia else 0,
+    }
 
 @app.route("/api/browse")
 def browse():
@@ -2560,7 +2594,8 @@ def browse():
     # archivo: una foto de 2005 copiada al NAS tiene fecha de archivo de hoy.
     # El indice ya la sabe, asi que no cuesta nada acompanarla.
     _blur_flush()          # que lo recien generado viaje ya en este listado
-    fechas = _index_dates(abs_path)
+    fechas = _index_dates(abs_path)    # (consulta todo el subarbol)
+    recursive = request.args.get("recursive") == "1"
     for item in entradas:
         if item.name.startswith("@") or item.name.startswith("."):
             continue
@@ -2579,32 +2614,52 @@ def browse():
             fila = fechas.get(str(item))
             # Solo vale si la foto no ha cambiado desde que se indexo
             al_dia = fila and fila[0] == mtime and fila[1] == size
-            files.append({
-                "name": item.name,
-                "path": str(Path(rel) / item.name),
-                "ext": item.suffix.lower(),
-                "mtime": mtime,
-                "date": _ui_date(fila[2]) if al_dia else "",
-                # 142 bytes que evitan un hueco gris (ver LA MINIATURA DIMINUTA)
-                "blur": (fila[3] or "") if al_dia else "",
-                # Las estrellas van en el listado para que el filtro sea
-                # instantaneo: preguntarlas foto a foto seria una peticion por
-                # tarjeta (ver LAS ESTRELLAS)
-                "rating": fila[4] if al_dia else 0,
-            })
+            files.append(_browse_item(item, str(Path(rel) / item.name), mtime, size, fila))
+    if recursive:
+        # Todas las fotos de las subcarpetas (la carpeta de cada una va en
+        # "folder", relativa a la que se esta viendo, para la tarjeta)
+        truncated = False
+        for sub in [d for d in entradas if d.name[:1] not in (".", "@") and _is_dir(d)]:
+            for dirpath, dirnames, filenames in os.walk(str(sub)):
+                dirnames[:] = sorted(d for d in dirnames if d[:1] not in (".", "@"))
+                for fn in filenames:
+                    if fn[:1] in (".", "@") or os.path.splitext(fn)[1].lower() not in SUPPORTED_EXTS:
+                        continue
+                    item = Path(dirpath) / fn
+                    try:
+                        st = item.stat()
+                        mtime, size = int(st.st_mtime), st.st_size
+                    except OSError:
+                        continue
+                    sub_rel = item.relative_to(abs_path)
+                    f = _browse_item(item, str(Path(rel) / sub_rel), mtime, size, fechas.get(str(item)))
+                    f["folder"] = str(sub_rel.parent)
+                    files.append(f)
+                    if len(files) >= RECURSIVE_MAX:
+                        truncated = True
+                        break
+                if truncated:
+                    break
+            if truncated:
+                break
     # Las fotos mas recientes primero (por fecha de modificacion del archivo).
     files.sort(key=lambda f: f["mtime"], reverse=True)
     # La galeria avisa de que va a ENSENAR estas fotos, asi que sus miniaturas
     # se van haciendo de fondo en este mismo orden. El selector de carpeta de
     # destino usa la misma ruta y no lo pide: alli solo se ven carpetas.
     if request.args.get("prefetch") == "1":
-        _prefetch_request(abs_path, [f["name"] for f in files])
+        # (con subcarpetas, el nombre va con su ruta relativa a esta carpeta)
+        _prefetch_request(abs_path, [(f["folder"] + "/" if f.get("folder") else "") + f["name"] for f in files])
     # Las diminutas solo de lo que se va a llegar a ver de una sentada: en una
     # carpeta de 3.000 fotos serian 0,6 MB de listado, y para cuando se baja
     # tanto las miniaturas de verdad ya estan hechas.
     for f in files[LQIP_LISTADO_MAX:]:
         f["blur"] = ""
-    return jsonify({"dirs": dirs, "files": files, "current": rel})
+    out = {"dirs": dirs, "files": files, "current": rel}
+    if recursive:
+        out["recursive"] = True
+        out["truncated"] = len(files) >= RECURSIVE_MAX
+    return jsonify(out)
 
 @app.route("/api/thumb")
 def thumb():

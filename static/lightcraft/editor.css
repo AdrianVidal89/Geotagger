@@ -131,9 +131,20 @@ html[data-theme="tron"] .lc-btn.primary{color:#001218}
 .lc-tabs .lc-btn{flex:1;justify-content:center}
 
 .lc-hint{color:var(--lc-dim);font-size:11.5px;margin:8px 0 0;line-height:1.45}
-.lc-only-crop,.lc-only-mask{display:none}
-.lc.tool-crop .lc-only-crop,.lc.tool-mask .lc-only-mask{display:block}
-.lc.tool-crop .lc-only-edit,.lc.tool-mask .lc-only-edit{display:none}
+.lc-only-crop,.lc-only-mask,.lc-only-heal{display:none}
+.lc.tool-crop .lc-only-crop,.lc.tool-mask .lc-only-mask,.lc.tool-heal .lc-only-heal{display:block}
+.lc.tool-crop .lc-only-edit,.lc.tool-mask .lc-only-edit,.lc.tool-heal .lc-only-edit{display:none}
+
+/* corrector: contornos de las correcciones y rastro del pincel */
+.lc-hlayer{position:absolute;display:none;touch-action:none;cursor:crosshair}
+.lc-hlayer svg{width:100%;height:100%;overflow:visible;display:block}
+.lc-spot{fill:rgba(255,255,255,.06);stroke:#fff;stroke-width:1.5;vector-effect:non-scaling-stroke;cursor:pointer;filter:drop-shadow(0 0 1.5px rgba(0,0,0,.9))}
+polyline.lc-spot{fill:none;stroke:rgba(255,255,255,.35);stroke-linecap:round;stroke-linejoin:round;vector-effect:none}
+.lc-spot.on{stroke:var(--lc-accent)}
+polyline.lc-spot.on{stroke:rgba(63,143,240,.45)}
+.lc-spot.lc-src{stroke-dasharray:5 4;cursor:move}
+polyline.lc-spot.lc-src{stroke:rgba(255,255,255,.25)}
+.lc-trail{fill:none;stroke:rgba(255,255,255,.4);stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
 .lc-tabbar{display:none}
 
 /* mascaras: lista de capas */
