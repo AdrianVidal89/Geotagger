@@ -905,6 +905,48 @@ def thumbs_prepare():
         threading.Thread(target=_prep_run, args=(job_id, items), daemon=True).start()
     return jsonify(_prep_status())
 
+# Miniaturas EN LOTE. Una peticion por miniatura era el cuello de botella al
+# bajar por una carpeta ya preparada: el navegador solo abre 6 conexiones a la
+# vez, y en la CPU del NAS cada peticion cuesta mas en Flask que leer la propia
+# miniatura de la cache. Ahora la galeria pide de una vez todas las que tiene
+# en pantalla. Solo se sirven las que YA estan hechas (leer un fichero); las que
+# falten vuelven vacias y la galeria las pide una a una por /api/thumb, que las
+# genera. Formato: por cada ruta, 1 byte de tipo (0 falta, 1 WebP, 2 JPEG),
+# 4 bytes de longitud (big endian) y los datos.
+THUMB_BATCH_MAX = 64
+
+@app.route("/api/thumbs/batch", methods=["POST"])
+def thumbs_batch():
+    import struct
+    data = request.get_json(silent=True) or {}
+    rels = data.get("paths") or []
+    if not isinstance(rels, list):
+        return jsonify({"error": "paths"}), 400
+    root = str(_work_root())
+    pre = root.rstrip("/") + "/"
+    out = []
+    for rel in rels[:THUMB_BATCH_MAX]:
+        blob, kind = b"", 0
+        try:
+            # La misma ruta (resuelta) que usa /api/thumb para su cache
+            p = os.path.realpath(os.path.join(root, str(rel)))
+            if p.startswith(pre):
+                mtime = os.path.getmtime(p)
+                for k, fmt in ((1, "WEBP"), (2, "JPEG")):
+                    try:
+                        with open(_thumb_cache_name(p, mtime, fmt), "rb") as f:
+                            blob, kind = f.read(), k
+                        break
+                    except OSError:
+                        continue
+        except (OSError, ValueError, TypeError):
+            pass
+        out.append(struct.pack(">BI", kind, len(blob)))
+        out.append(blob)
+    resp = app.response_class(b"".join(out), mimetype="application/octet-stream")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
 @app.route("/api/thumbs/progress")
 def thumbs_progress():
     # fg=1: la ventana de progreso esta a la vista, el usuario esta esperando

@@ -379,6 +379,7 @@ header .spacer{flex:1}
 .empty-state p{font-size:1rem}
 .empty-state small{font-size:.8rem;opacity:.7}
 
+.vg-pad{grid-column:1/-1}
 .files-grid{
   display:grid;
   grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
@@ -391,9 +392,12 @@ header .spacer{flex:1}
   background:var(--surface);aspect-ratio:1;user-select:none;-webkit-user-select:none;
   /* Sin callout de iOS ni menu contextual: el long-press es "seleccionar" */
   -webkit-touch-callout:none;touch-action:pan-y;
-  /* Skip layout+paint for off-screen cards — equivalent to CSS virtual scrolling */
-  content-visibility:auto;
-  contain-intrinsic-size:auto 160px;
+  /* Sin content-visibility:auto: el navegador lo implementa con un
+     IntersectionObserver interno POR TARJETA, y con miles de tarjetas
+     comprobarlas en cada cuadro costaba mas que pintarlas. contain:strict
+     sí: el tamano lo ponen la columna y el aspect-ratio, no el contenido,
+     asi que cargar una miniatura no obliga a recolocar la rejilla entera. */
+  contain:strict;
 }
 
 /* La foto de 16px que viaja dentro del listado: se pinta al instante, sin
@@ -405,27 +409,24 @@ header .spacer{flex:1}
   position:absolute;inset:0;
   background-size:cover;background-position:center;
   filter:blur(8px);transform:scale(1.12);
-  transition:opacity .35s;
 }
-.fc img.ready~.fc-blur{opacity:0}
+/* Con la miniatura ya puesta, el desenfoque deja de pintarse (visibility, no
+   solo opacidad: un filtro blur invisible se seguia rasterizando al bajar) */
+.fc img.ready~.fc-blur{visibility:hidden}
 
-/* skeleton shimmer: solo para las fotos de las que aún no hay ni el 16px */
-.fc-skeleton{
-  position:absolute;inset:0;
-  background:linear-gradient(90deg,#f0f0f0 25%,#e8e8e8 50%,#f0f0f0 75%);
-  background-size:200% 100%;
-  animation:shimmer 1.4s infinite;
-  transition:opacity .3s;
-}
-@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
-
+/* RENDIMIENTO AL BAJAR (carpetas de miles de fotos): antes cada tarjeta sin
+   miniatura tenia un "shimmer" animado (repintado en cada cuadro, y seguia
+   animandose oculto debajo de la foto), cada imagen llevaba will-change (una
+   capa de composicion POR FOTO: miles) y dos iconos SVG por tarjeta (80.000
+   nodos en 4.000 fotos). Ahora el hueco es el fondo liso de la tarjeta, la
+   foto aparece sin fundido (cada fundido que arrancaba obligaba a rehacer
+   las capas de toda la pagina) y el icono se crea solo si la foto falla. */
 .fc img{
   width:100%;height:100%;object-fit:cover;display:block;
-  position:absolute;inset:0;opacity:0;transition:opacity .35s;
-  will-change:opacity;-webkit-user-drag:none;
+  position:absolute;inset:0;visibility:hidden;
+  -webkit-user-drag:none;
 }
-.fc img.ready{opacity:1}
-.fc img.ready~.fc-skeleton{opacity:0;pointer-events:none}
+.fc img.ready{visibility:visible}
 
 /* fallback icon */
 .fc-icon{
@@ -1281,9 +1282,6 @@ html[data-theme="tron"] .spinner{
 
 /* ── tarjetas de foto ── */
 html[data-theme="tron"] .fc{background:#07111a;border-radius:2px}
-html[data-theme="tron"] .fc-skeleton{
-  background:linear-gradient(90deg,#07111a 25%,#0d2230 50%,#07111a 75%);background-size:200% 100%;
-}
 /* marco de luz: solo en hover/selección, nunca en reposo. Con outline y no con
    un ::after, que serían miles de cajas extra en una carpeta grande */
 html[data-theme="tron"] .fc:hover{outline:1px solid var(--primary);outline-offset:-1px}
@@ -1378,14 +1376,12 @@ html[data-theme="tron"] .map-pop{background:#060d15;border:1px solid var(--prima
   box-shadow:0 0 8px rgba(0,229,255,.45)}
 html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
 
-/* En móvil y con "reducir movimiento": nada de animación de adorno, y el
-   degradado del shimmer también quieto */
+/* En móvil y con "reducir movimiento": nada de animación de adorno */
 @media (max-width:768px){
   html[data-theme="tron"] header::after{animation:none;display:none}
 }
 @media (prefers-reduced-motion:reduce){
   html[data-theme="tron"] header::after{animation:none;display:none}
-  html[data-theme="tron"] .fc-skeleton{animation:none}
 }
 </style>
 <link rel="stylesheet" href="/static/lightcraft/editor.css">
@@ -2211,29 +2207,114 @@ let activeLoads = 0;
 // En la cola solo esperan tarjetas que estan en pantalla (o a punto): al bajar
 // rapido, las que ya se pasaron salen de ella. Antes se quedaban y habia que
 // esperar a todas las de por medio para ver las de donde uno se paraba.
-const loadQueue = []; // tarjetas
+const loadQueue = []; // tarjetas esperando su lote
+const singleQueue = []; // tarjetas que el lote no traia: una a una (se generan)
+
+// LOTES: las miniaturas que hay en pantalla se piden juntas en UNA peticion
+// (/api/thumbs/batch). Una por miniatura topaba con las 6 conexiones del
+// navegador y con lo que cuesta cada peticion en la CPU del NAS: una carpeta ya
+// preparada se llenaba pantalla a pantalla con retraso. El lote solo trae las
+// que ya estan hechas; las que falten se piden sueltas y el servidor las genera.
+const BATCH_MAX = 48, BATCH_PARALLEL = 2;
+let batchActive = 0, batchTimer = 0;
 
 function _drainQueue() {
-  while (activeLoads < MAX_PARALLEL && loadQueue.length > 0) {
-    const card = loadQueue.shift();
-    delete card.dataset.queued;
-    _startLoad(card, card.dataset.src);
+  while (activeLoads < MAX_PARALLEL && singleQueue.length > 0) {
+    _startLoad(singleQueue.shift(), null, true);
   }
 }
 
-function _startLoad(card, src) {
-  if (card.dataset.loaded) { _drainQueue(); return; }
+function _scheduleBatch() {
+  // Un instante de espera junta en el mismo lote todas las tarjetas que
+  // aparecen en el mismo cuadro
+  if (!batchTimer) batchTimer = setTimeout(_pumpBatches, 16);
+}
+
+function _pumpBatches() {
+  batchTimer = 0;
+  while (batchActive < BATCH_PARALLEL && loadQueue.length > 0) {
+    const cards = loadQueue.splice(0, BATCH_MAX);
+    for (const c of cards) { delete c.dataset.queued; c.dataset.loaded = "1"; }
+    _fetchBatch(cards);
+  }
+}
+
+async function _fetchBatch(cards) {
+  batchActive++;
+  try {
+    const res = await fetch("/api/thumbs/batch", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                  body: JSON.stringify({ paths: cards.map(c => c.dataset.path) }) });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const buf = await res.arrayBuffer(), dv = new DataView(buf);
+    let o = 0;
+    for (const card of cards) {
+      const kind = dv.getUint8(o), len = dv.getUint32(o + 1);
+      o += 5;
+      if (kind && len) _showBlob(card, new Blob([new Uint8Array(buf, o, len)], { type: kind === 1 ? "image/webp" : "image/jpeg" }));
+      else _single(card);
+      o += len;
+    }
+  } catch (e) {
+    cards.forEach(_single);          // sin lote: como antes, una a una
+  } finally {
+    batchActive--;
+    _pumpBatches();
+  }
+}
+
+function _single(card) {
+  if (!card.isConnected) return;
+  if (activeLoads < MAX_PARALLEL) _startLoad(card, null, true);
+  else singleQueue.push(card);
+}
+
+// Miniaturas ya cargadas, por URL (que lleva la version de la foto): la
+// rejilla virtual destruye las tarjetas que se alejan y, al volver, las
+// recrea al instante desde aqui sin pedir nada. Las del lote son blobs en
+// memoria (~10 KB cada una); las sueltas, su URL (la cache HTTP las tiene).
+const THUMB_MEM_MAX = 1500;
+const thumbMem = new Map();
+function thumbMemPut(key, url) {
+  const old = thumbMem.get(key);
+  if (old && old !== url && old.startsWith("blob:")) URL.revokeObjectURL(old);
+  thumbMem.delete(key);
+  thumbMem.set(key, url);
+  if (thumbMem.size > THUMB_MEM_MAX) {
+    const [k, u] = thumbMem.entries().next().value;     // la mas antigua
+    thumbMem.delete(k);
+    if (u.startsWith("blob:")) URL.revokeObjectURL(u);
+  }
+}
+function _setThumb(card, url) {
+  const img = card.querySelector("img");
+  if (!img) return;
+  img.onload = () => {
+    img.onload = img.onerror = null;
+    img.decode ? img.decode().then(() => img.classList.add("ready")).catch(() => img.classList.add("ready"))
+               : img.classList.add("ready");
+  };
+  img.onerror = () => { img.onload = img.onerror = null; thumbMem.delete(card.dataset.src); _startLoad(card, null, true); };
+  img.src = url;
+}
+
+function _showBlob(card, blob) {
+  const url = URL.createObjectURL(blob);
+  thumbMemPut(card.dataset.src, url);
+  _setThumb(card, url);
+}
+
+function _startLoad(card, src, force) {
+  src = src || card.dataset.src;
+  if (card.dataset.loaded && !force) { _drainQueue(); return; }
   card.dataset.loaded = "1";
-  thumbObserver.unobserve(card);
   activeLoads++;
   const img = card.querySelector("img");
-  const skeleton = card.querySelector(".fc-skeleton");
   const blur = card.querySelector(".fc-blur");
-  const fallback = card.querySelector(".fc-icon");
 
   const probe = new Image();
   probe.decoding = "async"; // decode off main thread
   probe.onload = () => {
+    thumbMemPut(src, src);
     img.src = src;
     // Use decode() so the browser paints the image in the next frame
     // without blocking the main thread
@@ -2244,9 +2325,12 @@ function _startLoad(card, src) {
   };
   probe.onerror = () => {
     if (img) img.style.display = "none";
-    if (skeleton) skeleton.style.display = "none";
     if (blur) blur.style.display = "none";
-    if (fallback) fallback.classList.add("show");
+    // El icono de "sin miniatura" solo en las que fallan (antes, en todas)
+    const icon = document.createElement("div");
+    icon.className = "fc-icon show";
+    icon.innerHTML = RAW_EXTS.includes(card.dataset.ext) ? makeRawIcon() : makeImgIcon();
+    card.insertBefore(icon, card.querySelector(".fc-overlay"));
     activeLoads--;
     _drainQueue();
   };
@@ -2255,12 +2339,9 @@ function _startLoad(card, src) {
 
 function _enqueueThumb(card) {
   if (card.dataset.queued || card.dataset.loaded || !card.dataset.src) return;
-  if (activeLoads < MAX_PARALLEL) {
-    _startLoad(card, card.dataset.src);
-  } else {
-    card.dataset.queued = "1";
-    loadQueue.push(card);
-  }
+  card.dataset.queued = "1";
+  loadQueue.push(card);
+  _scheduleBatch();
 }
 
 function _dequeueThumb(card) {
@@ -2270,15 +2351,96 @@ function _dequeueThumb(card) {
   if (i >= 0) loadQueue.splice(i, 1);
 }
 
-// Preload 500px before entering viewport so images are ready when scrolled to
-const thumbObserver = new IntersectionObserver((entries) => {
-  entries.forEach(e => {
-    // Se sigue observando hasta que empieza a cargar: si se aleja antes,
-    // deja su sitio en la cola a las que si se estan viendo
-    if (e.isIntersecting) _enqueueThumb(e.target);
-    else _dequeueThumb(e.target);
-  });
-}, { rootMargin: "500px 0px" });
+// ── Rejilla virtual ──────────────────────────────────────────────────────────
+// En la pagina solo existen las tarjetas cercanas a la pantalla (unas pocas
+// filas por encima y por debajo); el resto de la carpeta lo ocupan dos
+// separadores con la altura de las filas que representan. Con todas las
+// tarjetas creadas, una carpeta de 4.000 fotos eran 50.000 elementos que el
+// navegador recolocaba en cada cuadro del scroll (y "Subcarpetas" llega a
+// 20.000 fotos). La rejilla es regular -tarjetas cuadradas en columnas que
+// pone el CSS-, asi que que fila cae en pantalla sale de una cuenta.
+// Las tarjetas guardan data-index (posicion en currentFiles) como siempre:
+// el codigo que busca una tarjeta concreta sigue funcionando para las que
+// estan creadas, y las demas nacen ya con su estado (seleccion, estrellas).
+const VG_OVERSCAN = 1.0;      // pantallas de mas por encima y por debajo
+const vg = { grid: null, top: null, bot: null, files: [], cols: 1, rowH: 1, gap: 0, a: 0, b: 0, cards: new Map() };
+let vgRaf = 0;
+
+function vgMeasure() {
+  const cs = getComputedStyle(vg.grid);
+  const tracks = cs.gridTemplateColumns.split(" ").filter(Boolean);
+  vg.cols = Math.max(1, tracks.length);
+  vg.gap = parseFloat(cs.rowGap) || 0;
+  vg.rowH = (parseFloat(tracks[0]) || 160) + vg.gap;
+}
+
+// Distancia del borde superior de la galeria al de la rejilla (con scroll)
+function vgGridTop(c) {
+  return vg.grid.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
+}
+
+function thumbsCheck() {
+  if (!vgRaf) vgRaf = requestAnimationFrame(vgUpdate);
+}
+
+function vgUpdate(force) {
+  vgRaf = 0;
+  if (!vg.grid || !vg.grid.isConnected) return;
+  const c = document.getElementById("content");
+  const n = vg.files.length, cols = vg.cols, rowH = vg.rowH;
+  const rows = Math.ceil(n / cols);
+  const y = c.scrollTop - vgGridTop(c), over = c.clientHeight * VG_OVERSCAN;
+  const r0 = Math.max(0, Math.floor((y - over) / rowH));
+  const r1 = Math.min(rows - 1, Math.floor((y + c.clientHeight + over) / rowH));
+  const a = r0 * cols, b = Math.min(n, (r1 + 1) * cols);
+  if (force === true || a !== vg.a || b !== vg.b) {
+    const keep = new Map();
+    const list = [];
+    for (let i = a; i < b; i++) {
+      let card = vg.cards.get(i);
+      if (!card) card = makeCard(vg.files[i], i);
+      keep.set(i, card);
+      list.push(card);
+    }
+    // Las que salen dejan su sitio en la cola de carga
+    for (const [i, card] of vg.cards) if (!keep.has(i)) _dequeueThumb(card);
+    vg.cards = keep;
+    vg.a = a; vg.b = b;
+    const above = r0 * rowH - vg.gap, below = (rows - r1 - 1) * rowH - vg.gap;
+    vg.top.style.height = Math.max(0, above) + "px";
+    vg.top.style.display = above > 0 ? "" : "none";
+    vg.bot.style.height = Math.max(0, below) + "px";
+    vg.bot.style.display = below > 0 ? "" : "none";
+    vg.grid.replaceChildren(vg.top, ...list, vg.bot);
+  }
+  for (let i = a; i < b; i++) _enqueueThumb(vg.cards.get(i));
+}
+
+// Deja la foto idx a `offset` px del borde de la galeria (o, con offset
+// null, la mete en pantalla moviendo lo minimo)
+function vgScrollTo(idx, offset) {
+  if (!vg.grid || idx < 0 || idx >= vg.files.length) return;
+  const c = document.getElementById("content");
+  const rowTop = vgGridTop(c) + Math.floor(idx / vg.cols) * vg.rowH;
+  if (offset == null) {
+    if (rowTop < c.scrollTop) c.scrollTop = rowTop;
+    else if (rowTop + vg.rowH > c.scrollTop + c.clientHeight) c.scrollTop = rowTop + vg.rowH - c.clientHeight;
+  } else {
+    c.scrollTop = rowTop - offset;
+  }
+  vgUpdate();
+}
+
+document.getElementById("content").addEventListener("scroll", thumbsCheck, { passive: true });
+window.addEventListener("resize", () => {
+  if (!vg.grid || !vg.grid.isConnected) return;
+  // Al cambiar el numero de columnas, la primera foto visible se queda arriba
+  const c = document.getElementById("content");
+  const first = Math.floor(Math.max(0, c.scrollTop - vgGridTop(c)) / vg.rowH) * vg.cols;
+  vgMeasure();
+  vgScrollTo(first, 0);
+  vgUpdate(true);
+});
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 // Cada carpeta visitada (y el visor abierto) se apunta en el historial del
@@ -2456,20 +2618,27 @@ function makeCard(f, i) {
   card.className = "fc" + (selectedFiles.has(f.path) ? " sel" : "");
   card.dataset.index = i;
   card.dataset.src = thumbUrl(f);
-  const isRaw = RAW_EXTS.includes(f.ext);
+  card.dataset.path = f.path;
+  card.dataset.ext = f.ext || "";
   const folderHtml = f.folder && f.folder !== "." ? '<br><small style="opacity:.7">' + esc(f.folder) + '</small>' : '';
-  // Con la miniatura de 16px la tarjeta nace con la foto (borrosa) dentro; el
-  // shimmer gris queda solo para las que aún no están indexadas.
+  // Con la miniatura de 16px la tarjeta nace con la foto (borrosa) dentro; si
+  // aún no está indexada, se ve el fondo liso de la tarjeta.
   const fondo = f.blur
     ? '<div class="fc-blur" style="background-image:url(data:image/webp;base64,' + f.blur + ')"></div>'
-    : '<div class="fc-skeleton"></div>';
+    : '';
   card.innerHTML =
     '<img alt="' + esc(f.name) + '" decoding="async">' +
     fondo +
-    '<div class="fc-icon">' + (isRaw ? makeRawIcon() : makeImgIcon()) + '</div>' +
     '<div class="fc-overlay"><div class="fc-check"></div></div>' +
     '<div class="fc-name">' + esc(f.name) + folderHtml + '</div>' +
     (f.rating ? '<div class="fc-stars">' + starText(f.rating) + '</div>' : '');
+  // Ya vista en esta sesion: se pinta sin pedirla
+  const mem = thumbMem.get(card.dataset.src);
+  if (mem) {
+    card.dataset.loaded = "1";
+    thumbMemPut(card.dataset.src, mem);       // reciente: la ultima en salir
+    _setThumb(card, mem);
+  }
   attachCardInteractions(card);
   return card;
 }
@@ -2515,11 +2684,6 @@ function attachCardInteractions(card) {
   card.addEventListener("contextmenu", (e) => e.preventDefault());
 }
 
-// Render in batches of CHUNK using requestAnimationFrame between batches.
-// This keeps the main thread free to handle scroll/input between chunks
-// instead of freezing for 100-200ms rendering 500 cards at once.
-const RENDER_CHUNK = 60;
-
 // ── Mantener la posición de la galería ───────────────────────────────────────
 // Tras mover, editar o subir, la carpeta se vuelve a pedir y la rejilla se
 // reconstruye: sin esto el scroll volvía arriba del todo y había que buscar
@@ -2554,28 +2718,15 @@ function anchorTargetIndex(anchor, files) {
   return -1;
 }
 
-function restoreGalleryAnchor(c, card, offset) {
-  const top = c.getBoundingClientRect().top;
-  c.scrollTop += card.getBoundingClientRect().top - top - offset;
-}
-
-let renderToken = 0;
-async function renderFiles(files) {
-  const token = ++renderToken;     // otro render posterior deja este a medias
+function renderFiles(files) {
   currentFiles = files;
   // Reset the load queue for the new folder
   loadQueue.length = 0;
+  singleQueue.length = 0;
   const c = document.getElementById("content");
   const anchor = galleryAnchor;
   galleryAnchor = null;
-  let anchorIdx = anchor ? anchorTargetIndex(anchor, files) : -1;
-  const placeAnchor = (rendered) => {
-    if (anchorIdx < 0 || anchorIdx >= rendered) return;
-    const card = c.querySelector('.fc[data-index="' + anchorIdx + '"]');
-    if (card) restoreGalleryAnchor(c, card, anchor.offset);
-    anchorIdx = -1;
-  };
-
+  const anchorIdx = anchor ? anchorTargetIndex(anchor, files) : -1;
   if (files.length === 0) {
     c.innerHTML = '<div class="empty-state">' +
       '<svg viewBox="0 0 24 24"><path d="M20 4h-3.17L15 2H9L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 13c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.65 0-3 1.35-3 3s1.35 3 3 3 3-1.35 3-3-1.35-3-3-3z"/></svg>' +
@@ -2595,31 +2746,20 @@ async function renderFiles(files) {
     c.appendChild(note);
   }
   c.appendChild(grid);
-
-  // Render first chunk immediately so the user sees photos right away
-  const firstEnd = Math.min(RENDER_CHUNK, files.length);
-  for (let i = 0; i < firstEnd; i++) {
-    const card = makeCard(files[i], i);
-    grid.appendChild(card);
-    thumbObserver.observe(card);
-  }
-  if (anchor && anchorIdx < 0) c.scrollTop = anchor.scrollTop;   // sin ancla: misma altura
-  placeAnchor(firstEnd);
-
-  // Render remaining chunks with rAF pauses so scroll stays smooth
-  for (let i = firstEnd; i < files.length; i += RENDER_CHUNK) {
-    await new Promise(r => requestAnimationFrame(r));
-    if (token !== renderToken) return;   // ya se esta pintando otra lista
-    const end = Math.min(i + RENDER_CHUNK, files.length);
-    const frag = document.createDocumentFragment();
-    for (let j = i; j < end; j++) {
-      const card = makeCard(files[j], j);
-      frag.appendChild(card);
-      thumbObserver.observe(card);
-    }
-    grid.appendChild(frag);
-    placeAnchor(end);
-  }
+  vg.grid = grid;
+  vg.files = files;
+  vg.cards = new Map();
+  vg.a = vg.b = 0;
+  vg.top = document.createElement("div"); vg.top.className = "vg-pad";
+  vg.bot = document.createElement("div"); vg.bot.className = "vg-pad";
+  grid.append(vg.top, vg.bot);
+  vgMeasure();
+  // Los separadores dan a la rejilla su altura total desde el principio: se
+  // puede volver al mismo punto (o a la foto de antes) sin esperar a nada
+  c.scrollTop = 0;
+  vgUpdate(true);
+  if (anchorIdx >= 0) vgScrollTo(anchorIdx, anchor.offset);
+  else if (anchor) { c.scrollTop = anchor.scrollTop; vgUpdate(); }
 }
 
 // ── Selection ─────────────────────────────────────────────────────────────────
@@ -3451,19 +3591,12 @@ async function executeDelete() {
     }
 
     const deletedSet = new Set(data.ok);
-    currentFiles = currentFiles.filter(f => !deletedSet.has(f.name));
+    allFiles = allFiles.filter(f => !deletedSet.has(f.name));
     selectedFiles.clear();
-    document.querySelectorAll(".fc.sel").forEach(c => c.classList.remove("sel"));
-    deletedSet.forEach(name => {
-      const idx = Array.from(document.querySelectorAll(".fc")).findIndex(c => {
-        const img = c.querySelector("img");
-        return img && img.alt === name;
-      });
-      if (idx >= 0) {
-        const card = document.querySelectorAll(".fc")[idx];
-        card && card.remove();
-      }
-    });
+    // La rejilla se rehace con las que quedan, en el mismo punto (los indices
+    // de las tarjetas siguientes cambian)
+    captureGalleryAnchor();
+    renderFiles(currentFiles.filter(f => !deletedSet.has(f.name)));
     updateSelUI();
   } catch(e) {
     box.className = "res-box res-err";
@@ -3853,8 +3986,7 @@ function openViewer(i) {
 function hideViewer() {
   // Si en el visor se avanzó a otras fotos, al salir la galería se coloca en
   // la última vista: así se selecciona sin tener que buscarla.
-  const seen = document.querySelector('.fc[data-index="' + viewerIndex + '"]');
-  if (seen && viewerEl.classList.contains("on")) seen.scrollIntoView({ block: "nearest" });
+  if (viewerEl.classList.contains("on") && viewerIndex >= 0) vgScrollTo(viewerIndex, null);
   viewerEl.classList.remove("on");
   viewerIndex = -1;
   // Se movieron fotos desde el visor: ahora si se repinta la galeria
