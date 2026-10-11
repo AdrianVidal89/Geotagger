@@ -152,6 +152,12 @@
 
   // ── Revelado de la vista (el ultimo pedido gana) ───────────────────────────
   let rendering = false, wanted = null;
+  // Lado del borrador mientras se arrastra: se ajusta solo para que cada
+  // fotograma tarde ~50 ms en ESTE dispositivo (un iPad grande a 2x pedia
+  // 1600 px = 250 ms por fotograma; a 720 px son ~55 ms). Al soltar se revela
+  // a calidad completa.
+  let draftSide = 760;
+  const DRAFT_MS = 50;
   function requestRender(draft) {
     wanted = { draft: !!draft };
     if (!rendering) pump();
@@ -165,13 +171,21 @@
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     let mw = zoom ? 4096 : Math.round((stage.clientWidth - 32) * dpr);
     let mh = zoom ? 4096 : Math.round((stage.clientHeight - 32) * dpr);
-    if (o.draft) { mw = Math.round(mw * 0.6); mh = Math.round(mh * 0.6); }
+    if (o.draft) {
+      const k = Math.min(1, draftSide / Math.max(mw, mh));
+      mw = Math.round(mw * k); mh = Math.round(mh * k);
+    }
+    const t0 = performance.now();
     try {
       const m = curMask();
       const r = await call({ type: "render", st: st, maxW: Math.max(64, mw), maxH: Math.max(64, mh),
                              draft: o.draft, applyCrop: tool !== "crop", before: before,
                              overlay: tool === "mask" && overlayOn && m && m.components.length ? m.id : -1 });
       draw(r);
+      if (o.draft) {
+        const ms = performance.now() - t0;
+        draftSide = Math.round(Math.min(1400, Math.max(420, draftSide * Math.sqrt(DRAFT_MS / Math.max(5, ms)))));
+      }
     } catch (e) {
       showMsg("No se pudo revelar: " + e.message);
       startWorker();
@@ -1448,21 +1462,40 @@
   function wireTouch() {
     const panel = el.querySelector(".lc-panel");
     let t = null, lastTap = { id: null, at: 0 };
+    // Dedo y Apple Pencil (pointerType "pen"); el raton usa el deslizador nativo
     panel.addEventListener("pointerdown", (e) => {
-      if (e.pointerType !== "touch") return;
+      if (e.pointerType === "mouse") return;
       const n = e.target.closest(".lc-sl");
       if (!n || e.target.classList.contains("lc-val")) return;
       const sp = specs[n.dataset.id];
       if (!sp) return;
+      const rr = n.querySelector(".lc-range").getBoundingClientRect();
       t = { n, sp, id: e.pointerId, x: e.clientX, y: e.clientY, v0: getVal(n.dataset.id), on: false,
-            w: n.querySelector(".lc-range").getBoundingClientRect().width || 200 };
+            w: rr.width || 200, pen: e.pointerType === "pen", abs: false, rr };
+      // El lapiz es preciso: tocar la pista pone el valor ahi mismo y desde
+      // ahi se arrastra en absoluto (como un deslizador de verdad)
+      if (t.pen && e.clientY >= rr.top - 14 && e.clientY <= rr.bottom + 14 && e.clientX >= rr.left && e.clientX <= rr.right) {
+        t.abs = true; t.on = true;
+        try { n.setPointerCapture(e.pointerId); } catch (err) { /* sin captura */ }
+        n.classList.add("drag");
+        e.preventDefault();
+        penSet(t, e.clientX);
+      }
     });
+    function penSet(t, x) {
+      const f = Math.min(1, Math.max(0, (x - t.rr.left) / t.rr.width));
+      let v = t.sp.min + f * (t.sp.max - t.sp.min);
+      v = Math.round(v / t.sp.step) * t.sp.step;
+      onValue(t.n.dataset.id, v, true);
+      syncSlider(t.n);
+    }
     panel.addEventListener("pointermove", (e) => {
       if (!t || e.pointerId !== t.id) return;
+      if (t.abs) { e.preventDefault(); penSet(t, e.clientX); return; }
       const dx = e.clientX - t.x, dy = e.clientY - t.y;
       if (!t.on) {
         if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { t = null; return; }   // es scroll
-        if (Math.abs(dx) < 6) return;
+        if (Math.abs(dx) < (t.pen ? 3 : 6)) return;
         t.on = true;
         try { t.n.setPointerCapture(e.pointerId); } catch (err) { /* sin captura */ }
         t.n.classList.add("drag");

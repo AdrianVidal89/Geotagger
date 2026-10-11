@@ -225,7 +225,8 @@ html[data-theme="tron"] .lc-btn.primary{color:#001218}
   .lc-tab.on{color:var(--lc-accent)}
   .lc-tab[data-group="auto"]{color:#e8c25a}
 }
-/* tactil en general (iPad incluido): sin tirador minimo */
+/* tactil en general (iPad incluido, dedo y Apple Pencil): el arrastre lo lleva
+   el editor, el deslizador nativo solo pinta */
 @media (pointer:coarse){
   .lc-sl{touch-action:pan-y}
   .lc-range{pointer-events:none}
