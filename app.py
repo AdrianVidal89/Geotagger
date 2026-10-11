@@ -20,6 +20,7 @@ from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from flask import Flask, jsonify, request, render_template, send_file
 from PIL import Image, ImageOps, ImageChops, ImageFilter
+import piexif
 import requests
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -3294,6 +3295,124 @@ def edit_image():
         "name": dest.name,
         "path": str(dest.relative_to(root)),
     })
+
+# ── Editor LightCraft ────────────────────────────────────────────────────────
+# El revelado lo hace el NAVEGADOR con el motor de LightCraft compilado a
+# WebAssembly (static/lightcraft/, fuente en lightcraft-bridge/). El servidor
+# solo entrega la foto original y recibe el resultado: ni decodifica ni
+# procesa nada, que es lo que el NAS no se puede permitir.
+#
+#   GET  /api/edit_source  -> los bytes que el motor sabe decodificar, con la
+#        orientacion a aplicar (X-Orientation) y el formato en que hay que
+#        devolver el resultado (X-Edit-Format: jpeg | png).
+#   POST /api/edit_upload  -> el archivo revelado. Un JPEG se escribe TAL CUAL
+#        (ya viene a calidad 95 del navegador: recomprimirlo aqui seria perder
+#        calidad y gastar CPU del NAS); un PNG (originales PNG/WebP/TIFF/HEIC)
+#        se guarda en el formato del original por la via de siempre.
+LC_NATIVE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
+LC_UPLOAD_MAX = 400 * 1024 * 1024
+
+@app.route("/api/edit_source")
+def edit_source():
+    abs_path = _resolve_path(request.args.get("path", ""))
+    if abs_path is None or not abs_path.is_file():
+        return jsonify({"error": "la foto no existe"}), 404
+    ext = abs_path.suffix.lower()
+    dest, derived = _edit_destination(abs_path)
+    out_fmt = "jpeg" if dest.suffix.lower() in (".jpg", ".jpeg") else "png"
+    headers = {"X-Edit-Format": out_fmt, "X-Edit-Derived": "1" if derived else "0",
+               "Cache-Control": "no-store"}
+    try:
+        if ext in LC_NATIVE_EXTS:
+            # El original tal cual: el motor lee su perfil de color e ICC
+            headers["X-Orientation"] = str(_read_orientation(abs_path) or 1)
+            resp = send_file(str(abs_path), mimetype="application/octet-stream")
+        elif ext in RAW_EXTS:
+            data = _extract_raw_preview(abs_path)
+            if not data:
+                return jsonify({"error": "no se pudo leer la vista previa del RAW"}), 500
+            headers["X-Orientation"] = str(_read_orientation(abs_path) or 1)
+            resp = app.response_class(data, mimetype="image/jpeg")
+        else:
+            # HEIC y compania: el navegador no los sabe abrir. Se pasan a PNG
+            # (sin perdida) ya orientados; es el unico caso que cuesta CPU aqui.
+            with _user_decode():
+                img = _open_for_edit(abs_path)
+                if img.mode not in ("RGB", "RGBA"):
+                    img = img.convert("RGB")
+                buf = io.BytesIO()
+                img.save(buf, format="PNG", compress_level=1)
+            headers["X-Orientation"] = "1"
+            resp = app.response_class(buf.getvalue(), mimetype="image/png")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    resp.headers.update(headers)
+    return resp
+
+def _save_edit_jpeg_bytes(data, abs_path, dest):
+    """Escribe un JPEG ya codificado como edicion de abs_path, con los
+    metadatos del original (EXIF incrustado sin recomprimir; XMP/IPTC con
+    ExifTool solo si los hay). Mismo esquema temporal + replace que _save_edit."""
+    tmp = dest.with_name("." + dest.name + ".edit_tmp.jpg")
+    exif = _source_exif(abs_path)
+    try:
+        with open(str(tmp), "wb") as f:
+            f.write(data)
+        if exif:
+            try:
+                piexif.insert(exif, str(tmp))
+            except Exception:
+                exif = None
+        if _needs_metadata_copy(abs_path, exif is not None):
+            _copy_metadata(abs_path, tmp)
+        os.replace(str(tmp), str(dest))
+    except Exception:
+        _discard(tmp)
+        raise
+    _trigger_reindex(dest)
+    _evict_thumb_cache(dest)
+    _evict_thumb_cache(abs_path)
+    try:
+        # Miniatura y vista previa listas: leer un JPEG a 1/8 con draft es barato
+        with Image.open(str(dest)) as im:
+            _draft(im, (PREVIEW_MAX, PREVIEW_MAX))
+            im.load()
+            _prewarm_cache(im, dest)
+    except Exception:
+        pass
+    _index_stale(dest)
+
+@app.route("/api/edit_upload", methods=["POST"])
+def edit_upload():
+    rel = request.form.get("path", "")
+    abs_path = _resolve_path(rel)
+    if abs_path is None or not abs_path.is_file():
+        return jsonify({"error": "la foto no existe"}), 404
+    up = request.files.get("file")
+    if not up:
+        return jsonify({"error": "sin archivo"}), 400
+    data = up.read(LC_UPLOAD_MAX + 1)
+    if len(data) > LC_UPLOAD_MAX:
+        return jsonify({"error": "archivo demasiado grande"}), 400
+    dest, derived = _edit_destination(abs_path)
+    try:
+        if data[:3] == b"\xff\xd8\xff" and dest.suffix.lower() in (".jpg", ".jpeg"):
+            _save_edit_jpeg_bytes(data, abs_path, dest)
+        elif data[:8] == b"\x89PNG\r\n\x1a\n":
+            with _user_decode():
+                img = Image.open(io.BytesIO(data))
+                img.load()
+                # El motor siempre devuelve RGBA: un alfa opaco no se guarda
+                if img.mode == "RGBA" and img.getchannel("A").getextrema() == (255, 255):
+                    img = img.convert("RGB")
+                dest, derived = _save_edit(img, abs_path)
+        else:
+            return jsonify({"error": "formato de edicion inesperado"}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    root = _work_root()
+    return jsonify({"ok": True, "lossless": False, "derived": derived,
+                    "name": dest.name, "path": str(dest.relative_to(root))})
 
 def _index_status_dict():
     return {

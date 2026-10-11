@@ -469,6 +469,44 @@ su miniatura y se puede abrir en el visor; para acercarse estan los botones
 necesita internet; si no lo tiene, avisa pero las fotos siguen situadas y se
 pueden abrir.
 
+## Editor LightCraft (aspecto Lightroom)
+
+Al pulsar **Editar** en el visor se abre un editor oscuro al estilo del modulo
+Revelar de Lightroom: histograma, perfiles creativos, **Luz** (exposicion,
+contraste, iluminaciones, sombras, blancos, negros y curva), **Color**
+(balance de blancos, intensidad, saturacion, mezcla de color por bandas, mezcla
+de blanco y negro, gradacion de color), **Efectos** (textura, claridad,
+neblina, viñeta, granulado), **Detalle** (enfoque y reduccion de ruido),
+**Optica**, **Geometria** y **Calibracion**, mas **Recortar y enderezar**
+(proporciones, angulo, girar y voltear), **Auto**, antes/despues (`\`),
+deshacer/rehacer y zoom 1:1.
+
+El motor es el de [LightCraft](https://github.com/storytold/lightcraft)
+(reimplementacion libre de Lightroom en Rust, MIT/Apache-2.0): su pipeline de
+revelado en coma flotante de 32 bits, compilado a WebAssembly
+(`static/lightcraft/`, fuente del puente en `lightcraft-bridge/`). **Corre en
+el navegador**, en un Worker:
+
+- Mientras se edita trabaja sobre la vista previa de 2048 px (la misma que
+  usa el visor, ya en cache).
+- Al guardar, el navegador descarga el original (`/api/edit_source`), lo
+  revela a resolucion completa y sube el JPEG terminado a calidad 95
+  (`/api/edit_upload`). El servidor lo escribe tal cual, le pone los metadatos
+  del original (GPS, fechas, estrellas...) y la orientacion a 1. El NAS no
+  decodifica ni procesa nada. Una foto de 24 Mpx tarda unos 15 s en un
+  portatil.
+- Originales PNG/WebP/TIFF/HEIC: el resultado llega en PNG sin perdida y se
+  guarda en su formato. RAW: se revela su vista previa incrustada y se crea un
+  `_edit.jpg` al lado, como antes.
+- Girar o voltear sin tocar nada mas sigue siendo la via **sin perdida**
+  (solo cambia la etiqueta Orientation).
+- Si el navegador no puede con WebAssembly, se abre el editor clasico.
+
+Para actualizar el motor: cambiar `rev` en `lightcraft-bridge/Cargo.toml` y
+ejecutar `lightcraft-bridge/build.sh` (necesita Rust con el target
+`wasm32-unknown-unknown` y `wasm-bindgen-cli` 0.2.129). El contenedor no
+necesita Rust: usa los ficheros ya compilados.
+
 ## Edicion de fotos
 
 Desde el visor (boton de ajustes en la cabecera) se pueden girar, recortar y

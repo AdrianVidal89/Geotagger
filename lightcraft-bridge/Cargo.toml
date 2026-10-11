@@ -1,0 +1,31 @@
+# Puente entre el editor de Geotagger y el motor de revelado de LightCraft
+# (https://github.com/storytold/lightcraft, MIT OR Apache-2.0).
+#
+# Se compila a WebAssembly y corre EN EL NAVEGADOR: el NAS no hace el revelado,
+# solo recibe el JPEG ya terminado. Para recompilar: ./build.sh (ver README).
+[package]
+name = "geotagger-lightcraft"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Version fijada: el motor cambia deprisa y el editor se ajusta a esta API.
+lightcraft-pipeline = { git = "https://github.com/storytold/lightcraft", rev = "0ba118de92a81f7463ca0e6d79e1323137b1adae" }
+lightcraft-develop = { git = "https://github.com/storytold/lightcraft", rev = "0ba118de92a81f7463ca0e6d79e1323137b1adae" }
+lightcraft-raster = { git = "https://github.com/storytold/lightcraft", rev = "0ba118de92a81f7463ca0e6d79e1323137b1adae" }
+lightcraft-geom = { git = "https://github.com/storytold/lightcraft", rev = "0ba118de92a81f7463ca0e6d79e1323137b1adae" }
+lightcraft-codecs = { git = "https://github.com/storytold/lightcraft", rev = "0ba118de92a81f7463ca0e6d79e1323137b1adae", default-features = false }
+serde_json = "1"
+wasm-bindgen = "=0.2.129"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
