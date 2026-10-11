@@ -338,7 +338,9 @@ def _ui_date(raw):
     txt = _clean_date(raw)
     if not txt:
         return ""
-    return re.sub(r"^(\d{4}):(\d{2}):(\d{2})", r"\1-\2-\3", txt)
+    # _clean_date garantiza la forma AAAA?MM?DD..., asi que basta con cortar
+    # (sin expresion regular: se llama una vez por foto en cada listado)
+    return txt[:4] + "-" + txt[5:7] + "-" + txt[8:]
 
 # =============================================================================
 # DE DONDE SALE LA FECHA DE UNA FOTO
@@ -1511,6 +1513,11 @@ def _index_db():
             conn.execute("PRAGMA busy_timeout=60000")
             conn.execute("PRAGMA journal_mode=WAL")   # lecturas mientras se escribe
             conn.execute("PRAGMA synchronous=NORMAL")
+            # Las consultas por carpeta leen rangos enteros del indice: con la
+            # base mapeada en memoria y una cache de 16 MB no van al disco
+            conn.execute("PRAGMA mmap_size=268435456")
+            conn.execute("PRAGMA cache_size=-16000")
+            conn.execute("PRAGMA temp_store=MEMORY")
         except sqlite3.Error:
             pass                                     # WAL es una mejora, no un requisito
         with _index_write:
@@ -1765,7 +1772,7 @@ def _index_photos(base):
         "WHERE path >= ? AND path < ? AND lat IS NOT NULL AND lon IS NOT NULL",
         (lo, hi)).fetchall()
 
-def _index_dates(folder):
+def _index_dates(folder, children=False):
     """Lo que el indice sabe de las fotos de una carpeta: la fecha de los
     metadatos y la miniatura diminuta, con la fecha y el tamano del archivo
     para poder comprobar que sigue al dia. Si una fila guarda algo que no es
@@ -1774,9 +1781,15 @@ def _index_dates(folder):
     out, sucias = {}, []
     try:
         lo, hi = _index_range(folder)
-        for path, mtime, size, date, blur, rating in _index_db().execute(
-                "SELECT path, mtime, size, date, blur, rating FROM photos "
-                "WHERE path >= ? AND path < ?", (lo, hi)).fetchall():
+        # children: solo las fotos de la carpeta, no las de todo el subarbol
+        # (en la raiz de la biblioteca serian todas las filas del indice)
+        sql = ("SELECT path, mtime, size, date, blur, rating FROM photos "
+               "WHERE path >= ? AND path < ?")
+        args = (lo, hi)
+        if children:
+            sql += " AND instr(substr(path, ?), '/') = 0"
+            args = (lo, hi, len(lo) + 1)
+        for path, mtime, size, date, blur, rating in _index_db().execute(sql, args).fetchall():
             if date and not _clean_date(date):
                 sucias.append(path)
                 continue
@@ -2553,19 +2566,13 @@ def favorites():
 # decenas de miles de fotos haria un listado de varios MB y una rejilla lenta)
 RECURSIVE_MAX = 20000
 
-def _is_dir(p):
-    try:
-        return p.is_dir()
-    except OSError:
-        return False
-
-def _browse_item(item, rel_path, mtime, size, fila):
+def _browse_item(name, rel_path, mtime, size, fila):
     """Una foto del listado, con lo que el indice sabe de ella si sigue al dia."""
-    al_dia = fila and fila[0] == mtime and fila[1] == size
+    al_dia = fila is not None and fila[0] == mtime and fila[1] == size
     return {
-        "name": item.name,
+        "name": name,
         "path": rel_path,
-        "ext": item.suffix.lower(),
+        "ext": os.path.splitext(name)[1].lower(),
         "mtime": mtime,
         "date": _ui_date(fila[2]) if al_dia else "",
         # 142 bytes que evitan un hueco gris (ver LA MINIATURA DIMINUTA)
@@ -2575,73 +2582,79 @@ def _browse_item(item, rel_path, mtime, size, fila):
         "rating": fila[4] if al_dia else 0,
     }
 
+def _scan_dir(path):
+    """(carpetas, fotos) de una carpeta con os.scandir: el tipo de cada entrada
+    viene del propio listado, sin un stat por nombre ni objetos Path (en el
+    NAS, con miles de fotos por carpeta, era lo que mas tiempo se llevaba).
+    Fotos: (nombre, mtime, tamano)."""
+    dirs, files = [], []
+    with os.scandir(path) as it:
+        for e in it:
+            n = e.name
+            if n[:1] in (".", "@"):
+                continue
+            try:
+                if e.is_dir():
+                    dirs.append(n)
+                    continue
+                if os.path.splitext(n)[1].lower() not in SUPPORTED_EXTS:
+                    continue
+                st = e.stat()
+                files.append((n, int(st.st_mtime), st.st_size))
+            except OSError:
+                continue
+    return dirs, files
+
 @app.route("/api/browse")
 def browse():
     rel = request.args.get("path", "")
     abs_path = _resolve_path(rel)
-    if abs_path is None or not abs_path.exists():
+    if abs_path is None:
         return jsonify({"error": "Ruta no existe"}), 404
-    if not abs_path.is_dir():
-        return jsonify({"error": "no es una carpeta"}), 400
+    base = str(abs_path)
     try:
-        entradas = sorted(abs_path.iterdir())
+        sub_dirs, own = _scan_dir(base)
+    except FileNotFoundError:
+        return jsonify({"error": "Ruta no existe"}), 404
+    except NotADirectoryError:
+        return jsonify({"error": "no es una carpeta"}), 400
     except PermissionError:
         return jsonify({"error": "sin permisos para leer esta carpeta"}), 403
     except OSError as e:
         return jsonify({"error": str(e)}), 500
-    dirs, files = [], []
+    sub_dirs.sort()
+    recursive = request.args.get("recursive") == "1"
     # La fecha que importa al filtrar y ordenar es la de la FOTO, no la del
     # archivo: una foto de 2005 copiada al NAS tiene fecha de archivo de hoy.
     # El indice ya la sabe, asi que no cuesta nada acompanarla.
     _blur_flush()          # que lo recien generado viaje ya en este listado
-    fechas = _index_dates(abs_path)    # (consulta todo el subarbol)
-    recursive = request.args.get("recursive") == "1"
-    for item in entradas:
-        if item.name.startswith("@") or item.name.startswith("."):
-            continue
-        try:
-            es_dir = item.is_dir()
-        except OSError:
-            continue
-        if es_dir:
-            dirs.append({"name": item.name, "path": str(Path(rel) / item.name)})
-        elif item.suffix.lower() in SUPPORTED_EXTS:
-            try:
-                st = item.stat()
-                mtime, size = int(st.st_mtime), st.st_size
-            except Exception:
-                mtime, size = 0, -1
-            fila = fechas.get(str(item))
-            # Solo vale si la foto no ha cambiado desde que se indexo
-            al_dia = fila and fila[0] == mtime and fila[1] == size
-            files.append(_browse_item(item, str(Path(rel) / item.name), mtime, size, fila))
+    fechas = _index_dates(base, children=not recursive)
+    canon = "" if rel in ("", ".", "/") else str(Path(rel))   # forma canonica
+    pre = canon + "/" if canon else ""
+    absp = base.rstrip("/") + "/"
+    dirs = [{"name": n, "path": pre + n} for n in sub_dirs]
+    files = [_browse_item(n, pre + n, mt, sz, fechas.get(absp + n)) for n, mt, sz in own]
+    truncated = False
     if recursive:
         # Todas las fotos de las subcarpetas (la carpeta de cada una va en
         # "folder", relativa a la que se esta viendo, para la tarjeta)
-        truncated = False
-        for sub in [d for d in entradas if d.name[:1] not in (".", "@") and _is_dir(d)]:
-            for dirpath, dirnames, filenames in os.walk(str(sub)):
-                dirnames[:] = sorted(d for d in dirnames if d[:1] not in (".", "@"))
-                for fn in filenames:
-                    if fn[:1] in (".", "@") or os.path.splitext(fn)[1].lower() not in SUPPORTED_EXTS:
-                        continue
-                    item = Path(dirpath) / fn
-                    try:
-                        st = item.stat()
-                        mtime, size = int(st.st_mtime), st.st_size
-                    except OSError:
-                        continue
-                    sub_rel = item.relative_to(abs_path)
-                    f = _browse_item(item, str(Path(rel) / sub_rel), mtime, size, fechas.get(str(item)))
-                    f["folder"] = str(sub_rel.parent)
-                    files.append(f)
-                    if len(files) >= RECURSIVE_MAX:
-                        truncated = True
-                        break
-                if truncated:
+        pend = [n + "/" for n in reversed(sub_dirs)]     # en orden alfabetico
+        while pend and not truncated:
+            sub = pend.pop()
+            try:
+                hijos, fotos = _scan_dir(absp + sub)
+            except OSError:
+                continue
+            folder = sub[:-1]
+            for n, mt, sz in fotos:
+                f = _browse_item(n, pre + sub + n, mt, sz, fechas.get(absp + sub + n))
+                f["folder"] = folder
+                files.append(f)
+                if len(files) >= RECURSIVE_MAX:
+                    truncated = True
                     break
-            if truncated:
-                break
+            hijos.sort(reverse=True)
+            pend.extend(sub + h + "/" for h in hijos)
     # Las fotos mas recientes primero (por fecha de modificacion del archivo).
     files.sort(key=lambda f: f["mtime"], reverse=True)
     # La galeria avisa de que va a ENSENAR estas fotos, asi que sus miniaturas
@@ -2658,7 +2671,7 @@ def browse():
     out = {"dirs": dirs, "files": files, "current": rel}
     if recursive:
         out["recursive"] = True
-        out["truncated"] = len(files) >= RECURSIVE_MAX
+        out["truncated"] = truncated
     return jsonify(out)
 
 @app.route("/api/thumb")
@@ -2762,7 +2775,18 @@ def _extract_raw_preview(abs_path):
     return None
 
 def _read_orientation(abs_path):
-    """Lee el tag EXIF Orientation del archivo original (sin modificarlo)."""
+    """Lee el tag EXIF Orientation del archivo original (sin modificarlo).
+    JPEG, TIFF, PNG y WebP con PIL, que solo lee la cabecera (~1 ms); lanzar
+    ExifTool cuesta un proceso nuevo, que en la CPU del NAS son cientos de ms
+    cada vez que se abre el editor o se gira una foto. RAW y el resto, ExifTool."""
+    if Path(abs_path).suffix.lower() in LC_NATIVE_EXTS:
+        try:
+            with Image.open(abs_path) as im:
+                o = im.getexif().get(0x0112)
+            o = int(o) if o is not None else 1
+            return o if 1 <= o <= 8 else 1
+        except Exception:
+            pass                       # cabecera rara: que lo diga ExifTool
     try:
         result = subprocess.run(
             ["exiftool", "-n", "-Orientation", "-s", "-s", "-s", str(abs_path)],
@@ -2771,6 +2795,88 @@ def _read_orientation(abs_path):
         return int(result.stdout.strip())
     except Exception:
         return 1
+
+# =============================================================================
+# COMPRESION Y REVALIDACION DE RESPUESTAS
+# El NAS va sobrado de red local pero no el movil por wifi o desde fuera: el
+# listado de una carpeta grande son ~400 KB de JSON y la pagina 260 KB de HTML,
+# que en gzip se quedan en una sexta parte. El JSON y el HTML se comprimen al
+# vuelo con nivel 1 (en una CPU de NAS, unos ms por cada MB); los estaticos
+# grandes (el motor del editor y la IA: 3 + 11 MB de WebAssembly) se comprimen
+# UNA vez a disco y se sirven ya comprimidos.
+# =============================================================================
+GZ_DIR = SETTINGS_DIR + "/gz_cache"
+GZ_MIN = 1400                    # por debajo de un paquete no compensa
+GZ_TYPES = ("application/json", "text/html", "text/css", "text/javascript",
+            "application/javascript", "application/wasm", "image/svg+xml", "text/plain")
+_gz_lock = threading.Lock()
+
+def _gzip(data, level):
+    import zlib
+    z = zlib.compressobj(level, zlib.DEFLATED, 31)     # 31: cabecera gzip
+    return z.compress(data) + z.flush()
+
+def _static_gz(path):
+    """El estatico comprimido, hecho una sola vez y guardado junto a su fecha."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = hashlib.sha1(("%s|%d|%d" % (path, st.st_mtime_ns, st.st_size)).encode()).hexdigest()
+    gz = os.path.join(GZ_DIR, key + ".gz")
+    try:
+        with open(gz, "rb") as f:
+            return f.read()
+    except OSError:
+        pass
+    with _gz_lock:                 # que dos peticiones no lo compriman a la vez
+        if os.path.exists(gz):
+            with open(gz, "rb") as f:
+                return f.read()
+        with open(path, "rb") as f:
+            data = _gzip(f.read(), 6)
+        os.makedirs(GZ_DIR, exist_ok=True)
+        tmp = gz + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, gz)
+        return data
+
+@app.after_request
+def _compress(resp):
+    if request.method != "GET" or resp.status_code != 200 or "Content-Encoding" in resp.headers:
+        return resp
+    if resp.mimetype not in GZ_TYPES:
+        return resp
+    gz_ok = "gzip" in request.headers.get("Accept-Encoding", "") and "Range" not in request.headers
+    if resp.direct_passthrough:
+        # Un archivo (send_file): solo los estaticos de la app, que no cambian
+        if request.endpoint != "static" or not gz_ok:
+            return resp
+        if not resp.headers.get("Cache-Control"):
+            # Siempre se revalida (un 304 son bytes): con la cache heuristica
+            # el navegador podria juntar un editor.js nuevo con un motor viejo
+            resp.headers["Cache-Control"] = "no-cache"
+        if (resp.content_length or 0) < GZ_MIN:
+            return resp
+        data = _static_gz(os.path.join(app.static_folder, request.path[len("/static/"):]))
+        if data is None:
+            return resp
+        resp.direct_passthrough = False
+        resp.set_data(data)
+    elif resp.is_streamed:
+        return resp            # se va enviando por partes: no se toca
+    else:
+        # JSON y HTML generados: con ETag el navegador pregunta "sigue igual?"
+        # y si es asi se ahorra el cuerpo entero (304)
+        resp.add_etag()
+        resp.make_conditional(request)
+        if resp.status_code != 200 or not gz_ok or (resp.content_length or 0) < GZ_MIN:
+            return resp
+        resp.set_data(_gzip(resp.get_data(), 1))
+    resp.headers["Content-Encoding"] = "gzip"
+    resp.headers["Vary"] = "Accept-Encoding"
+    return resp
 
 def _cached_image_response(cache_file, mime):
     resp = send_file(str(cache_file), mimetype=mime)
@@ -3383,9 +3489,20 @@ def edit_source():
             headers["X-Orientation"] = str(_read_orientation(abs_path) or 1)
             resp = send_file(str(abs_path), mimetype="application/octet-stream")
         elif ext in RAW_EXTS:
-            data = _extract_raw_preview(abs_path)
+            # La vista previa grande del RAW: se extrae una vez (ExifTool) y se
+            # guarda en la cache de miniaturas (clave = ruta + fecha + tamano)
+            cache_file = _thumb_cache_path(abs_path, "EDITSRC-JPEG")
+            data = None
+            if cache_file.exists():
+                try:
+                    data = cache_file.read_bytes()
+                except OSError:
+                    data = None
             if not data:
-                return jsonify({"error": "no se pudo leer la vista previa del RAW"}), 500
+                data = _extract_raw_preview(abs_path)
+                if not data:
+                    return jsonify({"error": "no se pudo leer la vista previa del RAW"}), 500
+                _cache_store(cache_file, data)
             headers["X-Orientation"] = str(_read_orientation(abs_path) or 1)
             resp = app.response_class(data, mimetype="image/jpeg")
         else:
@@ -3534,7 +3651,7 @@ def transfer_files():
                 _evict_thumb_cache(src)
                 _index_move(src, target)
             _trigger_reindex(target)
-            ok.append({"name": src.name, "new": target.name})
+            ok.append({"file": rel, "name": src.name, "new": target.name})
         except Exception as e:
             errors.append({"file": src.name, "error": str(e)})
     root = _work_root()
@@ -3638,20 +3755,27 @@ def missing_gps():
     # Del indice: antes esto lanzaba un ExifTool POR FOTO
     _index_request(root)
     found = []
+    rootp = str(root).rstrip("/") + "/"
+    vistos = {}            # carpeta -> nombres que hay (un listado por carpeta,
+                           # no un stat por foto: en el NAS cada uno es un viaje)
     for path, mtime, date, rating in _index_without_gps(base):
-        item = Path(path)
-        if not item.exists():
+        if not path.startswith(rootp):
             continue
-        try:
-            relative = item.relative_to(root)
-        except Exception:
+        carpeta, _, name = path.rpartition("/")
+        nombres = vistos.get(carpeta)
+        if nombres is None:
+            try:
+                nombres = vistos[carpeta] = set(os.listdir(carpeta))
+            except OSError:
+                nombres = vistos[carpeta] = set()
+        if name not in nombres:
             continue
-        folder = str(relative.parent)
+        relative = path[len(rootp):]
         found.append({
-            "name": item.name,
-            "path": str(relative),
-            "ext": item.suffix.lower(),
-            "folder": "" if folder == "." else folder,
+            "name": name,
+            "path": relative,
+            "ext": os.path.splitext(name)[1].lower(),
+            "folder": relative.rpartition("/")[0],
             "mtime": mtime if mtime and mtime > 0 else 0,
             "date": _ui_date(date),
             "rating": _clamp_rating(rating) or 0,

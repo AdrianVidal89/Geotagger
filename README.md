@@ -42,6 +42,11 @@ carpeta.
   duplica el archivo byte a byte conservando sus fechas. En ninguno de los dos
   casos se abre ni se recodifica la imagen. Si en el destino ya hay un archivo
   con el mismo nombre, se anade un sufijo en vez de sobrescribirlo.
+  Tambien desde el **visor**, con la foto abierta (boton de carpeta con flecha
+  o tecla **M**): al moverla se pasa a la siguiente sin salir del visor, y la
+  galeria se pone al dia al cerrarlo. El selector **recuerda la ultima carpeta
+  de destino** (por carpeta de trabajo, en cada navegador) y se abre en ella;
+  si se navega a otra, un boton "Ultima: ..." devuelve alli de un toque.
 
 - **La galeria no pierde el sitio**: despues de mover, copiar, editar o subir
   fotos la carpeta se vuelve a cargar, pero el scroll vuelve a la misma foto (o
@@ -329,6 +334,38 @@ y el pico de memoria sigue siendo 8 veces menor.
   medida estaba hecha sobre ruido sintetico. En una foto de verdad son 0,17 s y
   ahorran un 16% de tamano: compensa, se queda como estaba.
 
+### Listados, red y procesos (segunda pasada)
+
+Medido con 6.000 fotos sinteticas (mismas cifras relativas en el NAS, que es
+varias veces mas lento):
+
+| Peticion | Antes | Ahora |
+|---|---|---|
+| Carpeta de 3.000 fotos | 100 ms, 401 KB | 28 ms, 32 KB (gzip) |
+| Raiz con 2 carpetas | 14 ms | 2 ms |
+| Subcarpetas, 6.000 fotos | 307 ms, 925 KB | 62 ms, 65 KB |
+| Fotos sin GPS (6.000) | 241 ms | 34 ms |
+
+- El listado usa `os.scandir` y cadenas en vez de objetos `Path`: el tipo de
+  cada entrada viene del propio listado del directorio, sin un `stat` extra ni
+  ordenar objetos `Path` (era la mitad del tiempo).
+- Una carpeta normal pide al indice solo SUS fotos, no las de todo el
+  subarbol (en la raiz eran todas las filas de la base).
+- "Fotos sin GPS" comprueba que existen con un listado por carpeta, no un
+  `stat` por foto.
+- JSON y HTML viajan en gzip (nivel 1, unos ms por MB) y con ETag: si no ha
+  cambiado, el navegador recibe un 304 sin cuerpo. Los estaticos grandes del
+  editor (3 MB de motor y 11 MB de ONNX Runtime) se comprimen **una vez** a
+  `/app/data/gz_cache` y se sirven ya comprimidos (3,2 MB -> 0,9 MB y
+  11 MB -> 2,8 MB); siempre se revalidan, para no mezclar un `editor.js` nuevo
+  con un motor viejo.
+- SQLite con la base mapeada en memoria y 16 MB de cache.
+- La orientacion de JPEG/PNG/WebP/TIFF se lee con PIL (solo la cabecera, ~1 ms)
+  en vez de arrancar ExifTool (cientos de ms en el NAS) al abrir el editor o
+  girar.
+- En la galeria, si se cambia de carpeta mientras se pintaba otra, el pintado
+  viejo se abandona en vez de seguir creando tarjetas que nadie vera.
+
 ## Filtros de fecha
 
 Los filtros **Desde** y **Hasta** (y el orden) van por la fecha de los
@@ -340,6 +377,12 @@ sirve el indice junto al listado de la carpeta, sin releer nada, y solo se usa
 si la foto no ha cambiado desde que se indexo; si de esa foto aun no se sabe
 nada, se recurre a la del nombre (si se renombro por EXIF) y por ultimo a la
 del archivo.
+
+Los calendarios solo dejan elegir dias **dentro del intervalo de las fotos que
+se estan viendo** (de la mas antigua a la mas reciente; junto a los filtros se
+indica, p. ej. "Fotos del 02/03/2024 al 20/08/2025"). Si al cambiar de carpeta
+una fecha puesta queda fuera, se ajusta al extremo, y "Desde" nunca pasa de
+"Hasta".
 
 ### De donde sale la fecha de una foto
 
@@ -601,6 +644,20 @@ Para actualizar el motor: cambiar `rev` en `lightcraft-bridge/Cargo.toml` y
 ejecutar `lightcraft-bridge/build.sh` (necesita Rust con el target
 `wasm32-unknown-unknown` y `wasm-bindgen-cli` 0.2.129). El contenedor no
 necesita Rust: usa los ficheros ya compilados.
+
+### Fidelidad: dos fallos que lo hacian menos fino que LightCraft
+
+- **El editor trabajaba sobre la vista previa del visor** (WebP calidad 88 a
+  2048 px). Con sombras, curvas o claridad fuertes, los artefactos del WebP se
+  amplificaban en bandas y bloques. Ahora el motor decodifica el **original**
+  (JPEG/PNG/WebP/TIFF) o la vista previa grande incrustada en el RAW, con sus
+  propios codecs y perfil de color; la vista previa del servidor solo se usa
+  para HEIC. Al guardar se reutiliza el original ya descargado. La del RAW se
+  extrae una vez y se cachea.
+- **Contraste, blancos y sombras cambiaban la saturacion.** Se aplican como
+  curva de tonos y el motor, por defecto, re-satura despues de toda curva
+  (`refine_saturation`), lo que con contraste +100 subia la saturacion un 27 %.
+  Lightroom no lo hace: ahora solo se activa si el usuario dibuja una curva.
 
 ## Edicion de fotos
 

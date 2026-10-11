@@ -12,7 +12,8 @@
 import init, { Editor, controls_json, profiles_json } from "./geotagger_lightcraft.js";
 
 const ready = init();
-let ed = null;           // la foto de trabajo (vista previa de ~2048 px)
+let ed = null;           // la foto de trabajo (~2048 px)
+let srcBytes = null, srcOrient = 1, srcUrl = null;   // el original, para guardar sin volver a bajarlo
 
 // ── IA: sujeto y cielo ───────────────────────────────────────────────────────
 // Dos modelos U^2-Net pequenos (ai/NOTICE.md) con ONNX Runtime Web, cargados
@@ -131,9 +132,20 @@ self.onmessage = async (ev) => {
     if (m.type === "open") {
       if (ed) { ed.free(); ed = null; }
       mattes = {};
-      // La vista previa del servidor ya viene orientada (y suele estar en cache)
-      const { bytes } = await fetchBytes(m.url, "image/webp,image/*");
-      ed = new Editor(bytes, 1, 2048);
+      srcBytes = null; srcUrl = null;
+      if (m.source) {
+        // El ORIGINAL (o la vista previa grande de un RAW), decodificado aqui con
+        // los codecs de LightCraft a 2048 px: sin pasar por el WebP comprimido
+        // del visor, que con sombras o curvas fuertes dejaba bandas y halos
+        const { bytes, headers } = await fetchBytes(m.source);
+        srcOrient = parseInt(headers.get("X-Orientation") || "1", 10) || 1;
+        ed = new Editor(bytes, srcOrient, 2048);
+        srcBytes = bytes; srcUrl = m.source;
+      } else {
+        // Formatos que el motor no abre (HEIC): la vista previa del servidor
+        const { bytes } = await fetchBytes(m.url, "image/webp,image/*");
+        ed = new Editor(bytes, 1, 2048);
+      }
       self.postMessage({ type: "opened", seq: m.seq, w: ed.width(), h: ed.height(),
                          controls: JSON.parse(controls_json()), profiles: JSON.parse(profiles_json()) });
     } else if (m.type === "ai") {
@@ -166,8 +178,12 @@ self.onmessage = async (ev) => {
     } else if (m.type === "export") {
       // Resolucion completa: el original entero, revelado y codificado aqui.
       // Se suelta la vista previa mientras tanto para no duplicar memoria.
-      const { bytes, headers } = await fetchBytes(m.url);
-      const orient = parseInt(headers.get("X-Orientation") || "1", 10) || 1;
+      let bytes = srcBytes, orient = srcOrient;
+      if (!bytes || srcUrl !== m.url) {
+        const r = await fetchBytes(m.url);
+        bytes = r.bytes;
+        orient = parseInt(r.headers.get("X-Orientation") || "1", 10) || 1;
+      }
       // maxSide: en un movil sin memoria para la foto entera, revelarla mas pequena
       await ensureMattes(neededMattes(m.st));
       const full = new Editor(bytes, orient, m.maxSide || 0);

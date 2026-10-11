@@ -1545,7 +1545,8 @@
     document.addEventListener("keydown", keys, true);
     busy("Abriendo con LightCraft...");
     try {
-      const r = await call({ type: "open", url: bust("/api/preview?path=" + encodeURIComponent(f.path), f.path) });
+      const r = await call({ type: "open", url: bust("/api/preview?path=" + encodeURIComponent(f.path), f.path),
+                             source: srcUrl(f) });
       if (file !== f) return;
       W = r.w; H = r.h;
       specs = {};
@@ -1623,7 +1624,7 @@
   // foto grande (el motor trabaja en coma flotante: 24 Mpx son ~300 MB): si
   // falla, se rearranca el motor y se ofrece guardar a menor tamano.
   async function exportPhoto(f) {
-    const url = "/api/edit_source?path=" + encodeURIComponent(f.path);
+    const url = srcUrl(f) || bust("/api/edit_source?path=" + encodeURIComponent(f.path), f.path);
     for (const side of [0, 4096, 2560]) {
       busy(side ? "Revelando a " + side + " px..." : "Revelando a resolución completa con LightCraft...\nPuede tardar unos segundos.");
       try {
@@ -1645,7 +1646,14 @@
     try { worker.terminate(); } catch (e) { /* ya estaba parado */ }
     worker = null;
     startWorker();
-    await call({ type: "open", url: bust("/api/preview?path=" + encodeURIComponent(f.path), f.path) });
+    await call({ type: "open", url: bust("/api/preview?path=" + encodeURIComponent(f.path), f.path), source: srcUrl(f) });
+  }
+  // El original para editar: lo que el motor decodifica (JPEG, PNG, WebP, TIFF y
+  // la vista previa de los RAW). HEIC no: va por la vista previa del servidor.
+  const NATIVE = [".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".cr3", ".cr2", ".nef", ".arw", ".raf", ".dng", ".jpr"];
+  function srcUrl(f) {
+    const ext = (f.ext || (f.name.match(/\.[^.]+$/) || [""])[0]).toLowerCase();
+    return NATIVE.includes(ext) ? bust("/api/edit_source?path=" + encodeURIComponent(f.path), f.path) : null;
   }
 
   // ── Tactil: iPhone / iPad ─────────────────────────────────────────────────
