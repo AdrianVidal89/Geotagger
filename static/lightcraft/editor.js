@@ -108,7 +108,7 @@
   let W = 0, H = 0;              // tamano de la foto de trabajo (orientada)
   let st = null;                 // lo editable (va entero al motor)
   let undo = [], redo = [];
-  let tool = "edit", before = false, zoom = false, saving = false;
+  let tool = "edit", before = false, saving = false;
   let gradeZone = "shadows", mixTab = "hue", mixBand = 0;
   const pending = {};            // seq -> {resolve, reject}
   let panelBuilt = false;
@@ -169,8 +169,11 @@
     rendering = true;
     const stage = el.querySelector(".lc-stage");
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    let mw = zoom ? 4096 : Math.round((stage.clientWidth - 32) * dpr);
-    let mh = zoom ? 4096 : Math.round((stage.clientHeight - 32) * dpr);
+    // Con zoom se revela a la resolucion que se ve (la vista previa de
+    // trabajo llega a 2048 px; el motor no amplia por encima de eso)
+    const [aw, ah] = stageAvail();
+    let mw = Math.min(4096, Math.round(aw * dpr * view.s));
+    let mh = Math.min(4096, Math.round(ah * dpr * view.s));
     if (o.draft) {
       const k = Math.min(1, draftSide / Math.max(mw, mh));
       mw = Math.round(mw * k); mh = Math.round(mh * k);
@@ -198,13 +201,7 @@
     const cv = el.querySelector(".lc-canvas");
     if (cv.width !== r.w || cv.height !== r.h) { cv.width = r.w; cv.height = r.h; }
     cv.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(r.px.buffer, r.px.byteOffset, r.px.byteLength), r.w, r.h), 0, 0);
-    if (zoom) {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      cv.style.width = (r.w / dpr) + "px";
-      cv.style.height = (r.h / dpr) + "px";
-    } else {
-      cv.style.width = cv.style.height = "";
-    }
+    fitCanvas();
     lastHist = r.hist;
     drawHistogram(r.hist);
     drawCurve();
@@ -769,7 +766,7 @@
     Object.assign(layer.style, { left: cv.offsetLeft + "px", top: cv.offsetTop + "px", width: cv.offsetWidth + "px", height: cv.offsetHeight + "px" });
     const v = viewMap(), s = c.shape;
     let g = "";
-    const dot = (p, h, r) => '<circle class="lc-mh" data-mh="' + h + '" cx="' + p.x + '" cy="' + p.y + '" r="' + (r || 9) + '"/>';
+    const dot = (p, h, r) => '<circle class="lc-mh" data-mh="' + h + '" cx="' + p.x + '" cy="' + p.y + '" r="' + (r || 9) / view.s + '"/>';
     if (s.kind === "linear") {
       const a = v.to(s.start), b = v.to(s.end), dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
       const nx = -dy / len * 2000, ny = dx / len * 2000;
@@ -794,10 +791,19 @@
   function wireMasks() {
     const layer = el.querySelector(".lc-mlayer");
     let drag = null, painting = null;
-    const local = (e) => { const r = layer.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+    // La capa puede estar ampliada (zoom): de px de pantalla a px de la capa
+    const local = (e) => { const r = layer.getBoundingClientRect(), k = layer.offsetWidth / (r.width || 1);
+                           return [(e.clientX - r.left) * k, (e.clientY - r.top) * k]; };
+    cancelMaskGesture = () => {
+      const c = curComp();
+      if (painting && c && c.shape.strokes) c.shape.strokes.pop();
+      if (drag && c) c.shape = drag.s0;
+      painting = null; drag = null;
+      layoutMaskLayer(); requestRender(false);
+    };
     layer.addEventListener("pointerdown", async (e) => {
       const c = curComp();
-      if (!c) return;
+      if (!c || gesture.multi) return;
       e.preventDefault();
       layer.setPointerCapture(e.pointerId);
       const v = viewMap(), [x, y] = local(e), p = v.from(x, y), s = c.shape;
@@ -824,7 +830,7 @@
     });
     layer.addEventListener("pointermove", (e) => {
       const c = curComp();
-      if (!c) return;
+      if (!c || gesture.multi) return;
       const v = viewMap(), [x, y] = local(e), p = v.from(x, y), s = c.shape;
       if (s.kind === "brush") {
         const cur = layer.querySelector(".lc-bcur");
@@ -885,11 +891,13 @@
       '</div>' +
       '<div class="lc-body">' +
         '<div class="lc-stage">' +
-          '<canvas class="lc-canvas"></canvas>' +
-          '<div class="lc-crop"><div class="lc-cbox">' +
-            ["nw", "n", "ne", "e", "se", "s", "sw", "w"].map(h => '<div class="lc-ch" data-h="' + h + '"></div>').join("") +
-          '</div></div>' +
-          '<div class="lc-mlayer"><svg></svg></div>' +
+          '<div class="lc-view">' +
+            '<canvas class="lc-canvas"></canvas>' +
+            '<div class="lc-crop"><div class="lc-cbox">' +
+              ["nw", "n", "ne", "e", "se", "s", "sw", "w"].map(h => '<div class="lc-ch" data-h="' + h + '"></div>').join("") +
+            '</div></div>' +
+            '<div class="lc-mlayer"><svg></svg></div>' +
+          '</div>' +
           '<div class="lc-badge">Antes</div>' +
           '<div class="lc-busy"><div class="lc-spin"></div><div class="lc-busy-t">Cargando...</div></div>' +
         '</div>' +
@@ -949,7 +957,7 @@
             sec("calibration", "Calibración",
               many(["calibration.shadowsTint", "calibration.redHue", "calibration.redSat", "calibration.greenHue", "calibration.greenSat", "calibration.blueHue", "calibration.blueSat"]), false) +
             '<div class="lc-hint lc-desk-hint" style="padding:12px">Doble clic en un deslizador o en el título de una sección para restablecerlo. ' +
-              '<b>\\</b> antes/después · <b>R</b> recortar · <b>Ctrl+Z</b> deshacer. Clic en la foto: zoom 1:1.</div>' +
+              '<b>\\</b> antes/después · <b>R</b> recortar · <b>Ctrl+Z</b> deshacer. Clic o doble toque en la foto: zoom; pellizco o Ctrl+rueda para acercar, arrastrar o rueda para moverse.</div>' +
           '</div>' +
           '<div class="lc-only-mask">' + maskHtml() + '</div>' +
           '<div class="lc-only-crop">' +
@@ -1076,22 +1084,16 @@
       else if (a === "cropreset") { st.angle = 0; st.aspect = 0; st.crop = [0, 0, 1, 1]; syncControls(); commit(); requestRender(false); }
     });
 
-    // Clic en la foto: zoom 1:1 (lo que da la vista previa de trabajo)
-    el.querySelector(".lc-canvas").addEventListener("click", () => {
-      if (tool === "crop") return;
-      zoom = !zoom;
-      el.querySelector(".lc-stage").classList.toggle("zoom", zoom);
-      requestRender(false);
-    });
     let rz = null;
     window.addEventListener("resize", () => {
       if (!el.classList.contains("on")) return;
       clearTimeout(rz);
-      rz = setTimeout(() => requestRender(false), 150);
+      rz = setTimeout(() => { fitCanvas(); settleView(false); requestRender(false); }, 150);
     });
     wireCrop();
     wireMasks();
     wireTouch();
+    wireGestures();
   }
 
   function onValue(id, v, dragging) {
@@ -1132,7 +1134,7 @@
     el.classList.toggle("tool-mask", t === "mask");
     if (t === "mask") { maskMenuFor = (st.masks || []).length ? null : "new"; renderMaskPanel(); }
     el.querySelectorAll(".lc-tools [data-tool]").forEach(b => b.classList.toggle("on", b.dataset.tool === t));
-    if (t === "crop" && zoom) { zoom = false; el.querySelector(".lc-stage").classList.remove("zoom"); }
+    if (t === "crop") resetView(false);   // el recorte trabaja con la foto entera a la vista
     el.querySelector(".lc-stage").classList.toggle("crop", t === "crop");
     el.querySelector(".lc-stage").classList.toggle("masking", t === "mask");
     layoutMaskLayer();
@@ -1331,7 +1333,8 @@
     file = f;
     st = freshState();
     undo = [snap()]; redo = [];
-    tool = "edit"; before = false; zoom = false; saving = false;
+    tool = "edit"; before = false; saving = false;
+    resetView(false);
     mixBand = 0; gradeZone = "shadows"; curveCh = "master"; lastHist = null;
     selMask = -1; selComp = 0; overlayOn = true; maskMenuFor = null; group = "light";
     el.querySelector(".lc-name").textContent = f.name;
@@ -1339,7 +1342,7 @@
     el.classList.toggle("m", isMobile());
     el.dataset.group = "light";
     el.querySelectorAll(".lc-tab").forEach(b => b.classList.toggle("on", b.dataset.group === "light"));
-    el.querySelector(".lc-stage").classList.remove("zoom", "crop", "masking");
+    el.querySelector(".lc-stage").classList.remove("crop", "masking");
     el.querySelectorAll(".lc-tools [data-tool]").forEach(b => b.classList.toggle("on", b.dataset.tool === "edit"));
     el.querySelector('[data-a="before"]').classList.remove("on");
     const cv = el.querySelector(".lc-canvas");
@@ -1526,32 +1529,214 @@
     panel.addEventListener("pointerup", up);
     panel.addEventListener("pointercancel", (e) => { if (t && t.on) { t.n.classList.remove("drag"); commit(); } t = null; });
 
-    // Foto: mantener = antes; doble toque = zoom
-    const stage = el.querySelector(".lc-stage");
-    let hold = null, held = false, lastStageTap = 0, sx = 0, sy = 0;
-    stage.addEventListener("pointerdown", (e) => {
-      if (tool !== "edit" || !e.target.closest(".lc-canvas")) return;
-      sx = e.clientX; sy = e.clientY; held = false;
-      hold = setTimeout(() => { held = true; before = true; el.querySelector(".lc-badge").classList.add("on"); requestRender(false); }, 350);
-    });
-    stage.addEventListener("pointermove", (e) => {
-      if (hold && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) { clearTimeout(hold); hold = null; }
-    });
-    const release = () => {
-      clearTimeout(hold); hold = null;
-      if (held) { before = el.querySelector('[data-a="before"]').classList.contains("on"); requestRender(false); }
+  }
+
+  // ── Zoom y desplazamiento con los dedos (como Fotos en iPhone / iPad) ─────
+  // La foto vive en .lc-view, que se transforma (translate + scale) sin volver
+  // a revelar: el gesto va a 60 fps. Al terminar se revela a la resolucion
+  // que se ve. Pellizco: zoom alrededor de los dedos. Uno o dos dedos:
+  // desplazar, con inercia. Bordes elasticos con rebote. Doble toque: acercar
+  // ahi / encajar. Raton: clic, rueda y pellizco del trackpad (ctrl+rueda).
+  const view = { s: 1, tx: 0, ty: 0 };
+  const MAX_S = 8, ZOOM_TAP = 2.5;
+  const gesture = { multi: false };
+  let cancelMaskGesture = () => {};
+  let hiResTimer = null, inertia = null;
+
+  function stageAvail() {
+    const st_ = el.querySelector(".lc-stage");
+    const pad = isMobile() ? (tool === "crop" ? 40 : 0) : 32;
+    return [Math.max(32, st_.clientWidth - pad), Math.max(32, st_.clientHeight - pad)];
+  }
+  // Tamano en pantalla de la foto encajada (independiente de su resolucion)
+  function fitCanvas() {
+    const cv = el.querySelector(".lc-canvas");
+    if (!cv.width || !cv.height) return;
+    const [aw, ah] = stageAvail(), k = Math.min(aw / cv.width, ah / cv.height);
+    cv.style.width = Math.round(cv.width * k) + "px";
+    cv.style.height = Math.round(cv.height * k) + "px";
+  }
+  function applyView(animated) {
+    const v = el.querySelector(".lc-view");
+    v.style.transition = animated ? "transform .3s cubic-bezier(.2,.8,.2,1)" : "none";
+    v.style.transform = "translate(" + view.tx + "px," + view.ty + "px) scale(" + view.s + ")";
+    el.querySelector(".lc-stage").classList.toggle("zoomed", view.s > 1.01);
+  }
+  // Limites: la foto ampliada cubre la pantalla; si es mas pequena, centrada
+  function bounds(s) {
+    const st_ = el.querySelector(".lc-stage"), cv = el.querySelector(".lc-canvas");
+    const W = st_.clientWidth, H = st_.clientHeight;
+    const x0 = cv.offsetLeft, y0 = cv.offsetTop, w = cv.offsetWidth, h = cv.offsetHeight;
+    const ax = s * w <= W ? [(W - s * w) / 2 - s * x0, (W - s * w) / 2 - s * x0] : [W - s * (x0 + w), -s * x0];
+    const ay = s * h <= H ? [(H - s * h) / 2 - s * y0, (H - s * h) / 2 - s * y0] : [H - s * (y0 + h), -s * y0];
+    return { ax, ay };
+  }
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  // Resistencia elastica fuera de los limites (como iOS)
+  const rubber = (v, lo, hi) => v < lo ? lo - (lo - v) / (1 + (lo - v) / 120) * 0.55 : v > hi ? hi + (v - hi) / (1 + (v - hi) / 120) * 0.55 : v;
+  function settleView(animated) {
+    view.s = clamp(view.s, 1, MAX_S);
+    const b = bounds(view.s);
+    view.tx = clamp(view.tx, b.ax[0], b.ax[1]);
+    view.ty = clamp(view.ty, b.ay[0], b.ay[1]);
+    applyView(animated);
+  }
+  function resetView(animated) {
+    view.s = 1; view.tx = 0; view.ty = 0;
+    if (el) applyView(animated);
+  }
+  // Zoom a escala s manteniendo quieto el punto (px, py) de la pantalla
+  function zoomAt(s, px, py, animated) {
+    const qx = (px - view.tx) / view.s, qy = (py - view.ty) / view.s;
+    view.s = s; view.tx = px - s * qx; view.ty = py - s * qy;
+    settleView(animated);
+    scheduleHiRes();
+  }
+  function scheduleHiRes() {
+    clearTimeout(hiResTimer);
+    hiResTimer = setTimeout(() => requestRender(false), 220);
+  }
+  function stopInertia() { if (inertia) { cancelAnimationFrame(inertia); inertia = null; } }
+  function startInertia(vx, vy) {
+    let last = performance.now();
+    const step = (now) => {
+      const dt = Math.min(40, now - last); last = now;
+      view.tx += vx * dt; view.ty += vy * dt;
+      const decay = Math.pow(0.995, dt);   // ~ como el desplazamiento de iOS
+      vx *= decay; vy *= decay;
+      const b = bounds(view.s);
+      if (view.tx < b.ax[0] || view.tx > b.ax[1]) vx *= 0.6;
+      if (view.ty < b.ay[0] || view.ty > b.ay[1]) vy *= 0.6;
+      applyView(false);
+      if (Math.hypot(vx, vy) > 0.02) inertia = requestAnimationFrame(step);
+      else { inertia = null; settleView(true); }
     };
-    stage.addEventListener("pointerup", release);
-    stage.addEventListener("pointercancel", release);
-    el.querySelector(".lc-canvas").addEventListener("click", (e) => {
-      if (held) { held = false; e.stopImmediatePropagation(); return; }
-      if (coarse()) {
-        // en tactil, un toque no hace nada; el doble toque cambia el zoom
-        const now = Date.now();
-        if (now - lastStageTap > 350) { lastStageTap = now; e.stopImmediatePropagation(); return; }
-        lastStageTap = 0;
+    inertia = requestAnimationFrame(step);
+  }
+
+  function wireGestures() {
+    const stage = el.querySelector(".lc-stage");
+    const pts = new Map();
+    let g = null;              // gesto en curso
+    let hold = null, held = false, moved = false, lastTap = { t: 0, x: 0, y: 0 };
+    const rel = (e) => { const r = stage.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+    const centroid = () => { let x = 0, y = 0; for (const p of pts.values()) { x += p[0]; y += p[1]; } return [x / pts.size, y / pts.size]; };
+    const dist = () => { const [a, b] = [...pts.values()]; return Math.hypot(a[0] - b[0], a[1] - b[1]); };
+    const canGesture = () => tool !== "crop" && el.querySelector(".lc-canvas").width > 1;
+    const beginPinch = () => {
+      g = { kind: "pinch", d0: Math.max(10, dist()), c0: centroid(), s0: view.s, tx0: view.tx, ty0: view.ty };
+      gesture.multi = true;
+      cancelMaskGesture();
+    };
+    const beginPan = (p) => { g = { kind: "pan", p0: p, tx0: view.tx, ty0: view.ty, hist: [[performance.now(), p[0], p[1]]] }; };
+
+    // Fase de captura: se ve todo, tambien lo que capturan las mascaras
+    stage.addEventListener("pointerdown", (e) => {
+      if (!canGesture() || e.button > 0) return;
+      stopInertia();
+      const p = rel(e);
+      // Primer dedo de un toque nuevo: olvidar dedos que se quedaran colgados
+      if (e.isPrimary) { pts.clear(); g = null; gesture.multi = false; }
+      pts.set(e.pointerId, p);
+      moved = false;
+      clearTimeout(hold); hold = null;
+      if (pts.size === 2) { beginPinch(); return; }
+      if (pts.size > 2) return;
+      if (tool === "edit" && e.target.closest(".lc-canvas")) {
+        if (view.s > 1.01) beginPan(p);
+        else {
+          // mantener pulsado (sin zoom): ver el "antes"
+          held = false;
+          hold = setTimeout(() => { if (!moved) { held = true; before = true; el.querySelector(".lc-badge").classList.add("on"); requestRender(false); } }, 380);
+        }
+        try { stage.setPointerCapture(e.pointerId); } catch (err) { /* sin captura */ }
       }
     }, true);
+    stage.addEventListener("pointermove", (e) => {
+      if (!pts.has(e.pointerId)) return;
+      const p = rel(e), prev = pts.get(e.pointerId);
+      if (Math.hypot(p[0] - prev[0], p[1] - prev[1]) > 0 && !moved) {
+        const start = g && g.p0 ? g.p0 : prev;
+        if (Math.hypot(p[0] - start[0], p[1] - start[1]) > 6) { moved = true; clearTimeout(hold); hold = null; }
+      }
+      pts.set(e.pointerId, p);
+      if (!g) return;
+      e.preventDefault();
+      if (g.kind === "pinch" && pts.size >= 2) {
+        const c = centroid();
+        let s = g.s0 * dist() / g.d0;
+        s = s < 1 ? 1 - (1 - s) * 0.35 : s > MAX_S ? MAX_S + (s - MAX_S) * 0.25 : s;   // elastico en los topes
+        const qx = (g.c0[0] - g.tx0) / g.s0, qy = (g.c0[1] - g.ty0) / g.s0;
+        view.s = s;
+        const b = bounds(Math.max(1, s));
+        view.tx = rubber(c[0] - s * qx, b.ax[0], b.ax[1]);
+        view.ty = rubber(c[1] - s * qy, b.ay[0], b.ay[1]);
+        applyView(false);
+      } else if (g.kind === "pan") {
+        const b = bounds(view.s);
+        view.tx = rubber(g.tx0 + p[0] - g.p0[0], b.ax[0], b.ax[1]);
+        view.ty = rubber(g.ty0 + p[1] - g.p0[1], b.ay[0], b.ay[1]);
+        g.hist.push([performance.now(), p[0], p[1]]);
+        if (g.hist.length > 6) g.hist.shift();
+        applyView(false);
+      }
+    }, { capture: true, passive: false });
+    const up = (e) => {
+      if (!pts.has(e.pointerId)) return;
+      const p = pts.get(e.pointerId);
+      pts.delete(e.pointerId);
+      // Sin dedos: el gesto de varios dedos ha terminado (las mascaras vuelven
+      // a pintar). Un instante despues, para que el ultimo levantar no pinte.
+      if (pts.size === 0 && gesture.multi) setTimeout(() => { if (!pts.size) gesture.multi = false; }, 60);
+      clearTimeout(hold); hold = null;
+      if (held) {
+        held = false;
+        before = el.querySelector('[data-a="before"]').classList.contains("on");
+        requestRender(false);
+      }
+      if (g && g.kind === "pinch") {
+        if (pts.size === 1) { beginPan([...pts.values()][0]); return; }   // sigue con un dedo
+        if (pts.size === 0) { g = null; setTimeout(() => { gesture.multi = false; }, 50); settleView(true); scheduleHiRes(); }
+        return;
+      }
+      if (g && g.kind === "pan") {
+        const h = g.hist, a = h[0], z = h[h.length - 1], dt = z[0] - a[0];
+        g = null;
+        if (moved && dt > 0 && performance.now() - z[0] < 80) startInertia((z[1] - a[1]) / dt, (z[2] - a[2]) / dt);
+        else settleView(true);
+        scheduleHiRes();
+        if (moved) return;
+      }
+      // Toque sin moverse en la foto: doble toque = zoom ahi / encajar
+      if (!moved && tool === "edit" && e.type === "pointerup") {
+        const now = Date.now(), isMouse = e.pointerType === "mouse";
+        const dbl = now - lastTap.t < 320 && Math.hypot(p[0] - lastTap.x, p[1] - lastTap.y) < 30;
+        if (isMouse || dbl) {
+          lastTap = { t: 0, x: 0, y: 0 };
+          if (view.s > 1.01) { resetView(true); scheduleHiRes(); }
+          else zoomAt(ZOOM_TAP, p[0], p[1], true);
+        } else lastTap = { t: now, x: p[0], y: p[1] };
+      }
+    };
+    stage.addEventListener("pointerup", up, true);
+    stage.addEventListener("pointercancel", up, true);
+
+    // Raton y trackpad: ctrl+rueda (o pellizco del trackpad) = zoom; rueda = mover
+    stage.addEventListener("wheel", (e) => {
+      if (!canGesture()) return;
+      e.preventDefault();
+      stopInertia();
+      const [x, y] = rel(e);
+      if (e.ctrlKey || e.metaKey) {
+        zoomAt(clamp(view.s * Math.exp(-e.deltaY * 0.004), 1, MAX_S), x, y, false);
+      } else if (view.s > 1.01) {
+        view.tx -= e.deltaX; view.ty -= e.deltaY;
+        settleView(false);
+        scheduleHiRes();
+      }
+    }, { passive: false });
+    // Safari en iOS: que el pellizco no amplie la pagina entera
+    ["gesturestart", "gesturechange", "gestureend"].forEach(t => el.addEventListener(t, (e) => e.preventDefault()));
   }
 
   // ¿Puede correr aqui? Hace falta WebAssembly y Workers de modulo
