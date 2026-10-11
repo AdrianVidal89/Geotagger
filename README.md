@@ -488,9 +488,20 @@ o doble clic lo quita; doble clic en el fondo deja el canal recto. Se dibuja
 con la misma interpolacion (Hermite monotona) que aplica el motor. Debajo
 sigue la curva parametrica (iluminaciones, claros, oscuros, sombras).
 
+**Fuerza de los controles**: los RAW (CR3 incluido) se editan a partir de su
+vista previa JPEG incrustada, asi que todo trabaja sobre imagenes ya
+reveladas, y LightCraft calibra varios controles para luz RAW lineal. Medidos
+sobre JPEG frente a Lightroom se quedaban cortos y se han recalibrado: Sombras
+(+100 levantaba la zona de sombras 7-15 niveles; ahora ~30-55, con una curva
+suave sobre las sombras porque forzar el control del motor creaba halos),
+Iluminaciones y Claridad (x1,5), y Contraste (ahora una curva en S que pivota
+en el tono medio de cada foto: antes, en una foto oscura, +100 oscurecia
+tambien los medios). Los ajustes de las mascaras, igual.
+
 **Blancos y Negros**: los del motor estan pensados para RAW y con un JPEG
 apenas movian los extremos (Negros +-100 = dos niveles). Aqui actuan como en
-Lightroom con JPEG: Blancos lleva las luces altas hasta quemar o apagar el
+Lightroom con JPEG: Blancos lleva las luces altas de cada foto (hasta su
+blanco real, tambien en una foto subexpuesta) hasta quemar o apagar el
 blanco y Negros hunde o levanta las sombras profundas. Se aplican antes de la
 curva maestra.
 

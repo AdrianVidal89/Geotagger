@@ -31,28 +31,89 @@ const AUTO_SIDE: usize = 320;      // tamano al que se mide
 const AUTO_IDS: [&str; 8] = ["light.exposure", "light.contrast", "light.highlights", "light.shadows",
                              "light.whites", "light.blacks", "color.vibrance", "color.saturation"];
 
-/// Los ajustes que de verdad se revelan.
+/// Fuerza de los controles del motor con fotos ya reveladas (JPEG y la vista
+/// previa de los RAW, que es lo que aqui se edita). LightCraft los calibra
+/// para luz RAW lineal y, medidos sobre JPEG, se quedaban cortos frente a
+/// Lightroom: Sombras +100 levantaba la zona de sombras 7-15 niveles (Lightroom
+/// unos 35-50), Iluminaciones -100 bajaba las luces ~25-33, Claridad +100
+/// subia el contraste local un 34 %. El motor admite valores mas alla de
+/// +-100 y responde de forma continua, asi que aqui se escalan: el deslizador
+/// sigue en +-100 y lo guardado son los valores del usuario.
+/// Sombras NO se escala en el motor: por encima de +-100 su mapeo local de
+/// tonos crea halos y dispara la saturacion. La fuerza que falta la pone una
+/// curva suave sobre las sombras (ver `effective`), global: sin halos.
+const SHADOWS_GAIN: f64 = 1.0;
+/// En las mascaras no hay curva propia: algo mas de motor, aun sin halos.
+const MASK_SHADOWS_GAIN: f64 = 1.5;
+const HIGHLIGHTS_GAIN: f64 = 1.5;
+const CLARITY_GAIN: f64 = 1.5;
+
+/// Los ajustes que de verdad se revelan (`pivot`: tono medio de la foto, 0..1).
 ///
-/// Blancos y Negros del motor estan calibrados para RAW (luz lineal de
-/// escena): con un JPEG, que ya viene revelado, Negros -100..+100 movia el
-/// punto negro dos niveles y Blancos unos quince; parecian no hacer nada.
-/// Aqui actuan como en Lightroom con JPEG: sobre la imagen ya codificada, en
-/// el extremo que les toca (Blancos sube o baja las luces altas hasta
-/// quemar o apagar el blanco; Negros hunde o levanta las sombras profundas),
-/// y se componen ANTES de la curva maestra del usuario.
-fn effective(s: &DevelopSettings) -> DevelopSettings {
+/// - Sombras, Iluminaciones y Claridad: escalados (ver arriba), tambien los
+///   de las mascaras.
+/// - Contraste: el del motor gira alrededor de un gris fijo, asi que en una
+///   foto oscura +100 oscurecia tambien los medios. Aqui es una curva en S
+///   sobre la imagen ya codificada que pivota en el tono medio de ESA foto:
+///   los medios se quedan donde estan, las sombras bajan y las luces suben
+///   (unos 25 niveles en los extremos a +100, como Lightroom).
+/// - Blancos y Negros: con un JPEG movian el punto negro dos niveles y el
+///   blanco quince. Actuan en su extremo sobre la imagen codificada (Blancos
+///   sube o baja las luces altas hasta quemar o apagar el blanco; Negros hunde
+///   o levanta las sombras profundas).
+/// Contraste, Blancos y Negros se componen ANTES de la curva maestra del usuario.
+fn effective(s: &DevelopSettings, tones: (f64, f64)) -> DevelopSettings {
+    let (pivot, white) = tones;
     let mut e = s.clone();
-    let (w, b) = (s.light.whites / 100.0, s.light.blacks / 100.0);
-    if w == 0.0 && b == 0.0 {
+    e.light.shadows = s.light.shadows * SHADOWS_GAIN;
+    e.light.highlights = s.light.highlights * HIGHLIGHTS_GAIN;
+    e.effects.clarity = s.effects.clarity * CLARITY_GAIN;
+    for m in &mut e.masks {
+        let a = &mut m.adjust;
+        a.shadows *= MASK_SHADOWS_GAIN;
+        a.highlights *= HIGHLIGHTS_GAIN;
+        a.clarity *= CLARITY_GAIN;
+        // en las mascaras no hay curva propia: Contraste, Blancos y Negros
+        // locales siguen siendo los del motor, con mas fuerza
+        a.contrast *= 2.0;
+        a.whites *= 2.5;
+        a.blacks *= 2.5;
+    }
+    let (w, b, c) = (s.light.whites / 100.0, s.light.blacks / 100.0, s.light.contrast / 100.0);
+    let sh = s.light.shadows / 100.0;
+    if w == 0.0 && b == 0.0 && c == 0.0 && sh == 0.0 {
         return e;
     }
     e.light.whites = 0.0;
     e.light.blacks = 0.0;
+    e.light.contrast = 0.0;
     let smooth = |e0: f64, e1: f64, x: f64| {
         let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
     };
-    let levels = |x: f64| (x + 0.25 * w * smooth(0.35, 1.0, x) + 0.2 * b * (1.0 - smooth(0.0, 0.6, x))).clamp(0.0, 1.0);
+    let p = pivot.clamp(0.12, 0.65);
+    // pendiente en el pivote: 1.9 a +100, 1/1.9 a -100
+    let a = if c >= 0.0 { 1.0 + 0.9 * c } else { 1.0 / (1.0 - 0.9 * c) };
+    let contrast = |x: f64| {
+        if c == 0.0 {
+            x
+        } else if x < p {
+            p * (x / p).powf(a)
+        } else {
+            1.0 - (1.0 - p) * ((1.0 - x) / (1.0 - p)).powf(a)
+        }
+    };
+    // Blancos actua sobre lo mas claro de ESTA foto (hasta su blanco real),
+    // tambien en una foto subexpuesta en la que nada llega a 0.35
+    let hi = white.clamp(0.3, 1.0);
+    // la rampa arranca por encima del tono medio: Blancos no mueve los medios
+    let w0 = (0.55 * hi).max(p + 0.08).min(hi - 0.05);
+    // Sombras: levanta (o hunde) los tonos oscuros, con el maximo hacia el
+    // 20 % (+40 niveles a +100), poco en los medios y nada en el negro puro.
+    // A -100 la amplitud es menor para que la curva siga siendo monotona.
+    let shadow_amp = if sh >= 0.0 { 0.16 } else { 0.08 } / 0.08192;
+    let shadows = |x: f64| (x + sh * shadow_amp * x * (1.0 - x).powi(4)).clamp(0.0, 1.0);
+    let levels = |x: f64| (x + 0.25 * w * smooth(w0, hi, x) + 0.2 * b * (1.0 - smooth(0.0, 0.6, x))).clamp(0.0, 1.0);
     let user = &s.curve.master;
     let user_curve = if lightcraft_develop::ToneCurve::point_curve_is_identity(user) {
         None
@@ -60,15 +121,28 @@ fn effective(s: &DevelopSettings) -> DevelopSettings {
         let pts: Vec<(f64, f64)> = user.iter().map(|p| (p.x, p.y)).collect();
         Some(lightcraft_color::spline::MonotoneCurve::new(&pts))
     };
-    const N: usize = 48;
+    const N: usize = 64;
     e.curve.master = (0..=N)
         .map(|i| {
             let x = i as f64 / N as f64;
-            let y = levels(x);
+            let y = levels(shadows(contrast(x)));
             Point::new(x, user_curve.as_ref().map_or(y, |c| c.eval(y)))
         })
         .collect();
     e
+}
+
+/// Tono medio (mediana) y blanco real (percentil 99,5) de la luminancia de
+/// la foto, codificados en sRGB.
+fn photo_tones(src: &Rgb32f) -> (f64, f64) {
+    let step = (src.data.len() / 20_000).max(1);
+    let mut y: Vec<f32> = src.data.iter().step_by(step).map(|p| 0.2627 * p[0] + 0.6780 * p[1] + 0.0593 * p[2]).collect();
+    if y.is_empty() {
+        return (0.45, 1.0);
+    }
+    y.sort_by(|a, b| a.total_cmp(b));
+    let enc = |v: f32| lightcraft_color::transfer::linear_to_srgb(v.clamp(0.0, 1.0)) as f64;
+    (enc(y[y.len() / 2]), enc(y[(y.len() - 1) * 995 / 1000]))
 }
 
 /// Lo que el Auto mira del histograma de luminancia del resultado.
@@ -122,6 +196,8 @@ pub struct Editor {
     histogram: Vec<u32>,
     /// Mascara cuya superposicion se pinta (-1 = ninguna)
     overlay: i32,
+    /// Tono medio y blanco real de la foto (pivote del Contraste, Blancos)
+    tones: (f64, f64),
 }
 
 #[wasm_bindgen]
@@ -136,6 +212,7 @@ impl Editor {
         let d = lightcraft_codecs::decode(bytes, opts).map_err(err)?;
         let o = if orientation == 0 { d.orientation } else { orientation };
         let src = d.to_working().into_oriented(Orientation::from_exif(o));
+        let tones = photo_tones(&src);
         Ok(Editor {
             src: Arc::new(src),
             info: SourceInfo::default(),
@@ -145,6 +222,7 @@ impl Editor {
             out_h: 0,
             histogram: Vec::new(),
             overlay: -1,
+            tones,
         })
     }
 
@@ -402,7 +480,7 @@ impl Editor {
             let b = lightcraft_pipeline::before_settings(&self.settings);
             lightcraft_pipeline::render(&self.src, &self.info, &b, &req)
         } else {
-            let eff = effective(&self.settings);
+            let eff = effective(&self.settings, self.tones);
             lightcraft_pipeline::render_cached(&self.src, &self.info, &eff, &req, &self.cache)
         };
         self.out_w = r.image.width;
@@ -465,7 +543,7 @@ impl Editor {
     pub fn pick_spot_source(&self, spot_json: &str, avoid_x: f64, avoid_y: f64, use_avoid: bool) -> Vec<f64> {
         let Ok(spot) = serde_json::from_str::<lightcraft_develop::Spot>(spot_json) else { return Vec::new() };
         let avoid = use_avoid.then(|| Point::new(avoid_x, avoid_y));
-        let eff = effective(&self.settings);
+        let eff = effective(&self.settings, self.tones);
         lightcraft_pipeline::spots::pick_source(&self.src, &self.info, &eff, &spot, avoid)
             .map(|p| vec![p.x, p.y])
             .unwrap_or_default()
@@ -479,7 +557,7 @@ impl Editor {
     /// normalizado (x, y) de la foto. Vacio si cae fuera.
     pub fn color_sample(&self, x: f64, y: f64) -> Vec<f64> {
         let req = RenderRequest::fit(512, 512);
-        lightcraft_pipeline::color_range_sample(&self.src, &self.info, &effective(&self.settings), &req, Point::new(x, y))
+        lightcraft_pipeline::color_range_sample(&self.src, &self.info, &effective(&self.settings, self.tones), &req, Point::new(x, y))
             .map(|v| v.to_vec())
             .unwrap_or_default()
     }
@@ -500,7 +578,7 @@ impl Editor {
     /// 4:4:4; o PNG sin perdida si `png`). Sin metadatos: el servidor copia
     /// los del original.
     pub fn export(&mut self, png: bool, quality: u8) -> Result<Vec<u8>, JsValue> {
-        let eff = effective(&self.settings);
+        let eff = effective(&self.settings, self.tones);
         let (w, h) = lightcraft_pipeline::native_output_size(self.src.width, self.src.height, &eff);
         let req = RenderRequest::fit(w.round().max(1.0) as usize, h.round().max(1.0) as usize);
         let r = lightcraft_pipeline::render(&self.src, &self.info, &eff, &req);
@@ -521,7 +599,7 @@ impl Editor {
     fn measure(&self, s: &DevelopSettings) -> Stats {
         let mut req = RenderRequest::fit(AUTO_SIDE, AUTO_SIDE);
         req.quality = Quality::Draft;
-        let img = lightcraft_pipeline::render(&self.src, &self.info, &effective(s), &req).image;
+        let img = lightcraft_pipeline::render(&self.src, &self.info, &effective(s, self.tones), &req).image;
         let mut l: Vec<f64> = img
             .data
             .iter()
@@ -722,6 +800,31 @@ mod tests {
         f.set_spots_json(&format!(r#"[{{"mode":"remove","points":[{{"x":0.75,"y":0.5}}],"size":0.05,"feather":50,"opacity":100,"source_offset":{{"x":{},"y":{}}}}}]"#, src[0], src[1])).unwrap();
         let px = f.render(160, 100, false, true, false);
         assert!(px[(50 * 160 + 120) * 4] > 150, "mancha corregida: {}", px[(50 * 160 + 120) * 4]);
+    }
+
+    #[test]
+    fn shadows_and_contrast_have_lightroom_strength() {
+        // foto oscura: degradado 5..120
+        let mut img = lightcraft_raster::Rgba8::new(200, 60);
+        for (i, p) in img.data.iter_mut().enumerate() {
+            let v = (5 + (i % 200) * 115 / 200) as u8;
+            *p = [v, v, v, 255];
+        }
+        let jpg = lightcraft_codecs::encode_jpeg(&EncodeImage::rgba8(&img), 98, ChromaSubsampling::S444, &EncodeMeta::default()).unwrap();
+        let mut e = Editor::new(&jpg, 0, 0).unwrap();
+        let base = e.render(200, 60, false, true, false);
+        let at = |px: &[u8], x: usize| px[(30 * 200 + x) * 4] as i32;
+        e.set("light.shadows", 100.0);
+        let lifted = e.render(200, 60, false, true, false);
+        // la zona de sombras (x=40: ~28/255) sube al menos 25 niveles
+        assert!(at(&lifted, 40) - at(&base, 40) >= 25, "{} -> {}", at(&base, 40), at(&lifted, 40));
+        // contraste: pivota en el tono medio de la foto (no oscurece los medios)
+        let mut f = Editor::new(&jpg, 0, 0).unwrap();
+        f.set("light.contrast", 100.0);
+        let c = f.render(200, 60, false, true, false);
+        let mid = (0..200).min_by_key(|&x| (at(&base, x) - 60).abs()).unwrap_or(100);
+        assert!((at(&c, mid) - at(&base, mid)).abs() <= 8);
+        assert!(at(&c, 190) > at(&base, 190) + 8 && at(&c, 10) <= at(&base, 10));
     }
 
     #[test]
