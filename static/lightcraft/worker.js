@@ -24,6 +24,11 @@ function apply(e, st) {
   e.set_orientation(st.orient || 1);
   const c = st.crop || [0, 0, 1, 1];
   e.set_crop(c[0], c[1], c[2], c[3], st.angle || 0);
+  // Curvas por puntos: [[x, y], ...] por canal
+  const cv = st.curves || {};
+  for (const ch of ["master", "red", "green", "blue"]) {
+    e.set_curve(ch, new Float64Array((cv[ch] || []).flat()));
+  }
 }
 
 async function fetchBytes(url, accept) {

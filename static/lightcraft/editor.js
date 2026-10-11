@@ -100,12 +100,13 @@
 
   function freshState() {
     return { values: {}, bw: false, profile: "lc.color",
-             orient: 1, crop: [0, 0, 1, 1], angle: 0, aspect: 0 };
+             orient: 1, crop: [0, 0, 1, 1], angle: 0, aspect: 0,
+             curves: { master: [], red: [], green: [], blue: [] } };
   }
   const snap = () => JSON.stringify(st);
   const isDefaultCrop = () => st.angle === 0 && st.crop.join() === "0,0,1,1";
   function hasPixelEdits() {
-    return Object.keys(st.values).length > 0 || st.bw || st.profile !== "lc.color" || !isDefaultCrop();
+    return Object.keys(st.values).length > 0 || st.bw || st.profile !== "lc.color" || !isDefaultCrop() || curvesTouched();
   }
   const hasChanges = () => hasPixelEdits() || st.orient !== 1;
 
@@ -173,7 +174,9 @@
     } else {
       cv.style.width = cv.style.height = "";
     }
+    lastHist = r.hist;
     drawHistogram(r.hist);
+    drawCurve();
     applyTilt();
     el.querySelector(".lc-badge").classList.toggle("on", before);
     if (tool === "crop") layoutCrop();
@@ -213,7 +216,9 @@
   }
   function restore(s) {
     st = JSON.parse(s);
+    if (!st.curves) st.curves = { master: [], red: [], green: [], blue: [] };
     syncControls();
+    drawCurve();
     refreshChrome();
     requestRender(false);
   }
@@ -245,7 +250,7 @@
     // Punto azul en las secciones tocadas
     el.querySelectorAll(".lc-sec").forEach(sec => {
       const ids = Array.from(sec.querySelectorAll(".lc-sl")).map(n => n.dataset.id).concat((sec.dataset.ids || "").split(",").filter(Boolean));
-      sec.classList.toggle("mod", ids.some(id => id in st.values));
+      sec.classList.toggle("mod", ids.some(id => id in st.values) || (sec.dataset.sec === "light" && curvesTouched()));
     });
   }
 
@@ -309,6 +314,183 @@
     el.querySelectorAll(".lc-mix-sliders .lc-sl, .lc-grade-sliders .lc-sl").forEach(syncSlider);
   }
 
+  // ── Curva de tonos (Maestro, Rojo, Verde, Azul) ───────────────────────────
+  // La curva por puntos del motor: pares (entrada, salida) 0..1 sobre la
+  // imagen ya codificada, interpolados con la misma Hermite monotona
+  // (Fritsch-Carlson) que usa LightCraft, asi que lo que se dibuja es
+  // exactamente lo que se aplica. Clic sobre la curva: punto nuevo. Arrastrar
+  // un punto: moverlo. Sacarlo del recuadro o doble clic: quitarlo.
+  const CURVE_CH = [["master", "Maestro", "#e6e6e6"], ["red", "Rojo", "#ff4d4d"],
+                    ["green", "Verde", "#3ccf5a"], ["blue", "Azul", "#4d84ff"]];
+  let curveCh = "master", lastHist = null;
+  const pairs = (flat) => { const o = []; for (let i = 0; i + 1 < flat.length; i += 2) o.push([flat[i], flat[i + 1]]); return o; };
+  const isIdentity = (p) => p.length < 2 || p.every(q => Math.abs(q[0] - q[1]) < 1e-6);
+  function curvesTouched() {
+    const c = st && st.curves;
+    return !!c && ["master", "red", "green", "blue"].some(k => !isIdentity(c[k] || []));
+  }
+  function curvePts(ch) {
+    const p = (st.curves[ch] || []).slice().sort((a, b) => a[0] - b[0]);
+    return p.length >= 2 ? p : [[0, 0], [1, 1]];
+  }
+  function monotone(pts) {
+    const n = pts.length, xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    const d = [];
+    for (let i = 0; i < n - 1; i++) d.push((ys[i + 1] - ys[i]) / Math.max(1e-9, xs[i + 1] - xs[i]));
+    const ms = new Array(n).fill(0);
+    ms[0] = d[0]; ms[n - 1] = d[n - 2];
+    for (let i = 1; i < n - 1; i++) ms[i] = d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2;
+    for (let i = 0; i < n - 1; i++) {
+      if (d[i] === 0) { ms[i] = 0; ms[i + 1] = 0; continue; }
+      const a = ms[i] / d[i], b = ms[i + 1] / d[i], s2 = a * a + b * b;
+      if (s2 > 9) { const t = 3 / Math.sqrt(s2); ms[i] = t * a * d[i]; ms[i + 1] = t * b * d[i]; }
+    }
+    return (x) => {
+      if (x <= xs[0]) return ys[0];
+      if (x >= xs[n - 1]) return ys[n - 1];
+      let i = 0;
+      while (i < n - 2 && x > xs[i + 1]) i++;
+      const h = xs[i + 1] - xs[i], t = (x - xs[i]) / h, t2 = t * t, t3 = t2 * t;
+      return (2 * t3 - 3 * t2 + 1) * ys[i] + (t3 - 2 * t2 + t) * h * ms[i] +
+             (-2 * t3 + 3 * t2) * ys[i + 1] + (t3 - t2) * h * ms[i + 1];
+    };
+  }
+  function curveHtml() {
+    return '<div class="lc-sub">Curva de tonos<button class="lc-btn sm" data-a="curvereset" title="Restablecer este canal">Restablecer</button></div>' +
+      '<div class="lc-curve-ch">' + CURVE_CH.map(c =>
+        '<button class="lc-cch" data-ch="' + c[0] + '" title="' + c[1] + '"><span style="background:' + c[2] + '"></span>' + c[1] + '</button>').join("") + '</div>' +
+      '<div class="lc-curve"><canvas></canvas><div class="lc-curve-read"></div></div>' +
+      '<details class="lc-param"><summary>Curva paramétrica</summary>' +
+        many(["curve.highlights", "curve.lights", "curve.darks", "curve.shadows"]) + '</details>';
+  }
+  function drawCurve() {
+    if (!panelBuilt) return;
+    const cv = el.querySelector(".lc-curve canvas");
+    if (!cv || !cv.clientWidth) return;
+    const dpr = window.devicePixelRatio || 1, S = cv.clientWidth * dpr;
+    if (cv.width !== S || cv.height !== S) { cv.width = S; cv.height = S; }
+    const g = cv.getContext("2d"), pad = 6 * dpr, w = S - 2 * pad;
+    const X = (x) => pad + x * w, Y = (y) => pad + (1 - y) * w;
+    g.clearRect(0, 0, S, S);
+    g.fillStyle = "#1a1a1a"; g.fillRect(pad, pad, w, w);
+    // histograma del canal (luminancia para el maestro), de fondo
+    if (lastHist) {
+      const off = { red: 0, green: 256, blue: 512, master: 768 }[curveCh];
+      let max = 1;
+      for (let i = 2; i < 254; i++) max = Math.max(max, lastHist[off + i]);
+      g.fillStyle = curveCh === "master" ? "rgba(255,255,255,.13)" :
+        { red: "rgba(255,77,77,.22)", green: "rgba(60,207,90,.2)", blue: "rgba(77,132,255,.24)" }[curveCh];
+      g.beginPath(); g.moveTo(X(0), Y(0));
+      for (let i = 0; i < 256; i++) g.lineTo(X(i / 255), Y(Math.min(1, Math.sqrt(lastHist[off + i] / max)) * 0.9));
+      g.lineTo(X(1), Y(0)); g.closePath(); g.fill();
+    }
+    // cuadricula en cuartos y diagonal
+    g.strokeStyle = "#3a3a3a"; g.lineWidth = dpr;
+    g.beginPath();
+    for (let k = 1; k < 4; k++) { g.moveTo(X(k / 4), Y(0)); g.lineTo(X(k / 4), Y(1)); g.moveTo(X(0), Y(k / 4)); g.lineTo(X(1), Y(k / 4)); }
+    g.stroke();
+    g.strokeStyle = "#555"; g.setLineDash([3 * dpr, 3 * dpr]);
+    g.beginPath(); g.moveTo(X(0), Y(0)); g.lineTo(X(1), Y(1)); g.stroke(); g.setLineDash([]);
+    // los otros canales tocados, tenues (como Lightroom)
+    for (const [ch, , col] of CURVE_CH) {
+      if (ch === curveCh || isIdentity(st.curves[ch] || [])) continue;
+      const f = monotone(curvePts(ch));
+      g.strokeStyle = col; g.globalAlpha = 0.35; g.lineWidth = 1.2 * dpr;
+      g.beginPath();
+      for (let i = 0; i <= 200; i++) { const x = i / 200; i ? g.lineTo(X(x), Y(f(x))) : g.moveTo(X(x), Y(f(x))); }
+      g.stroke(); g.globalAlpha = 1;
+    }
+    const pts = curvePts(curveCh), f = monotone(pts), col = CURVE_CH.find(c => c[0] === curveCh)[2];
+    g.strokeStyle = col; g.lineWidth = 2 * dpr;
+    g.beginPath();
+    for (let i = 0; i <= 256; i++) { const x = i / 256; i ? g.lineTo(X(x), Y(f(x))) : g.moveTo(X(x), Y(f(x))); }
+    g.stroke();
+    for (const [i, p] of pts.entries()) {
+      g.beginPath(); g.arc(X(p[0]), Y(p[1]), (i === curveDragIdx ? 6 : 4.5) * dpr, 0, Math.PI * 2);
+      g.fillStyle = i === curveDragIdx ? "#fff" : "#1a1a1a"; g.fill();
+      g.strokeStyle = col; g.lineWidth = 1.6 * dpr; g.stroke();
+    }
+    el.querySelectorAll(".lc-cch").forEach(b => {
+      b.classList.toggle("on", b.dataset.ch === curveCh);
+      b.classList.toggle("mod", !isIdentity(st.curves[b.dataset.ch] || []));
+    });
+  }
+  let curveDragIdx = -1;
+  function wireCurve() {
+    const panel = el.querySelector(".lc-panel");
+    panel.addEventListener("click", (e) => {
+      const b = e.target.closest(".lc-cch");
+      if (b) { curveCh = b.dataset.ch; drawCurve(); }
+    });
+    const pos = (cv, e) => {
+      const r = cv.getBoundingClientRect(), pad = 6, w = r.width - 2 * pad;
+      return [(e.clientX - r.left - pad) / w, 1 - (e.clientY - r.top - pad) / w];
+    };
+    const store = (pts) => { st.curves[curveCh] = isIdentity(pts) && pts.length <= 2 ? [] : pts.map(p => [+p[0].toFixed(4), +p[1].toFixed(4)]); };
+    let drag = null;
+    panel.addEventListener("pointerdown", (e) => {
+      const cv = e.target.closest(".lc-curve canvas");
+      if (!cv) return;
+      e.preventDefault();
+      const [x, y] = pos(cv, e), pts = curvePts(curveCh);
+      const tol = 12 / cv.getBoundingClientRect().width;
+      let idx = pts.findIndex(p => Math.abs(p[0] - x) < tol && Math.abs(p[1] - y) < tol);
+      if (idx < 0) {
+        // punto nuevo sobre la curva, en la x del clic
+        const cx = Math.min(0.99, Math.max(0.01, x));
+        if (pts.some(p => Math.abs(p[0] - cx) < 0.02) || pts.length >= 16) return;
+        const ny = Math.min(1, Math.max(0, Math.abs(y - monotone(pts)(cx)) < 0.08 ? monotone(pts)(cx) : y));
+        pts.push([cx, ny]); pts.sort((a, b) => a[0] - b[0]);
+        idx = pts.findIndex(p => p[0] === cx);
+        store(pts);
+      }
+      cv.setPointerCapture(e.pointerId);
+      drag = { cv, idx, out: false };
+      curveDragIdx = idx;
+      drawCurve();
+      requestRender(true);
+    });
+    panel.addEventListener("pointermove", (e) => {
+      const cv = e.target.closest(".lc-curve canvas") || (drag && drag.cv);
+      if (!cv) return;
+      const [x, y] = pos(cv, e);
+      const read = el.querySelector(".lc-curve-read");
+      if (!drag) {
+        if (x >= 0 && x <= 1 && y >= 0 && y <= 1) read.textContent = "Entrada " + Math.round(x * 255) + " → salida " + Math.round(monotone(curvePts(curveCh))(x) * 255);
+        return;
+      }
+      const pts = curvePts(curveCh), i = drag.idx, n = pts.length;
+      // Fuera del recuadro: el punto se quita al soltar (no los extremos)
+      drag.out = i > 0 && i < n - 1 && (x < -0.08 || x > 1.08 || y < -0.08 || y > 1.08);
+      const lo = i === 0 ? 0 : pts[i - 1][0] + 0.01, hi = i === n - 1 ? 1 : pts[i + 1][0] - 0.01;
+      pts[i] = [Math.min(hi, Math.max(lo, x)), Math.min(1, Math.max(0, y))];
+      store(pts);
+      read.textContent = drag.out ? "Suelta para quitar el punto" :
+        "Entrada " + Math.round(pts[i][0] * 255) + " → salida " + Math.round(pts[i][1] * 255);
+      drawCurve();
+      requestRender(true);
+    });
+    const end = () => {
+      if (!drag) return;
+      if (drag.out) { const pts = curvePts(curveCh); pts.splice(drag.idx, 1); store(pts); }
+      drag = null; curveDragIdx = -1;
+      drawCurve(); commit(); requestRender(false);
+    };
+    panel.addEventListener("pointerup", end);
+    panel.addEventListener("pointercancel", end);
+    panel.addEventListener("dblclick", (e) => {
+      const cv = e.target.closest(".lc-curve canvas");
+      if (!cv) return;
+      e.stopPropagation();
+      const [x, y] = pos(cv, e), pts = curvePts(curveCh), tol = 12 / cv.getBoundingClientRect().width;
+      const idx = pts.findIndex(p => Math.abs(p[0] - x) < tol && Math.abs(p[1] - y) < tol);
+      if (idx > 0 && idx < pts.length - 1) pts.splice(idx, 1);   // doble clic en un punto: quitarlo
+      else if (idx < 0) pts.splice(0, pts.length);                // en el fondo: canal a cero
+      store(pts.length >= 2 ? pts : []);
+      drawCurve(); commit(); requestRender(false);
+    }, true);
+  }
+
   // ── Construccion del panel ─────────────────────────────────────────────────
   function sec(key, title, body, open, ids) {
     return '<div class="lc-sec' + (open ? " open" : "") + '" data-sec="' + key + '"' + (ids ? ' data-ids="' + ids + '"' : "") + '>' +
@@ -362,7 +544,7 @@
             '<div class="lc-prof-amt" style="padding:0 12px 8px">' + slider("profile.amount") + '</div>' +
             sec("light", "Luz",
               many(["light.exposure", "light.contrast", "light.highlights", "light.shadows", "light.whites", "light.blacks"]) +
-              sub("Curva") + many(["curve.highlights", "curve.lights", "curve.darks", "curve.shadows"]), true) +
+              curveHtml(), true) +
             sec("color", "Color",
               sub("Balance de blancos", '<button class="lc-btn sm" data-a="autowb">Auto</button>') +
               many(["wb.tempRel", "wb.tintRel"]) +
@@ -421,6 +603,7 @@
     panel.querySelector(".lc-sel-profile").innerHTML =
       Object.keys(PROFILES).map(id => '<option value="' + id + '">' + PROFILES[id] + '</option>').join("");
     panelBuilt = true;
+    wireCurve();
   }
 
   // ── Eventos ────────────────────────────────────────────────────────────────
@@ -469,6 +652,7 @@
         const s = h.parentElement;
         const ids = Array.from(s.querySelectorAll(".lc-sl")).map(x => x.dataset.id).concat((s.dataset.ids || "").split(",").filter(Boolean));
         ids.forEach(id => delete st.values[id]);
+        if (s.dataset.sec === "light") { st.curves = { master: [], red: [], green: [], blue: [] }; drawCurve(); }
         syncControls();
         rebindDynamic();
         commit();
@@ -477,7 +661,7 @@
     });
     panel.addEventListener("click", (e) => {
       const h = e.target.closest(".lc-sec-h");
-      if (h) { h.parentElement.classList.toggle("open"); return; }
+      if (h) { h.parentElement.classList.toggle("open"); drawCurve(); return; }
       const band = e.target.closest("[data-band]");
       if (band) { mixBand = +band.dataset.band; rebindDynamic(); return; }
       const zone = e.target.closest("[data-zone]");
@@ -501,6 +685,7 @@
       else if (a === "bw") { st.bw = !st.bw; commit(); requestRender(false); }
       else if (a === "auto") runAuto();
       else if (a === "autowb") runAutoWb();
+      else if (a === "curvereset") { st.curves[curveCh] = []; drawCurve(); commit(); requestRender(false); }
       else if (a in OPS) orient(a);
       else if (a === "swap") swapAspect();
       else if (a === "cropreset") { st.angle = 0; st.aspect = 0; st.crop = [0, 0, 1, 1]; syncControls(); commit(); requestRender(false); }
@@ -565,8 +750,12 @@
   async function runAuto() {
     try {
       const r = await call({ type: "auto", st: st });
-      for (const [id, v] of Object.entries(r.values)) setVal(id, v);
+      for (const [id, v] of Object.entries(r.values)) {
+        if (id === "curve.master") st.curves.master = pairs(v);
+        else setVal(id, v);
+      }
       syncControls();
+      drawCurve();
       commit();
       requestRender(false);
     } catch (e) { showMsg("Auto no disponible: " + e.message); }
@@ -738,7 +927,7 @@
     st = freshState();
     undo = [snap()]; redo = [];
     tool = "edit"; before = false; zoom = false; saving = false;
-    mixBand = 0; gradeZone = "shadows";
+    mixBand = 0; gradeZone = "shadows"; curveCh = "master"; lastHist = null;
     el.querySelector(".lc-name").textContent = f.name;
     el.classList.remove("tool-crop");
     el.querySelector(".lc-stage").classList.remove("zoom", "crop");
