@@ -419,6 +419,58 @@ impl Editor {
         self.settings.masks = serde_json::from_str(json).map_err(err)?;
         Ok(())
     }
+    /// Mascara de segmentacion calculada fuera (IA en el navegador): `kind`
+    /// "person" (la usan Sujeto y Fondo) o "sky". `data`: alfa 0..255 de
+    /// `w × h` que cubre la foto entera ya orientada (a cualquier resolucion).
+    pub fn set_matte(&mut self, kind: &str, w: usize, h: usize, data: &[u8]) -> bool {
+        use lightcraft_pipeline::masks::{MatteKind, Mattes};
+        let k = match kind {
+            "person" | "subject" => MatteKind::Person,
+            "sky" => MatteKind::Sky,
+            _ => return false,
+        };
+        if w == 0 || h == 0 || data.len() != w * h {
+            return false;
+        }
+        let mut m: Mattes = self.info.mattes.as_deref().cloned().unwrap_or_default();
+        m.push(k, lightcraft_raster::Image { width: w, height: h, data: data.to_vec() });
+        self.info.mattes = Some(Arc::new(m));
+        self.cache.clear();
+        true
+    }
+    pub fn clear_mattes(&mut self) {
+        self.info.mattes = None;
+        self.cache.clear();
+    }
+    /// La foto tal cual (sin ajustes, giro ni recorte) dentro de `max_w × max_h`:
+    /// la entrada de los modelos de segmentacion.
+    pub fn neutral_rgba(&mut self, max_w: usize, max_h: usize) -> Vec<u8> {
+        let req = RenderRequest::fit(max_w.max(1), max_h.max(1));
+        let r = lightcraft_pipeline::render(&self.src, &self.info, &DevelopSettings::default(), &req);
+        self.out_w = r.image.width;
+        self.out_h = r.image.height;
+        r.image.as_bytes()
+    }
+
+    /// Correcciones de manchas (formato `Spot` de LightCraft, en JSON).
+    pub fn set_spots_json(&mut self, json: &str) -> Result<(), JsValue> {
+        self.settings.spots = serde_json::from_str(json).map_err(err)?;
+        Ok(())
+    }
+    /// Origen para la correccion `spot_json` (desplazamiento normalizado
+    /// [dx, dy]): el que mejor encaja con el entorno de la mancha, o con
+    /// `avoid` el mejor que este lejos del actual ("buscar otro origen").
+    /// Vacio si no cabe ninguno. Se fija al crear la correccion para que la
+    /// vista previa y la foto guardada usen el mismo.
+    pub fn pick_spot_source(&self, spot_json: &str, avoid_x: f64, avoid_y: f64, use_avoid: bool) -> Vec<f64> {
+        let Ok(spot) = serde_json::from_str::<lightcraft_develop::Spot>(spot_json) else { return Vec::new() };
+        let avoid = use_avoid.then(|| Point::new(avoid_x, avoid_y));
+        let eff = effective(&self.settings);
+        lightcraft_pipeline::spots::pick_source(&self.src, &self.info, &eff, &spot, avoid)
+            .map(|p| vec![p.x, p.y])
+            .unwrap_or_default()
+    }
+
     /// Pintar la superposicion roja de la mascara `id` (-1: ninguna).
     pub fn set_overlay(&mut self, id: i32) {
         self.overlay = id;
@@ -640,6 +692,36 @@ mod tests {
         assert!(at(60, 40) > at0(60, 40) + 30);
         assert!((at(3, 3) - at0(3, 3)).abs() < 4);
         assert_eq!(f.color_sample(0.5, 0.5).len(), 3);
+    }
+
+    #[test]
+    fn mattes_and_spots() {
+        // mitad izquierda oscura, derecha clara; un punto negro en la derecha
+        let mut img = lightcraft_raster::Rgba8::new(160, 100);
+        for (i, p) in img.data.iter_mut().enumerate() {
+            let (x, y) = (i % 160, i / 160);
+            let v = if x < 80 { 40 } else { 200 };
+            let spot = (x as i32 - 120).pow(2) + (y as i32 - 50).pow(2) < 16;
+            *p = if spot { [0, 0, 0, 255] } else { [v, v, v, 255] };
+        }
+        let jpg = lightcraft_codecs::encode_jpeg(&EncodeImage::rgba8(&img), 98, ChromaSubsampling::S444, &EncodeMeta::default()).unwrap();
+        let mut e = Editor::new(&jpg, 0, 0).unwrap();
+        assert_eq!(e.neutral_rgba(160, 160).len(), 160 * 100 * 4);
+        // matte de "persona" = mitad izquierda; Sujeto +2 EV aclara solo esa mitad
+        let matte: Vec<u8> = (0..40 * 25).map(|i| if i % 40 < 20 { 255 } else { 0 }).collect();
+        assert!(e.set_matte("person", 40, 25, &matte));
+        e.set_masks_json(r#"[{"id":1,"name":"s","visible":true,"invert":false,"components":[{"op":"add","invert":false,"shape":{"kind":"subject"}}],"adjust":{"exposure":2}}]"#).unwrap();
+        let px = e.render(160, 100, false, true, false);
+        assert!(px[(50 * 160 + 20) * 4] > 70, "izquierda aclarada: {}", px[(50 * 160 + 20) * 4]);
+        assert!(px[(50 * 160 + 140) * 4] < 215);
+        // corrector: el punto negro desaparece con origen elegido automaticamente
+        let mut f = Editor::new(&jpg, 0, 0).unwrap();
+        let spot = r#"{"mode":"remove","points":[{"x":0.75,"y":0.5}],"size":0.05,"feather":50,"opacity":100,"source_offset":null}"#;
+        let src = f.pick_spot_source(spot, 0.0, 0.0, false);
+        assert_eq!(src.len(), 2);
+        f.set_spots_json(&format!(r#"[{{"mode":"remove","points":[{{"x":0.75,"y":0.5}}],"size":0.05,"feather":50,"opacity":100,"source_offset":{{"x":{},"y":{}}}}}]"#, src[0], src[1])).unwrap();
+        let px = f.render(160, 100, false, true, false);
+        assert!(px[(50 * 160 + 120) * 4] > 150, "mancha corregida: {}", px[(50 * 160 + 120) * 4]);
     }
 
     #[test]

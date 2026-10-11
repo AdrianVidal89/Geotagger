@@ -500,7 +500,24 @@ blancos, negros, textura, claridad, neblina, tono, saturacion, enfoque,
 ruido). Cada capa suma o resta componentes: pincel (pintar y borrar, tamaño,
 desvanecer, flujo), degradado lineal y radial (con tiradores sobre la foto, o
 trazandolos arrastrando), rango de color (tocar la foto), rango de luminancia,
-y cielo, sujeto y fondo automaticos (deteccion heuristica del motor, sin IA).
+y **cielo, sujeto y fondo con IA**.
+
+**Sujeto, Cielo y Fondo** usan dos modelos de segmentacion pequeños que corren
+en el navegador con ONNX Runtime Web (nunca en el NAS): U^2-Net ligero para el
+motivo principal (personas, animales, objetos) y U^2-Net entrenado para cielos
+(convertido de ncnn a ONNX con `tools/ncnn2onnx.py`). El resultado se le da a
+LightCraft como mascara de segmentacion y vale para la vista previa y para la
+foto guardada. Los bordes se ajustan a los de la foto ("Ajustar bordes"). Se
+descargan (20 MB) solo la primera vez que se usan; luego quedan en la cache
+del navegador. Licencias en `static/lightcraft/ai/NOTICE.md`. Limitacion
+conocida: los cielos nocturnos estrellados no los detecta.
+
+**Corregir** (tecla `H`): pincel corrector de imperfecciones de LightCraft.
+Se pinta sobre la mancha y se rellena a partir de otra zona: *Eliminar* busca
+solo el origen que mejor encaja con el entorno y funde el tono, *Reparar* hace
+lo mismo con el origen que se elija, *Clonar* copia tal cual. Tamaño,
+desvanecer y opacidad; el origen se ve como contorno discontinuo y se puede
+arrastrar o pedir otro ("Buscar otro origen").
 La superposicion roja muestra la seleccion; al mover un ajuste se oculta
 para ver el efecto. Capas visibles u ocultas, invertir, renombrar, borrar.
 

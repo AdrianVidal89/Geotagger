@@ -14,6 +14,86 @@ import init, { Editor, controls_json, profiles_json } from "./geotagger_lightcra
 const ready = init();
 let ed = null;           // la foto de trabajo (vista previa de ~2048 px)
 
+// ── IA: sujeto y cielo ───────────────────────────────────────────────────────
+// Dos modelos U^2-Net pequenos (ai/NOTICE.md) con ONNX Runtime Web, cargados
+// solo cuando se pide Sujeto, Fondo o Cielo. Se calculan una vez por foto
+// sobre la vista previa y se le dan al motor como mascaras de segmentacion
+// ("mattes"): LightCraft las usa en vez de su heuristica, y valen a cualquier
+// resolucion (tambien al guardar la foto entera).
+const AI = {
+  person: { model: "u2netp", size: 320, minmax: true },
+  sky: { model: "skyseg", size: 384, minmax: false },
+};
+let ort = null;
+const sessions = {};
+let mattes = {};         // kind -> { w, h, data } de la foto abierta
+async function session(name) {
+  if (!ort) {
+    ort = await import("./ai/ort.wasm.min.mjs");
+    ort.env.wasm.wasmPaths = new URL("./ai/", import.meta.url).href;
+    ort.env.wasm.numThreads = 1;     // sin COOP/COEP no hay hilos; asi funciona en todos
+  }
+  if (!sessions[name]) {
+    sessions[name] = await ort.InferenceSession.create(new URL("./ai/" + name + ".onnx", import.meta.url).href,
+                                                       { executionProviders: ["wasm"] });
+  }
+  return sessions[name];
+}
+async function computeMatte(kind) {
+  const cfg = AI[kind], n = cfg.size;
+  // La foto sin ajustes, estirada a n x n (como se entrenaron los modelos)
+  const px = ed.neutral_rgba(n * 2, n * 2), w = ed.out_width(), h = ed.out_height();
+  const input = new Float32Array(3 * n * n);
+  const mean = [0.485, 0.456, 0.406], std = [0.229, 0.224, 0.225];
+  for (let y = 0; y < n; y++) {
+    const fy = Math.min(h - 1.001, Math.max(0, (y + 0.5) * h / n - 0.5)), y0 = Math.floor(fy), ty = fy - y0;
+    for (let x = 0; x < n; x++) {
+      const fx = Math.min(w - 1.001, Math.max(0, (x + 0.5) * w / n - 0.5)), x0 = Math.floor(fx), tx = fx - x0;
+      for (let c = 0; c < 3; c++) {
+        const p = (yy, xx) => px[(yy * w + xx) * 4 + c];
+        const v = (p(y0, x0) * (1 - tx) + p(y0, x0 + 1) * tx) * (1 - ty) + (p(y0 + 1, x0) * (1 - tx) + p(y0 + 1, x0 + 1) * tx) * ty;
+        input[c * n * n + y * n + x] = (v / 255 - mean[c]) / std[c];
+      }
+    }
+  }
+  const sess = await session(cfg.model);
+  const out = await sess.run({ [sess.inputNames[0]]: new ort.Tensor("float32", input, [1, 3, n, n]) });
+  const y = out[sess.outputNames[0]].data;
+  let lo = 0, hi = 1;
+  if (cfg.minmax) { lo = Infinity; hi = -Infinity; for (const v of y) { if (v < lo) lo = v; if (v > hi) hi = v; } }
+  const data = new Uint8Array(n * n);
+  for (let i = 0; i < n * n; i++) {
+    // un poco de contraste: lo dudoso hacia dentro o fuera, bordes suaves
+    let t = (y[i] - lo) / Math.max(1e-6, hi - lo);
+    t = Math.min(1, Math.max(0, (t - 0.2) / 0.6));
+    data[i] = Math.round(t * t * (3 - 2 * t) * 255);
+  }
+  return { w: n, h: n, data };
+}
+// Las mattes que pide el estado (Sujeto/Fondo -> person, Cielo -> sky)
+function neededMattes(st) {
+  const need = new Set();
+  for (const m of st.masks || []) for (const c of m.components || []) {
+    const k = c.shape && c.shape.kind;
+    if (k === "subject" || k === "background") need.add("person");
+    if (k === "sky") need.add("sky");
+  }
+  return need;
+}
+const jobs = {};          // kind -> calculo en curso (una sola vez aunque lo pidan dos mensajes)
+async function ensureMattes(kinds) {
+  for (const k of kinds) {
+    if (mattes[k]) continue;
+    if (!jobs[k]) {
+      const target = ed;
+      jobs[k] = computeMatte(k).then((mt) => {
+        if (ed === target) { mattes[k] = mt; ed.set_matte(k, mt.w, mt.h, mt.data); }
+      }).finally(() => { delete jobs[k]; });
+    }
+    await jobs[k];
+  }
+}
+
 // Lleva el estado del editor (lo que guarda la interfaz) al motor
 function apply(e, st) {
   e.reset();
@@ -29,8 +109,9 @@ function apply(e, st) {
   for (const ch of ["master", "red", "green", "blue"]) {
     e.set_curve(ch, new Float64Array((cv[ch] || []).flat()));
   }
-  // Capas de mascara (formato Mask de LightCraft)
+  // Capas de mascara (formato Mask de LightCraft) y correcciones (Spot)
   e.set_masks_json(JSON.stringify(st.masks || []));
+  e.set_spots_json(JSON.stringify(st.spots || []));
 }
 
 async function fetchBytes(url, accept) {
@@ -49,12 +130,23 @@ self.onmessage = async (ev) => {
     await ready;
     if (m.type === "open") {
       if (ed) { ed.free(); ed = null; }
+      mattes = {};
       // La vista previa del servidor ya viene orientada (y suele estar en cache)
       const { bytes } = await fetchBytes(m.url, "image/webp,image/*");
       ed = new Editor(bytes, 1, 2048);
       self.postMessage({ type: "opened", seq: m.seq, w: ed.width(), h: ed.height(),
                          controls: JSON.parse(controls_json()), profiles: JSON.parse(profiles_json()) });
+    } else if (m.type === "ai") {
+      // Calcular ya (el editor ensena "Detectando..." mientras tanto)
+      await ensureMattes(m.kinds);
+      self.postMessage({ type: "ai", seq: m.seq });
+    } else if (m.type === "spotSource") {
+      apply(ed, m.st);
+      const a = m.avoid;
+      self.postMessage({ type: "spotSource", seq: m.seq,
+                         offset: Array.from(ed.pick_spot_source(JSON.stringify(m.spot), a ? a[0] : 0, a ? a[1] : 0, !!a)) });
     } else if (m.type === "render") {
+      await ensureMattes(neededMattes(m.st));
       apply(ed, m.st);
       ed.set_overlay(m.overlay == null ? -1 : m.overlay);
       const px = ed.render(m.maxW, m.maxH, !!m.draft, m.applyCrop !== false, !!m.before);
@@ -77,8 +169,10 @@ self.onmessage = async (ev) => {
       const { bytes, headers } = await fetchBytes(m.url);
       const orient = parseInt(headers.get("X-Orientation") || "1", 10) || 1;
       // maxSide: en un movil sin memoria para la foto entera, revelarla mas pequena
+      await ensureMattes(neededMattes(m.st));
       const full = new Editor(bytes, orient, m.maxSide || 0);
       try {
+        for (const [k, mt] of Object.entries(mattes)) full.set_matte(k, mt.w, mt.h, mt.data);
         apply(full, m.st);
         const out = full.export(!!m.png, m.quality || 95);
         self.postMessage({ type: "exported", seq: m.seq, bytes: out, w: full.width(), h: full.height() },

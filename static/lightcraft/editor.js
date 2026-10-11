@@ -93,12 +93,13 @@
     detail: "M12 2l-5.5 9h11L12 2zm5.5 11c-2.49 0-4.5 2.01-4.5 4.5s2.01 4.5 4.5 4.5 4.5-2.01 4.5-4.5-2.01-4.5-4.5-4.5zM3 21.5h8v-8H3v8z",
     optics: "M12 15.2A3.2 3.2 0 1 0 12 8.8a3.2 3.2 0 0 0 0 6.4zM9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9z",
     geometry: "M21 3H3v18h18V3zm-2 16H5V5h14v14zM7 7h2v2H7zm4 0h2v2h-2zm4 0h2v2h-2zM7 11h2v2H7zm4 0h2v2h-2zm4 0h2v2h-2zM7 15h2v2H7zm4 0h2v2h-2zm4 0h2v2h-2z",
+    heal: "M17.73 12.02l3.98-3.98a.996.996 0 0 0 0-1.41l-4.34-4.34a.996.996 0 0 0-1.41 0l-3.98 3.98L8 2.29a1 1 0 0 0-1.41 0L2.25 6.63a.996.996 0 0 0 0 1.41l3.98 3.98L2.25 16a.996.996 0 0 0 0 1.41l4.34 4.34c.39.39 1.02.39 1.41 0l3.98-3.98 3.98 3.98c.2.2.45.29.71.29.26 0 .51-.1.71-.29l4.34-4.34a.996.996 0 0 0 0-1.41l-3.99-3.98zM12 9c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm-4.71 1.96L3.66 7.34l3.63-3.63 3.62 3.62-3.62 3.63zM10 13c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm2 2c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm2-4c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm2.66 9.34l-3.63-3.62 3.63-3.63 3.62 3.62-3.62 3.63z",
     mask: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18V4c4.41 0 8 3.59 8 8s-3.59 8-8 8z",
   });
   const escH = (t) => String(t == null ? "" : t).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   // Barra inferior en el movil (como Lightroom en el iPhone)
   const GROUPS = [["auto", "Auto"], ["profile", "Perfil"], ["light", "Luz"], ["color", "Color"], ["effects", "Efectos"],
-                  ["detail", "Detalle"], ["optics", "Óptica"], ["geometry", "Geometría"], ["masks", "Máscaras"], ["crop", "Recortar"]];
+                  ["detail", "Detalle"], ["optics", "Óptica"], ["geometry", "Geometría"], ["masks", "Máscaras"], ["heal", "Corregir"], ["crop", "Recortar"]];
   const svg = (d) => '<svg viewBox="0 0 24 24"><path d="' + d + '"/></svg>';
 
   // ── Estado ─────────────────────────────────────────────────────────────────
@@ -116,12 +117,12 @@
   function freshState() {
     return { values: {}, bw: false, profile: "lc.color",
              orient: 1, crop: [0, 0, 1, 1], angle: 0, aspect: 0,
-             curves: { master: [], red: [], green: [], blue: [] }, masks: [] };
+             curves: { master: [], red: [], green: [], blue: [] }, masks: [], spots: [] };
   }
   const snap = () => JSON.stringify(st);
   const isDefaultCrop = () => st.angle === 0 && st.crop.join() === "0,0,1,1";
   function hasPixelEdits() {
-    return Object.keys(st.values).length > 0 || st.bw || st.profile !== "lc.color" || !isDefaultCrop() || curvesTouched() || masksTouched();
+    return Object.keys(st.values).length > 0 || st.bw || st.profile !== "lc.color" || !isDefaultCrop() || curvesTouched() || masksTouched() || (st.spots || []).length > 0;
   }
   const hasChanges = () => hasPixelEdits() || st.orient !== 1;
 
@@ -209,6 +210,7 @@
     el.querySelector(".lc-badge").classList.toggle("on", before);
     if (tool === "crop") layoutCrop();
     if (tool === "mask") layoutMaskLayer();
+    if (tool === "heal") layoutHealLayer();
   }
 
   function drawHistogram(h) {
@@ -247,7 +249,10 @@
     st = JSON.parse(s);
     if (!st.curves) st.curves = { master: [], red: [], green: [], blue: [] };
     if (!st.masks) st.masks = [];
+    if (!st.spots) st.spots = [];
+    if (selSpot >= st.spots.length) selSpot = -1;
     renderMaskPanel();
+    renderHealPanel();
     syncControls();
     drawCurve();
     refreshChrome();
@@ -257,9 +262,11 @@
   function doRedo() { if (redo.length) { const s = redo.pop(); undo.push(s); restore(s); } }
 
   const isMaskId = (id) => /^(mask|cmp|brush)\./.test(id);
+  const isHealId = (id) => id.startsWith("heal.");
   function getVal(id) {
     if (id === "crop.angle") return st.angle;
     if (isMaskId(id)) return maskGet(id);
+    if (isHealId(id)) return heal[id.slice(5)];
     if (id in st.values) return st.values[id];
     const sp = specs[id];
     return sp ? sp.default : 0;
@@ -268,6 +275,7 @@
     const sp = specs[id];
     if (sp) v = Math.min(sp.max, Math.max(sp.min, v));
     if (isMaskId(id)) { maskSet(id, v); return; }
+    if (isHealId(id)) { heal[id.slice(5)] = v; return; }
     if (sp && Math.abs(v - sp.default) < 1e-9) delete st.values[id]; else st.values[id] = v;
   }
 
@@ -324,7 +332,7 @@
     n.querySelector(".lc-range").value = v;
     const box = n.querySelector(".lc-val");
     if (document.activeElement !== box) box.value = fmt(sp, v);
-    n.classList.toggle("mod", id === "crop.angle" ? st.angle !== 0 : isMaskId(id) ? Math.abs(v - sp.default) > 1e-9 : id in st.values);
+    n.classList.toggle("mod", id === "crop.angle" ? st.angle !== 0 : (isMaskId(id) || isHealId(id)) ? Math.abs(v - sp.default) > 1e-9 : id in st.values);
   }
   function syncControls() {
     if (!panelBuilt) return;
@@ -532,9 +540,9 @@
   // ajustes. Las coordenadas van normalizadas al marco de la foto ya girada y
   // SIN recortar (el mismo del recorte): aqui se pasan a la vista y vuelta.
   const SHAPES = [
-    ["subject", "Sujeto", "Detección automática del motivo principal"],
-    ["sky", "Cielo", "Detección automática del cielo"],
-    ["background", "Fondo", "Todo menos el sujeto"],
+    ["subject", "Sujeto", "IA: detecta el motivo principal"],
+    ["sky", "Cielo", "IA: detecta el cielo"],
+    ["background", "Fondo", "IA: todo menos el sujeto"],
     ["brush", "Pincel", "Pinta donde quieras el ajuste"],
     ["linear", "Degradado lineal", "Arrastra sobre la foto para trazarlo"],
     ["radial", "Degradado radial", "Arrastra sobre la foto para trazarlo"],
@@ -573,6 +581,7 @@
   function registerMaskSpecs() {
     for (const [k, label, min, max, def, step, dec, track] of LOCAL)
       specs["mask." + k] = { id: "mask." + k, label, min, max, default: def, step, decimals: dec, track };
+    specs["mask.refine"] = { id: "mask.refine", label: "Ajustar bordes", min: 0, max: 100, default: 0, step: 1, decimals: 0, track: { kind: "plain" } };
     for (const [id, label, min, max, def, step, dec] of CMP)
       specs[id] = { id, label, min, max, default: def, step, decimals: dec, track: { kind: "plain" } };
   }
@@ -598,7 +607,9 @@
       st.masks = st.masks || [];
       const id = st.masks.reduce((a, m) => Math.max(a, m.id), 0) + 1;
       st.masks.push({ id, name: SHAPE_NAME[kind], visible: true, invert: false,
-                      components: [{ op: "add", invert: false, shape: newShape(kind) }], adjust: {} });
+                      components: [{ op: "add", invert: false, shape: newShape(kind) }], adjust: {},
+                      // IA: los bordes se ajustan a los de la foto (la matte es de 320 px)
+                      refine: ["subject", "sky", "background"].includes(kind) ? 60 : 0 });
       selMask = st.masks.length - 1; selComp = 0;
     } else {
       curMask().components.push({ op: how === "sub" ? "subtract" : "add", invert: false, shape: newShape(kind) });
@@ -607,6 +618,20 @@
     overlayOn = true;
     commit();
     renderMaskPanel();
+    const ai = kind === "sky" ? "sky" : (kind === "subject" || kind === "background") ? "person" : null;
+    if (ai) runAi(ai); else requestRender(false);
+  }
+  // Sujeto / Cielo / Fondo: modelo de segmentacion en el navegador (worker.js)
+  const aiDone = {};
+  async function runAi(kind) {
+    if (!aiDone[kind]) busy(kind === "sky" ? "Detectando el cielo con IA..." : "Detectando el sujeto con IA...");
+    try {
+      await call({ type: "ai", kinds: [kind] });
+      aiDone[kind] = true;
+    } catch (e) {
+      showMsg("No se pudo usar la IA (" + e.message + "): se usa la detección aproximada.");
+    }
+    busy(null);
     requestRender(false);
   }
 
@@ -650,7 +675,8 @@
         '<button class="lc-btn sm' + (brush.erase ? " on" : "") + '" data-a="brusherase">Borrar</button></div>' +
         many(["brush.size", "brush.feather", "brush.flow"]) + '<div class="lc-hint">Pinta sobre la foto con el dedo o el ratón.</div>';
       else if (k === "linear" || k === "radial") params = "";
-      else params = '<div class="lc-hint">Selección automática por el motor (heurística, sin IA).</div>';
+      else params = '<div class="lc-hint">Selección automática con IA (en este dispositivo). Afina con <b>− Restar</b> y un pincel si hace falta.</div>' +
+        slider("mask.refine", "Ajustar bordes");
       if (k === "linear") params = '<div class="lc-hint">Arrastra los puntos, o traza otro degradado arrastrando sobre la foto.</div>';
       if (k === "radial") params = '<div class="lc-hint">Arrastra el centro o los bordes, o traza otro arrastrando sobre la foto.</div>' + params;
     }
@@ -676,6 +702,7 @@
   }
   function maskGet(id) {
     const m = curMask(), c = curComp();
+    if (id === "mask.refine") return m ? m.refine || 0 : 0;
     if (id.startsWith("mask.")) { const k = id.slice(5); return m && k in m.adjust ? m.adjust[k] : specs[id].default; }
     if (id.startsWith("brush.")) return brush[id.slice(6)];
     if (!c) return specs[id].default;
@@ -690,6 +717,7 @@
   }
   function maskSet(id, v) {
     const m = curMask(), c = curComp();
+    if (id === "mask.refine") { if (m) m.refine = v; return; }
     if (id.startsWith("mask.")) {
       if (!m) return;
       const k = id.slice(5);
@@ -867,6 +895,155 @@
     layer.addEventListener("pointerleave", () => { const cur = layer.querySelector(".lc-bcur"); if (cur) cur.setAttribute("r", 0); });
   }
 
+  // ── Corrector de imperfecciones (Spot de LightCraft) ───────────────────────
+  // Se pinta sobre la mancha; el motor la rellena a partir de otra zona de la
+  // foto ("origen"): Eliminar busca el origen solo y funde el tono con el
+  // entorno, Reparar hace lo mismo con el origen que elijas, Clonar copia tal
+  // cual. El origen se fija al crear la correccion (el que mejor encaja con el
+  // entorno de la mancha) para que vista previa y foto guardada coincidan.
+  const HEAL_MODES = [["remove", "Eliminar"], ["heal", "Reparar"], ["clone", "Clonar"]];
+  const heal = { mode: "remove", size: 20, feather: 50, opacity: 100, show: true };
+  let selSpot = -1, cancelHealGesture = () => {};
+  const spotRadius = () => heal.size / 1000;     // fraccion del lado mayor
+  function registerHealSpecs() {
+    specs["heal.size"] = { id: "heal.size", label: "Tamaño", min: 2, max: 150, default: 20, step: 1, decimals: 0, track: { kind: "plain" } };
+    specs["heal.feather"] = { id: "heal.feather", label: "Desvanecer", min: 0, max: 100, default: 50, step: 1, decimals: 0, track: { kind: "plain" } };
+    specs["heal.opacity"] = { id: "heal.opacity", label: "Opacidad", min: 1, max: 100, default: 100, step: 1, decimals: 0, track: { kind: "plain" } };
+  }
+  function healHtml() {
+    return '<div class="lc-head"><h3>Corregir</h3></div><div class="lc-hpanel" style="padding:0 12px 14px"></div>';
+  }
+  function renderHealPanel() {
+    if (!panelBuilt) return;
+    const box = el.querySelector(".lc-hpanel"), n = (st.spots || []).length, sp = st.spots[selSpot];
+    box.innerHTML =
+      '<div class="lc-tabs">' + HEAL_MODES.map(m => '<button class="lc-btn sm' + (heal.mode === m[0] ? " on" : "") + '" data-a="healmode" data-mode="' + m[0] + '">' + m[1] + '</button>').join("") + '</div>' +
+      many(["heal.size", "heal.feather", "heal.opacity"]) +
+      '<div class="lc-hint">Pinta sobre la mancha o el objeto que quieras quitar. ' +
+        (heal.mode === "remove" ? "El origen se elige solo, buscando la zona que mejor encaja con el entorno." :
+         heal.mode === "heal" ? "Reparar copia la textura del origen y mantiene el tono de alrededor." : "Clonar copia el origen tal cual.") + '</div>' +
+      '<div class="lc-sub">Correcciones: ' + n + '</div>' +
+      '<div class="lc-row">' +
+        (sp ? '<button class="lc-btn sm" data-a="healsrc">Buscar otro origen</button><button class="lc-btn sm" data-a="healdel">Borrar esta</button>' : "") +
+        (n ? '<button class="lc-btn sm" data-a="healclear">Borrar todas</button>' : "") + '</div>' +
+      '<label class="lc-chk"><input type="checkbox" data-a="healshow"' + (heal.show ? " checked" : "") + '> Ver contornos</label>' +
+      (sp ? '<div class="lc-hint">Arrastra el contorno discontinuo para elegir el origen a mano.</div>' : "");
+    box.querySelectorAll(".lc-sl").forEach(syncSlider);
+    layoutHealLayer();
+    refreshChrome();
+  }
+  function healAction(a, target) {
+    if (a === "healmode") { heal.mode = target.dataset.mode; }
+    else if (a === "healshow") { heal.show = target.checked; }
+    else if (a === "healdel" && st.spots[selSpot]) { st.spots.splice(selSpot, 1); selSpot = -1; commit(); requestRender(false); }
+    else if (a === "healclear") { if (!confirm("¿Borrar todas las correcciones?")) return true; st.spots = []; selSpot = -1; commit(); requestRender(false); }
+    else if (a === "healsrc" && st.spots[selSpot]) { pickSource(st.spots[selSpot], true); return true; }
+    else return false;
+    renderHealPanel();
+    return true;
+  }
+  async function pickSource(spot, other) {
+    try {
+      const o = spot.source_offset;
+      const r = await call({ type: "spotSource", st: st, spot: Object.assign({}, spot, { source_offset: null }),
+                             avoid: other && o ? [o.x, o.y] : null });
+      if (r.offset.length === 2) spot.source_offset = { x: r.offset[0], y: r.offset[1] };
+    } catch (e) { /* sin origen: el motor lo buscara al revelar */ }
+    commit(); renderHealPanel(); requestRender(false);
+  }
+  // Contornos de las correcciones (destino continuo, origen discontinuo)
+  function layoutHealLayer() {
+    if (!el) return;
+    const layer = el.querySelector(".lc-hlayer"), cv = el.querySelector(".lc-canvas");
+    layer.style.display = tool === "heal" ? "block" : "none";
+    if (tool !== "heal") return;
+    Object.assign(layer.style, { left: cv.offsetLeft + "px", top: cv.offsetTop + "px", width: cv.offsetWidth + "px", height: cv.offsetHeight + "px" });
+    const v = viewMap();
+    let g = "";
+    if (heal.show) (st.spots || []).forEach((sp, i) => {
+      const r = sp.size * v.L * v.scale, sel = i === selSpot;
+      const path = (dx, dy) => sp.points.map(p => v.to({ x: p.x + dx, y: p.y + dy }));
+      const shape = (pts, cls, extra) => pts.length === 1
+        ? '<circle class="' + cls + '" cx="' + pts[0].x + '" cy="' + pts[0].y + '" r="' + r + '"' + extra + '/>'
+        : '<polyline class="' + cls + '" points="' + pts.map(p => p.x + "," + p.y).join(" ") + '" style="stroke-width:' + (2 * r) + 'px"' + extra + '/>';
+      const tgt = path(0, 0);
+      g += shape(tgt, "lc-spot" + (sel ? " on" : ""), ' data-si="' + i + '"');
+      if (sel && sp.source_offset) {
+        const src = path(sp.source_offset.x, sp.source_offset.y);
+        g += '<line class="lc-ml lc-faint" x1="' + tgt[0].x + '" y1="' + tgt[0].y + '" x2="' + src[0].x + '" y2="' + src[0].y + '"/>';
+        g += shape(src, "lc-spot lc-src", ' data-ss="' + i + '"');
+      }
+    });
+    layer.querySelector("svg").innerHTML = g + '<circle class="lc-bcur" r="0" cx="-99" cy="-99"/>';
+  }
+  function wireHeal() {
+    const layer = el.querySelector(".lc-hlayer");
+    let paint = null, drag = null;
+    const local = (e) => { const r = layer.getBoundingClientRect(), k = layer.offsetWidth / (r.width || 1);
+                           return [(e.clientX - r.left) * k, (e.clientY - r.top) * k]; };
+    cancelHealGesture = () => {
+      if (drag && st.spots[drag.i]) st.spots[drag.i].source_offset = drag.o0;
+      paint = null; drag = null; layoutHealLayer();
+    };
+    layer.addEventListener("pointerdown", (e) => {
+      if (gesture.multi || (e.pointerType === "mouse" && e.button > 0)) return;
+      e.preventDefault();
+      layer.setPointerCapture(e.pointerId);
+      const v = viewMap(), [x, y] = local(e), p = v.from(x, y);
+      const ss = e.target.closest("[data-ss]"), si = e.target.closest("[data-si]");
+      if (ss) {                                // mover el origen
+        const i = +ss.dataset.ss;
+        drag = { i, p0: p, o0: Object.assign({}, st.spots[i].source_offset) };
+        return;
+      }
+      if (si && +si.dataset.si !== selSpot) { selSpot = +si.dataset.si; renderHealPanel(); return; }
+      selSpot = -1;
+      paint = { pts: [{ x: p.x, y: p.y }], disp: [[x, y]] };
+      layoutHealLayer();
+    });
+    layer.addEventListener("pointermove", (e) => {
+      const v = viewMap(), [x, y] = local(e), p = v.from(x, y);
+      const cur = layer.querySelector(".lc-bcur");
+      if (cur) { cur.setAttribute("cx", x); cur.setAttribute("cy", y); cur.setAttribute("r", spotRadius() * v.L * v.scale); }
+      if (gesture.multi) return;
+      if (drag) {
+        const sp = st.spots[drag.i];
+        sp.source_offset = { x: drag.o0.x + p.x - drag.p0.x, y: drag.o0.y + p.y - drag.p0.y };
+        layoutHealLayer();
+        return;
+      }
+      if (paint) {
+        const last = paint.pts[paint.pts.length - 1];
+        if (Math.hypot(p.x - last.x, p.y - last.y) > spotRadius() * 0.35) {
+          paint.pts.push({ x: +p.x.toFixed(5), y: +p.y.toFixed(5) });
+          // rastro mientras se pinta
+          const svg = layer.querySelector("svg");
+          const tr = svg.querySelector(".lc-trail") || svg.appendChild(document.createElementNS("http://www.w3.org/2000/svg", "polyline"));
+          tr.setAttribute("class", "lc-trail");
+          paint.disp.push([x, y]);
+          tr.setAttribute("points", paint.disp.map(q => q.join(",")).join(" "));
+          tr.style.strokeWidth = 2 * spotRadius() * v.L * v.scale + "px";
+        }
+      }
+    });
+    const end = () => {
+      if (drag) { drag = null; commit(); requestRender(false); renderHealPanel(); return; }
+      if (!paint) return;
+      const pts = paint.pts;
+      paint = null;
+      if (gesture.multi) { layoutHealLayer(); return; }
+      st.spots = st.spots || [];
+      const spot = { mode: heal.mode, points: pts, size: spotRadius(), feather: heal.feather, opacity: heal.opacity, source_offset: null };
+      st.spots.push(spot);
+      selSpot = st.spots.length - 1;
+      busy("Buscando con qué rellenar...");
+      pickSource(spot, false).finally(() => busy(null));
+    };
+    layer.addEventListener("pointerup", end);
+    layer.addEventListener("pointercancel", () => { paint = null; drag = null; layoutHealLayer(); });
+    layer.addEventListener("pointerleave", () => { const c = layer.querySelector(".lc-bcur"); if (c) c.setAttribute("r", 0); });
+  }
+
   // ── Construccion del panel ─────────────────────────────────────────────────
   function sec(key, title, body, open, ids) {
     return '<div class="lc-sec' + (open ? " open" : "") + '" data-sec="' + key + '"' + (ids ? ' data-ids="' + ids + '"' : "") + '>' +
@@ -897,6 +1074,7 @@
               ["nw", "n", "ne", "e", "se", "s", "sw", "w"].map(h => '<div class="lc-ch" data-h="' + h + '"></div>').join("") +
             '</div></div>' +
             '<div class="lc-mlayer"><svg></svg></div>' +
+            '<div class="lc-hlayer"><svg></svg></div>' +
           '</div>' +
           '<div class="lc-badge">Antes</div>' +
           '<div class="lc-busy"><div class="lc-spin"></div><div class="lc-busy-t">Cargando...</div></div>' +
@@ -905,6 +1083,7 @@
           '<button class="lc-ib on" data-tool="edit" title="Editar">' + svg(ICON.edit) + '</button>' +
           '<button class="lc-ib" data-tool="crop" title="Recortar y enderezar (R)">' + svg(ICON.crop) + '</button>' +
           '<button class="lc-ib" data-tool="mask" title="Máscaras (M)">' + svg(ICON.mask) + '</button>' +
+          '<button class="lc-ib" data-tool="heal" title="Corregir imperfecciones (H)">' + svg(ICON.heal) + '</button>' +
         '</div>' +
         '<div class="lc-panel"></div>' +
       '</div>' +
@@ -960,6 +1139,7 @@
               '<b>\\</b> antes/después · <b>R</b> recortar · <b>Ctrl+Z</b> deshacer. Clic o doble toque en la foto: zoom; pellizco o Ctrl+rueda para acercar, arrastrar o rueda para moverse.</div>' +
           '</div>' +
           '<div class="lc-only-mask">' + maskHtml() + '</div>' +
+          '<div class="lc-only-heal">' + healHtml() + '</div>' +
           '<div class="lc-only-crop">' +
             '<div class="lc-head"><h3>Recortar y enderezar</h3></div>' +
             '<div style="padding:0 12px 12px">' +
@@ -1000,7 +1180,10 @@
       syncSlider(n);
     });
     panel.addEventListener("change", (e) => {
-      if (e.target.type === "checkbox" && e.target.dataset.a) { maskAction(e.target.dataset.a, e.target); return; }
+      if (e.target.type === "checkbox" && e.target.dataset.a) {
+        if (e.target.dataset.a.startsWith("heal")) healAction(e.target.dataset.a, e.target); else maskAction(e.target.dataset.a, e.target);
+        return;
+      }
       if (e.target.classList.contains("lc-sel-profile")) {
         st.profile = e.target.value;
         if (st.profile === "lc.color") delete st.values["profile.amount"];
@@ -1069,6 +1252,7 @@
       if (!b || b.disabled) return;
       const a = b.dataset.a;
       if (/^(mask|menu|comp|cmp|brush)/.test(a) && b.tagName !== "INPUT") { maskAction(a, b); return; }
+      if (a.startsWith("heal") && b.tagName !== "INPUT") { healAction(a, b); return; }
       if (a === "close") close(false);
       else if (a === "undo") doUndo();
       else if (a === "redo") doRedo();
@@ -1092,11 +1276,13 @@
     });
     wireCrop();
     wireMasks();
+    wireHeal();
     wireTouch();
     wireGestures();
   }
 
   function onValue(id, v, dragging) {
+    if (isHealId(id)) { setVal(id, v); return; }
     if (id === "crop.angle") {
       st.angle = Math.max(-45, Math.min(45, v));
       fitCrop();
@@ -1118,6 +1304,7 @@
     else if (e.key === "\\") { e.preventDefault(); toggleBefore(); }
     else if (e.key === "r" || e.key === "R") { e.preventDefault(); setTool(tool === "crop" ? "edit" : "crop"); }
     else if (e.key === "m" || e.key === "M") { e.preventDefault(); setTool(tool === "mask" ? "edit" : "mask"); }
+    else if (e.key === "h" || e.key === "H") { e.preventDefault(); setTool(tool === "heal" ? "edit" : "heal"); }
     else return;
     e.stopPropagation();
   }
@@ -1132,13 +1319,17 @@
     tool = t;
     el.classList.toggle("tool-crop", t === "crop");
     el.classList.toggle("tool-mask", t === "mask");
+    el.classList.toggle("tool-heal", t === "heal");
+    if (t === "heal") renderHealPanel();
     if (t === "mask") { maskMenuFor = (st.masks || []).length ? null : "new"; renderMaskPanel(); }
     el.querySelectorAll(".lc-tools [data-tool]").forEach(b => b.classList.toggle("on", b.dataset.tool === t));
     if (t === "crop") resetView(false);   // el recorte trabaja con la foto entera a la vista
     el.querySelector(".lc-stage").classList.toggle("crop", t === "crop");
-    el.querySelector(".lc-stage").classList.toggle("masking", t === "mask");
+    el.querySelector(".lc-stage").classList.toggle("masking", t === "mask" || t === "heal");
     layoutMaskLayer();
-    el.dataset.group = t === "crop" ? "crop" : t === "mask" ? "masks" : (group === "crop" || group === "masks" ? "light" : group);
+    layoutHealLayer();
+    el.dataset.group = t === "crop" ? "crop" : t === "mask" ? "masks" : t === "heal" ? "heal" :
+      (group === "crop" || group === "masks" || group === "heal" ? "light" : group);
     if (el.dataset.group !== group) group = el.dataset.group;
     el.querySelectorAll(".lc-tab").forEach(b => b.classList.toggle("on", b.dataset.group === group));
     requestRender(false);
@@ -1148,7 +1339,7 @@
   function setGroup(g) {
     if (g === "auto") { runAuto(); g = "light"; }
     group = g;
-    setTool(g === "crop" ? "crop" : g === "masks" ? "mask" : "edit");
+    setTool(g === "crop" ? "crop" : g === "masks" ? "mask" : g === "heal" ? "heal" : "edit");
     const panel = el.querySelector(".lc-panel");
     if (panel) panel.scrollTop = 0;
     setTimeout(drawCurve, 0);
@@ -1337,8 +1528,10 @@
     resetView(false);
     mixBand = 0; gradeZone = "shadows"; curveCh = "master"; lastHist = null;
     selMask = -1; selComp = 0; overlayOn = true; maskMenuFor = null; group = "light";
+    for (const k of Object.keys(aiDone)) delete aiDone[k];
+    selSpot = -1;
     el.querySelector(".lc-name").textContent = f.name;
-    el.classList.remove("tool-crop", "tool-mask");
+    el.classList.remove("tool-crop", "tool-mask", "tool-heal");
     el.classList.toggle("m", isMobile());
     el.dataset.group = "light";
     el.querySelectorAll(".lc-tab").forEach(b => b.classList.toggle("on", b.dataset.group === "light"));
@@ -1360,6 +1553,7 @@
       specs["wb.tempRel"] = { id: "wb.tempRel", min: -100, max: 100, default: 0, step: 1, decimals: 0, track: { kind: "temp" } };
       specs["wb.tintRel"] = { id: "wb.tintRel", min: -100, max: 100, default: 0, step: 1, decimals: 0, track: { kind: "tint" } };
       registerMaskSpecs();
+      registerHealSpecs();
       if (!panelBuilt) buildPanel();
       el.querySelector(".lc-dim").textContent = W + " × " + H + " (vista de trabajo)";
       syncControls();
@@ -1627,6 +1821,7 @@
       g = { kind: "pinch", d0: Math.max(10, dist()), c0: centroid(), s0: view.s, tx0: view.tx, ty0: view.ty };
       gesture.multi = true;
       cancelMaskGesture();
+      cancelHealGesture();
     };
     const beginPan = (p) => { g = { kind: "pan", p0: p, tx0: view.tx, ty0: view.ty, hist: [[performance.now(), p[0], p[1]]] }; };
 
