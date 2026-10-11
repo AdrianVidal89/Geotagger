@@ -269,6 +269,32 @@ entero que nunca se habia abierto era ir a tirones. Ahora:
 - **Lo que se ve, primero**: la cola de carga del navegador solo guarda las
   tarjetas que estan en pantalla; las que se pasan bajando rapido salen de ella,
   asi que al pararse se cargan ya las de ese punto.
+
+Con las miniaturas ya hechas, bajar por una carpeta de 4.000 fotos seguia
+yendo lento. No era el servidor (2 ms por miniatura) sino el navegador:
+
+| Al parar el scroll en una carpeta de 4.000 fotos | Antes | Ahora |
+|---|---|---|
+| Hasta ver las miniaturas de la pantalla | 300-600 ms | 2-6 ms |
+| Trabajo del navegador durante el scroll | 4,8 s | 1,2 s |
+| Elementos en la pagina | 82.000 | ~12.000 |
+
+- **Miniaturas en lote**: una peticion por miniatura topaba con las 6
+  conexiones del navegador y con el coste de cada peticion en la CPU del NAS.
+  Ahora las de pantalla se piden juntas a `/api/thumbs/batch` (48 en 11 ms en
+  vez de ~155 ms). El lote solo lee lo que ya esta en la cache; las que falten
+  se piden sueltas y se generan como siempre.
+- **Rejilla virtual**: solo existen las tarjetas cercanas a la pantalla (unas
+  pocas filas por encima y por debajo); el resto lo ocupan dos separadores
+  con su altura. Que filas se ven sale de una cuenta, porque la rejilla es
+  regular. Las miniaturas ya vistas se guardan en memoria y, al volver a una
+  zona, salen al instante sin pedir nada.
+- Fuera lo que el navegador repintaba o comprobaba en cada cuadro: el
+  "shimmer" animado de los huecos (seguia animandose debajo de las fotos), el
+  `will-change` de cada imagen (una capa por foto), el fundido al aparecer
+  (cada uno rehacia las capas de toda la pagina), el `content-visibility`
+  por tarjeta (Chrome lo implementa con un observador por elemento) y dos
+  iconos SVG por tarjeta que solo hacen falta si la miniatura falla.
 - Al recortar la cache por tamano se tiran antes las vistas previas (grandes)
   que las miniaturas (~8 KB), para que lo preparado no se pierda.
 
