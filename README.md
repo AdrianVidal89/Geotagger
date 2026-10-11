@@ -510,7 +510,17 @@ Luz, Color, Efectos, Detalle, Optica, Geometria, Mascaras, Recortar) y un
 panel corto solo con el grupo elegido. Los deslizadores se arrastran desde
 cualquier punto de la fila (no hay que atinar con el tirador); arrastrar en
 vertical desplaza el panel; doble toque devuelve el valor por defecto.
-Mantener pulsada la foto enseña el antes; doble toque, zoom. Si el telefono
+Mantener pulsada la foto enseña el antes.
+
+**Zoom con los dedos** (como Fotos en iPhone/iPad): pellizcar amplia o
+reduce alrededor de los dedos (hasta 8x); uno o dos dedos desplazan la foto,
+con inercia al soltar y bordes elasticos que rebotan; doble toque acerca en
+ese punto y otro doble toque vuelve a encajar. Al terminar el gesto se revela
+a la resolucion que se ve, para que el detalle no salga pixelado. En
+Mascaras, dos dedos hacen zoom y desplazan sin pintar (un trazo empezado se
+anula), y un dedo sigue pintando o moviendo tiradores. En el ordenador: clic
+para acercar/encajar, arrastrar para moverse, pellizco del trackpad o
+Ctrl+rueda para el zoom y rueda para desplazarse. Si el telefono
 no tiene memoria para revelar la foto entera al guardar, se ofrece guardarla
 a 4096 px (o 2560).
 
