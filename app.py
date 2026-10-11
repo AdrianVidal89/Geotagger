@@ -2526,6 +2526,56 @@ def _index_background():
 
 threading.Thread(target=_index_background, daemon=True).start()
 
+# Reparacion UNICA de las miniaturas hechas con un "gain map" HDR (gris) en vez
+# de la vista previa del MPF (ver _mpf_preview). Se recorren los JPEG del indice
+# con miniatura en cache; si llevan un MPF cuya segunda imagen NO es una
+# miniatura, se borran sus miniaturas y su version diminuta para que se rehagan
+# bien. Solo lee cabeceras, va de fondo y se aparta cuando el usuario pide algo.
+MPF_FIX_VERSION = "1"
+
+def _mpf_fix_background():
+    time.sleep(20)
+    try:
+        conn = _index_db()
+        row = conn.execute("SELECT value FROM meta WHERE key = 'mpf_thumbs'").fetchone()
+        if row and row[0] == MPF_FIX_VERSION:
+            return
+        paths = [p for (p,) in conn.execute(
+            "SELECT path FROM photos WHERE lower(path) LIKE '%.jpg' OR lower(path) LIKE '%.jpeg'").fetchall()]
+    except Exception:
+        return
+    malas = 0
+    for p in paths:
+        while not _usuario_quieto(PREFETCH_MARGEN):
+            time.sleep(PREFETCH_PAUSA)
+        try:
+            mtime = os.path.getmtime(p)
+            hechas = [f for f in (_thumb_cache_name(p, mtime, "WEBP"), _thumb_cache_name(p, mtime, "JPEG"))
+                      if os.path.exists(f)]
+            if not hechas:
+                continue
+            with Image.open(p) as im:
+                mala = getattr(im, "n_frames", 1) >= 2 and not _mpf_has_preview(im)
+            if not mala:
+                continue
+            for f in hechas:
+                os.unlink(f)
+            with _index_write:
+                conn.execute("UPDATE photos SET blur = NULL WHERE path = ?", (p,))
+            malas += 1
+        except Exception:
+            continue
+    try:
+        with _index_write:
+            conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('mpf_thumbs', ?)", (MPF_FIX_VERSION,))
+            conn.commit()
+    except sqlite3.Error:
+        pass
+    if malas:
+        print("Miniaturas rehechas (gain map HDR en vez de vista previa): %d" % malas)
+
+threading.Thread(target=_mpf_fix_background, daemon=True).start()
+
 def _reverse_geocode(lat, lon):
     try:
         r = requests.get(
@@ -2894,21 +2944,39 @@ def thumb():
     except Exception as e:
         return str(e), 404
 
+MPF_PREVIEW_TYPES = ("Large Thumbnail (VGA Equivalent)", "Large Thumbnail (Full HD Equivalent)")
+
+def _mpf_type(im, n):
+    """Tipo de la imagen n del MPF segun su indice ('' si no se sabe)."""
+    try:
+        return im.mpinfo[0xB002][n]["Attribute"]["MPType"]
+    except Exception:
+        return ""
+
+def _mpf_has_preview(im):
+    return getattr(im, "n_frames", 1) >= 2 and _mpf_type(im, 1) in MPF_PREVIEW_TYPES
+
 def _mpf_preview(abs_path, box):
     """La vista previa grande que las camaras (Canon, Nikon, Sony, Fuji...)
     meten dentro del JPEG (MPF, ~1600 px y unos cientos de KB). Para una
     miniatura da lo mismo que la foto entera y cuesta una fraccion: el JPEG
     principal obliga a recorrer sus 20-40 MB. None si no la lleva, es pequena
-    o no tiene la forma de la foto (entonces se usa la principal)."""
+    o no tiene la forma de la foto (entonces se usa la principal).
+    OJO: el MPF no solo guarda vistas previas. Los moviles (iPhone, Pixel,
+    Samsung) y algunas camaras meten ahi el "gain map" del HDR: una imagen
+    GRIS, lavada y con la misma forma que la foto. Usarla como miniatura las
+    dejaba en blanco y negro. Solo vale si el propio MPF dice que es una
+    miniatura grande, y nunca si es de un solo canal."""
     try:
         with Image.open(str(abs_path)) as im:
-            if getattr(im, "n_frames", 1) < 2:
+            if not _mpf_has_preview(im):
                 return None
             w, h = im.size
             orient = im.getexif().get(0x0112, 1)
             im.seek(1)
             pw, ph = im.size
-            if min(pw, ph) < min(box) or abs(pw / ph - w / h) > 0.02:
+            if im.mode not in ("RGB", "YCbCr", "CMYK") or min(pw, ph) < min(box) \
+                    or abs(pw / ph - w / h) > 0.02:
                 return None
             _draft(im, box)
             im.load()

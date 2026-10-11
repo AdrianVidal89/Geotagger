@@ -3970,7 +3970,11 @@ let vwZoomed = false;
 let viewerDirty = false;   // la galeria quedo desfasada (fotos movidas desde el visor)
 
 function previewUrl(f) { return bust("/api/preview?path=" + encodeURIComponent(f.path), f.path, f.mtime); }
-function thumbUrl(f)   { return bust("/api/thumb?path=" + encodeURIComponent(f.path), f.path, f.mtime); }
+// t=: version del formato de miniatura. Sube cuando cambia COMO se hacen, para
+// que el navegador no siga ensenando las viejas (las guarda 30 dias). t=2: las
+// que salieron grises por usar el "gain map" HDR de los moviles.
+const THUMB_VER = 2;
+function thumbUrl(f)   { return bust("/api/thumb?t=" + THUMB_VER + "&path=" + encodeURIComponent(f.path), f.path, f.mtime); }
 
 function openViewer(i) {
   if (i < 0 || i >= currentFiles.length) return;
