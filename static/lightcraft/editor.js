@@ -1545,7 +1545,7 @@
     document.addEventListener("keydown", keys, true);
     busy("Abriendo con LightCraft...");
     try {
-      const r = await call({ type: "open", url: bust("/api/preview?path=" + encodeURIComponent(f.path), f.path),
+      const r = await call({ type: "open", url: bust("/api/preview?path=" + encodeURIComponent(f.path), f.path, f.mtime),
                              source: srcUrl(f) });
       if (file !== f) return;
       W = r.w; H = r.h;
@@ -1646,7 +1646,7 @@
     try { worker.terminate(); } catch (e) { /* ya estaba parado */ }
     worker = null;
     startWorker();
-    await call({ type: "open", url: bust("/api/preview?path=" + encodeURIComponent(f.path), f.path), source: srcUrl(f) });
+    await call({ type: "open", url: bust("/api/preview?path=" + encodeURIComponent(f.path), f.path, f.mtime), source: srcUrl(f) });
   }
   // El original para editar: lo que el motor decodifica (JPEG, PNG, WebP, TIFF y
   // la vista previa de los RAW). HEIC no: va por la vista previa del servidor.

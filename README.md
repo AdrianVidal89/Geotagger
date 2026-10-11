@@ -248,6 +248,38 @@ contenedores:
 | `/api/browse` (responde y sigue) | 0,002 s | 0,002 s |
 | Una miniatura suelta con el fondo trabajando | — | 0,36 s |
 
+### Carpetas grandes abiertas por primera vez
+
+El pre-generado de arriba es timido a proposito (se aparta mientras el usuario
+hace algo y para en 600 fotos), asi que bajar rapido por una carpeta de un ano
+entero que nunca se habia abierto era ir a tirones. Ahora:
+
+- **Ventana "Preparando miniaturas"**: si al abrir una carpeta faltan 60 o mas
+  miniaturas (el listado lo dice, mirando solo si existe el fichero de cache:
+  ~20 ms con 3.000 fotos), sale una barra de progreso con lo que falta y el
+  tiempo estimado. Mientras esta a la vista el servidor usa todos sus turnos de
+  decodificacion sin apartarse, porque el usuario esta esperando. "Seguir en
+  segundo plano" la reduce a una pastilla con el porcentaje (pulsandola vuelve)
+  y el trabajo se aparta cuando el usuario pide algo, pero sigue hasta el final
+  aunque se cambie de carpeta. Solo se hace una vez: despues solo se preparan
+  las fotos nuevas o editadas.
+- **La vista previa que traen las camaras**: los JPEG de Canon, Nikon, Sony,
+  Fuji... llevan dentro una copia de ~1.600 px (MPF). Para la miniatura se usa
+  esa: 18 ms en vez de 197 ms en un JPEG de 24 Mpx, con el mismo resultado.
+- **Lo que se ve, primero**: la cola de carga del navegador solo guarda las
+  tarjetas que estan en pantalla; las que se pasan bajando rapido salen de ella,
+  asi que al pararse se cargan ya las de ese punto.
+- Al recortar la cache por tamano se tiran antes las vistas previas (grandes)
+  que las miniaturas (~8 KB), para que lo preparado no se pierda.
+
+### Miniaturas despues de editar
+
+Las miniaturas y vistas previas se sirven como inmutables (30 dias en la cache
+del navegador). La URL llevaba version solo durante la sesion en que se
+editaba: al recargar la pagina, o en otro dispositivo, volvia la miniatura de
+antes de editar. Ahora la URL lleva la fecha del archivo, que cambia al
+guardar, asi que la foto editada se ve como es en todas partes.
+
 ### Tope de la cache
 
 Las miniaturas son pequenas (unos 8 KB) pero las vistas previas no (de 50 KB a
