@@ -703,6 +703,12 @@ header .spacer{flex:1}
 /* date modal specifics */
 /* Se puede abrir desde el visor de fotos, que va en z-index 400 */
 #modal-date{z-index:500}
+/* mover/copiar (y su "Nueva carpeta") tambien se abren desde el visor */
+#modal-dest{z-index:500}
+#modal-newfolder{z-index:510}
+.dest-recent{display:inline-flex;align-items:center;gap:6px;margin:0 0 8px;padding:5px 10px;border-radius:14px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:.8rem;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dest-recent svg{width:14px;height:14px;fill:currentColor;flex:none}
+.dest-recent:hover{border-color:var(--accent)}
 .date-target{
   font-size:.82rem;color:var(--text2);background:var(--surface);
   border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;
@@ -756,6 +762,16 @@ header .spacer{flex:1}
 .vw-btn:hover{background:rgba(255,255,255,.25)}
 .vw-btn svg{width:20px;height:20px;fill:currentColor}
 .vw-btn.sel-on{background:var(--primary)}
+/* Movil: las estrellas bajan a una segunda fila; asi caben el nombre y todos
+   los botones (cerrar, editar, mover, fecha, seleccionar, descargar) */
+@media(max-width:560px){
+  .vw-top{flex-wrap:wrap;gap:6px;row-gap:2px;padding:8px 10px}
+  .vw-btn{width:36px;height:36px}
+  .vw-meta{white-space:nowrap;overflow:hidden}
+  .vw-meta>span{flex:none}
+  .vw-ext{display:none}
+  .vw-stars{order:10;flex-basis:100%;margin:0;padding-left:42px;box-sizing:border-box}
+}
 .vw-stage{
   position:absolute;inset:0;
   display:flex;align-items:center;justify-content:center;overflow:hidden;
@@ -1671,6 +1687,9 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
     <button class="vw-btn" id="vw-edit-btn" title="Editar foto (girar, recortar, luz y color)">
       <svg viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
     </button>
+    <button class="vw-btn" id="vw-move-btn" title="Mover o copiar esta foto (M)">
+      <svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 12v-3h-4v-4h4V8l5 5-5 5z"/></svg>
+    </button>
     <button class="vw-btn" id="vw-date-btn" title="Modificar fecha de esta foto">
       <svg viewBox="0 0 24 24"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>
     </button>
@@ -2039,6 +2058,7 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
   <div class="modal">
     <div class="modal-title">Mover o copiar</div>
     <p class="root-help" id="dest-count"></p>
+    <button class="dest-recent" id="dest-recent" style="display:none"></button>
     <div class="root-crumb" id="dest-crumb"></div>
     <div class="root-list" id="dest-list"></div>
     <div class="root-sel" id="dest-sel"></div>
@@ -3769,6 +3789,7 @@ const viewerEl = document.getElementById("viewer");
 const vwImg = document.getElementById("vw-img");
 let viewerIndex = -1;
 let vwZoomed = false;
+let viewerDirty = false;   // la galeria quedo desfasada (fotos movidas desde el visor)
 
 function previewUrl(f) { return bust("/api/preview?path=" + encodeURIComponent(f.path), f.path); }
 function thumbUrl(f)   { return bust("/api/thumb?path=" + encodeURIComponent(f.path), f.path); }
@@ -3791,6 +3812,8 @@ function hideViewer() {
   if (seen && viewerEl.classList.contains("on")) seen.scrollIntoView({ block: "nearest" });
   viewerEl.classList.remove("on");
   viewerIndex = -1;
+  // Se movieron fotos desde el visor: ahora si se repinta la galeria
+  if (viewerDirty) { viewerDirty = false; refreshCurrentView(); }
   vwImg.removeAttribute("src");
   vwImg.classList.remove("ready");
   document.removeEventListener("keydown", viewerKeys);
@@ -3809,6 +3832,7 @@ function viewerKeys(e) {
   if (e.key === "Escape") closeViewer();
   else if (e.key === "ArrowLeft") viewerNav(-1);
   else if (e.key === "ArrowRight") viewerNav(1);
+  else if ((e.key === "m" || e.key === "M") && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); moveViewerPhoto(); }
   // Clasificar sin soltar el teclado: 1-5 pone estrellas, 0 las quita
   else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key >= "0" && e.key <= "5") {
     e.preventDefault();
@@ -3885,6 +3909,13 @@ async function showViewerDate(f) {
   const shot = d.date || d.create_date || d.file_date;
   el.textContent = shot ? humanDate(shot) : "Sin fecha";
 }
+
+// Mover o copiar la foto abierta sin volver a la galeria
+function moveViewerPhoto() {
+  const f = currentFiles[viewerIndex];
+  if (f && !document.getElementById("modal-dest").classList.contains("on")) openDestPicker([f.path]);
+}
+document.getElementById("vw-move-btn").addEventListener("click", moveViewerPhoto);
 
 document.getElementById("vw-date-btn").addEventListener("click", () => {
   const f = currentFiles[viewerIndex];
@@ -4594,10 +4625,11 @@ async function browseDest(path) {
     if (d.error) throw new Error(d.error);
   } catch(e) {
     list.innerHTML = '<div class="root-empty">No se pudo abrir la carpeta</div>';
-    return;
+    return false;
   }
   destPath = d.current || "";
   renderDestCrumb(destPath);
+  updateDestRecent();
 
   let html = "";
   if (destPath) {
@@ -4617,19 +4649,54 @@ async function browseDest(path) {
   });
 
   document.getElementById("dest-sel").innerHTML =
-    "Destino: <strong>" + (destPath || workRootName) + "</strong>" +
+    "Destino: <strong>" + esc(destPath || workRootName) + "</strong>" +
     (d.files.length ? " (" + d.files.length + " foto(s) ya aquí)" : "");
+  return true;
 }
 
-function openDestPicker() {
-  destFiles = Array.from(selectedFiles);
-  if (!destFiles.length) return;
-  document.getElementById("dest-count").textContent =
-    "Elige a qué carpeta llevar " + destFiles.length + " foto(s). Mover cambia el archivo de sitio; copiar deja el original donde está.";
-  document.getElementById("modal-dest").classList.add("on");
-  // Se abre en la carpeta actual, que suele ser el punto de partida
-  browseDest(currentPath);
+// La ultima carpeta de destino se recuerda (por carpeta de trabajo y en este
+// navegador): al ordenar fotos lo normal es llevar varias seguidas al mismo
+// sitio, asi que el selector se abre directamente alli.
+const LAST_DEST_KEY = () => "gt-last-dest:" + (workRootPath || "");
+function lastDest() {
+  try { const v = localStorage.getItem(LAST_DEST_KEY()); return v === null ? null : v; } catch (e) { return null; }
 }
+function rememberDest(p) {
+  try { localStorage.setItem(LAST_DEST_KEY(), p || ""); } catch (e) {}
+}
+
+let destFromViewer = false;  // se abrio desde el visor (una sola foto)
+function openDestPicker(files) {
+  destFromViewer = Array.isArray(files);
+  destFiles = destFromViewer ? files : Array.from(selectedFiles);
+  if (!destFiles.length) return;
+  document.getElementById("dest-count").textContent = destFiles.length === 1 && destFromViewer
+    ? "Elige a qué carpeta llevar esta foto. Mover cambia el archivo de sitio; copiar deja el original donde está."
+    : "Elige a qué carpeta llevar " + destFiles.length + " foto(s). Mover cambia el archivo de sitio; copiar deja el original donde está.";
+  document.getElementById("dest-box").style.display = "none";
+  document.getElementById("modal-dest").classList.add("on");
+  // Se abre en la ultima carpeta de destino; si ya no existe, en la actual
+  const last = lastDest();
+  if (last !== null && last !== currentPath) {
+    browseDest(last).then(ok => { if (!ok) browseDest(currentPath); });
+  } else {
+    browseDest(currentPath);
+  }
+}
+
+// Acceso directo a la ultima carpeta usada cuando se esta mirando otra
+function updateDestRecent() {
+  const btn = document.getElementById("dest-recent");
+  const last = lastDest();
+  if (last === null || last === destPath) { btn.style.display = "none"; return; }
+  btn.style.display = "";
+  btn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>' +
+    '<span>Última: ' + esc(last || workRootName) + '</span>';
+}
+document.getElementById("dest-recent").addEventListener("click", () => {
+  const last = lastDest();
+  if (last !== null) browseDest(last);
+});
 
 async function doTransfer(mode) {
   if (!destFiles.length) return;
@@ -4661,7 +4728,27 @@ async function doTransfer(mode) {
   } else {
     showBox("dest-box", "res-ok", ok + " foto(s) " + (mode === "copy" ? "copiadas" : "movidas"));
   }
-  if (ok) {
+  if (ok) rememberDest(destPath);
+  if (ok && destFromViewer && viewerEl.classList.contains("on")) {
+    // Desde el visor: se sigue en el visor. Si se movio, la foto sale de la
+    // lista y se pasa a la siguiente; la galeria se repinta al cerrar el visor.
+    const moved = new Set(mode === "move" ? data.ok.map(o => o.file) : []);
+    setTimeout(() => {
+      document.getElementById("modal-dest").classList.remove("on");
+      viewerDirty = true;
+      if (!moved.size || !viewerEl.classList.contains("on")) return;
+      const gone = (f) => moved.has(f.path);
+      for (const p of moved) selectedFiles.delete(p);
+      allFiles = allFiles.filter(f => !gone(f));
+      const before = currentFiles.slice(0, viewerIndex).filter(gone).length;
+      currentFiles = currentFiles.filter(f => !gone(f));
+      viewerIndex -= before;
+      if (!currentFiles.length) { closeViewer(); return; }
+      if (viewerIndex >= currentFiles.length) viewerIndex = currentFiles.length - 1;
+      updateSelUI();
+      showViewerPhoto();
+    }, 600);
+  } else if (ok) {
     setTimeout(() => {
       document.getElementById("modal-dest").classList.remove("on");
       selectedFiles.clear();
@@ -4670,8 +4757,8 @@ async function doTransfer(mode) {
   }
 }
 
-document.getElementById("btn-move").addEventListener("click", openDestPicker);
-document.getElementById("sbar-move").addEventListener("click", openDestPicker);
+document.getElementById("btn-move").addEventListener("click", () => openDestPicker());
+document.getElementById("sbar-move").addEventListener("click", () => openDestPicker());
 document.getElementById("btn-dest-copy").addEventListener("click", () => doTransfer("copy"));
 document.getElementById("btn-dest-move").addEventListener("click", () => doTransfer("move"));
 document.getElementById("btn-dest-newfolder").addEventListener("click", () => {

@@ -3651,7 +3651,7 @@ def transfer_files():
                 _evict_thumb_cache(src)
                 _index_move(src, target)
             _trigger_reindex(target)
-            ok.append({"name": src.name, "new": target.name})
+            ok.append({"file": rel, "name": src.name, "new": target.name})
         except Exception as e:
             errors.append({"file": src.name, "error": str(e)})
     root = _work_root()

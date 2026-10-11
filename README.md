@@ -42,6 +42,11 @@ carpeta.
   duplica el archivo byte a byte conservando sus fechas. En ninguno de los dos
   casos se abre ni se recodifica la imagen. Si en el destino ya hay un archivo
   con el mismo nombre, se anade un sufijo en vez de sobrescribirlo.
+  Tambien desde el **visor**, con la foto abierta (boton de carpeta con flecha
+  o tecla **M**): al moverla se pasa a la siguiente sin salir del visor, y la
+  galeria se pone al dia al cerrarlo. El selector **recuerda la ultima carpeta
+  de destino** (por carpeta de trabajo, en cada navegador) y se abre en ella;
+  si se navega a otra, un boton "Ultima: ..." devuelve alli de un toque.
 
 - **La galeria no pierde el sitio**: despues de mover, copiar, editar o subir
   fotos la carpeta se vuelve a cargar, pero el scroll vuelve a la misma foto (o
