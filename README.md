@@ -488,6 +488,32 @@ o doble clic lo quita; doble clic en el fondo deja el canal recto. Se dibuja
 con la misma interpolacion (Hermite monotona) que aplica el motor. Debajo
 sigue la curva parametrica (iluminaciones, claros, oscuros, sombras).
 
+**Blancos y Negros**: los del motor estan pensados para RAW y con un JPEG
+apenas movian los extremos (Negros +-100 = dos niveles). Aqui actuan como en
+Lightroom con JPEG: Blancos lleva las luces altas hasta quemar o apagar el
+blanco y Negros hunde o levanta las sombras profundas. Se aplican antes de la
+curva maestra.
+
+**Mascaras** (herramienta Mascaras, tecla `M`): capas con ajustes locales
+(cantidad, temperatura, matiz, exposicion, contraste, iluminaciones, sombras,
+blancos, negros, textura, claridad, neblina, tono, saturacion, enfoque,
+ruido). Cada capa suma o resta componentes: pincel (pintar y borrar, tamaño,
+desvanecer, flujo), degradado lineal y radial (con tiradores sobre la foto, o
+trazandolos arrastrando), rango de color (tocar la foto), rango de luminancia,
+y cielo, sujeto y fondo automaticos (deteccion heuristica del motor, sin IA).
+La superposicion roja muestra la seleccion; al mover un ajuste se oculta
+para ver el efecto. Capas visibles u ocultas, invertir, renombrar, borrar.
+
+**iPhone**: con pantalla estrecha el editor cambia a la disposicion de
+Lightroom movil: foto grande, una barra de herramientas abajo (Auto, Perfil,
+Luz, Color, Efectos, Detalle, Optica, Geometria, Mascaras, Recortar) y un
+panel corto solo con el grupo elegido. Los deslizadores se arrastran desde
+cualquier punto de la fila (no hay que atinar con el tirador); arrastrar en
+vertical desplaza el panel; doble toque devuelve el valor por defecto.
+Mantener pulsada la foto enseña el antes; doble toque, zoom. Si el telefono
+no tiene memoria para revelar la foto entera al guardar, se ofrece guardarla
+a 4096 px (o 2560).
+
 **Auto**: no es el de LightCraft. Aquel aplica una receta fija pensada para
 RAW (Contraste +68, Iluminaciones -66, Sombras +52) y con JPEG, que ya vienen
 revelados, comprimia el rango y oscurecia: fotos grises y sin visibilidad.

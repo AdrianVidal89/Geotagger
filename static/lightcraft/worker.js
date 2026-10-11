@@ -29,6 +29,8 @@ function apply(e, st) {
   for (const ch of ["master", "red", "green", "blue"]) {
     e.set_curve(ch, new Float64Array((cv[ch] || []).flat()));
   }
+  // Capas de mascara (formato Mask de LightCraft)
+  e.set_masks_json(JSON.stringify(st.masks || []));
 }
 
 async function fetchBytes(url, accept) {
@@ -54,6 +56,7 @@ self.onmessage = async (ev) => {
                          controls: JSON.parse(controls_json()), profiles: JSON.parse(profiles_json()) });
     } else if (m.type === "render") {
       apply(ed, m.st);
+      ed.set_overlay(m.overlay == null ? -1 : m.overlay);
       const px = ed.render(m.maxW, m.maxH, !!m.draft, m.applyCrop !== false, !!m.before);
       const hist = ed.histogram();
       self.postMessage({ type: "rendered", seq: m.seq, w: ed.out_width(), h: ed.out_height(), px, hist },
@@ -65,12 +68,16 @@ self.onmessage = async (ev) => {
       apply(ed, m.st);
       const [temp, tint] = ed.auto_wb();
       self.postMessage({ type: "autoWb", seq: m.seq, temp, tint });
+    } else if (m.type === "sample") {
+      apply(ed, m.st);
+      self.postMessage({ type: "sample", seq: m.seq, lab: Array.from(ed.color_sample(m.x, m.y)) });
     } else if (m.type === "export") {
       // Resolucion completa: el original entero, revelado y codificado aqui.
       // Se suelta la vista previa mientras tanto para no duplicar memoria.
       const { bytes, headers } = await fetchBytes(m.url);
       const orient = parseInt(headers.get("X-Orientation") || "1", 10) || 1;
-      const full = new Editor(bytes, orient, 0);
+      // maxSide: en un movil sin memoria para la foto entera, revelarla mas pequena
+      const full = new Editor(bytes, orient, m.maxSide || 0);
       try {
         apply(full, m.st);
         const out = full.export(!!m.png, m.quality || 95);

@@ -84,6 +84,21 @@
     ccw: "M7.11 8.53L5.7 7.11C4.8 8.27 4.24 9.61 4.07 11h2.02c.14-.87.49-1.72 1.02-2.47zM6.09 13H4.07c.17 1.39.72 2.73 1.62 3.89l1.41-1.42c-.52-.75-.87-1.59-1.01-2.47zm1.01 5.32c1.16.9 2.51 1.44 3.9 1.61V17.9c-.87-.15-1.71-.49-2.46-1.03L7.1 18.32zM13 4.07V1L8.45 5.55 13 10V6.09c2.84.48 5 2.94 5 5.91s-2.16 5.43-5 5.91v2.02c3.95-.49 7-3.85 7-7.93s-3.05-7.44-7-7.93z",
     cw: "M15.55 5.55L11 1v3.07C7.06 4.56 4 7.92 4 12s3.05 7.44 7 7.93v-2.02c-2.84-.48-5-2.94-5-5.91s2.16-5.43 5-5.91V10l4.55-4.45zM19.93 11c-.17-1.39-.72-2.73-1.62-3.89l-1.42 1.42c.54.75.88 1.6 1.02 2.47h2.02zM13 17.9v2.02c1.39-.17 2.74-.71 3.9-1.61l-1.44-1.44c-.75.54-1.59.89-2.46 1.03zm3.89-2.42l1.42 1.41c.9-1.16 1.45-2.5 1.62-3.89h-2.02c-.14.87-.48 1.72-1.02 2.48z",
   };
+  Object.assign(ICON, {
+    auto: "M7.5 5.6L10 7 8.6 4.5 10 2 7.5 3.4 5 2l1.4 2.5L5 7zm12 9.8L17 14l1.4 2.5L17 19l2.5-1.4L22 19l-1.4-2.5L22 14zM22 2l-2.5 1.4L17 2l1.4 2.5L17 7l2.5-1.4L22 7l-1.4-2.5zm-7.63 5.29a.996.996 0 0 0-1.41 0L1.29 18.96a.996.996 0 0 0 0 1.41l2.34 2.34c.39.39 1.02.39 1.41 0L16.7 11.05a.996.996 0 0 0 0-1.41l-2.33-2.35zm-1.03 5.49l-2.12-2.12 2.44-2.44 2.12 2.12-2.44 2.44z",
+    profile: "M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-1 9h-4v4h-2v-4H9V9h4V5h2v4h4v2z",
+    light: "M20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69zM12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6zm0-10c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4z",
+    color: "M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z",
+    effects: "M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25zM11.5 9.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12z",
+    detail: "M12 2l-5.5 9h11L12 2zm5.5 11c-2.49 0-4.5 2.01-4.5 4.5s2.01 4.5 4.5 4.5 4.5-2.01 4.5-4.5-2.01-4.5-4.5-4.5zM3 21.5h8v-8H3v8z",
+    optics: "M12 15.2A3.2 3.2 0 1 0 12 8.8a3.2 3.2 0 0 0 0 6.4zM9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9z",
+    geometry: "M21 3H3v18h18V3zm-2 16H5V5h14v14zM7 7h2v2H7zm4 0h2v2h-2zm4 0h2v2h-2zM7 11h2v2H7zm4 0h2v2h-2zm4 0h2v2h-2zM7 15h2v2H7zm4 0h2v2h-2zm4 0h2v2h-2z",
+    mask: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18V4c4.41 0 8 3.59 8 8s-3.59 8-8 8z",
+  });
+  const escH = (t) => String(t == null ? "" : t).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  // Barra inferior en el movil (como Lightroom en el iPhone)
+  const GROUPS = [["auto", "Auto"], ["profile", "Perfil"], ["light", "Luz"], ["color", "Color"], ["effects", "Efectos"],
+                  ["detail", "Detalle"], ["optics", "Óptica"], ["geometry", "Geometría"], ["masks", "Máscaras"], ["crop", "Recortar"]];
   const svg = (d) => '<svg viewBox="0 0 24 24"><path d="' + d + '"/></svg>';
 
   // ── Estado ─────────────────────────────────────────────────────────────────
@@ -101,12 +116,12 @@
   function freshState() {
     return { values: {}, bw: false, profile: "lc.color",
              orient: 1, crop: [0, 0, 1, 1], angle: 0, aspect: 0,
-             curves: { master: [], red: [], green: [], blue: [] } };
+             curves: { master: [], red: [], green: [], blue: [] }, masks: [] };
   }
   const snap = () => JSON.stringify(st);
   const isDefaultCrop = () => st.angle === 0 && st.crop.join() === "0,0,1,1";
   function hasPixelEdits() {
-    return Object.keys(st.values).length > 0 || st.bw || st.profile !== "lc.color" || !isDefaultCrop() || curvesTouched();
+    return Object.keys(st.values).length > 0 || st.bw || st.profile !== "lc.color" || !isDefaultCrop() || curvesTouched() || masksTouched();
   }
   const hasChanges = () => hasPixelEdits() || st.orient !== 1;
 
@@ -152,8 +167,10 @@
     let mh = zoom ? 4096 : Math.round((stage.clientHeight - 32) * dpr);
     if (o.draft) { mw = Math.round(mw * 0.6); mh = Math.round(mh * 0.6); }
     try {
+      const m = curMask();
       const r = await call({ type: "render", st: st, maxW: Math.max(64, mw), maxH: Math.max(64, mh),
-                             draft: o.draft, applyCrop: tool !== "crop", before: before });
+                             draft: o.draft, applyCrop: tool !== "crop", before: before,
+                             overlay: tool === "mask" && overlayOn && m && m.components.length ? m.id : -1 });
       draw(r);
     } catch (e) {
       showMsg("No se pudo revelar: " + e.message);
@@ -180,6 +197,7 @@
     applyTilt();
     el.querySelector(".lc-badge").classList.toggle("on", before);
     if (tool === "crop") layoutCrop();
+    if (tool === "mask") layoutMaskLayer();
   }
 
   function drawHistogram(h) {
@@ -217,6 +235,8 @@
   function restore(s) {
     st = JSON.parse(s);
     if (!st.curves) st.curves = { master: [], red: [], green: [], blue: [] };
+    if (!st.masks) st.masks = [];
+    renderMaskPanel();
     syncControls();
     drawCurve();
     refreshChrome();
@@ -225,8 +245,10 @@
   function doUndo() { if (undo.length > 1) { redo.push(undo.pop()); restore(undo[undo.length - 1]); } }
   function doRedo() { if (redo.length) { const s = redo.pop(); undo.push(s); restore(s); } }
 
+  const isMaskId = (id) => /^(mask|cmp|brush)\./.test(id);
   function getVal(id) {
     if (id === "crop.angle") return st.angle;
+    if (isMaskId(id)) return maskGet(id);
     if (id in st.values) return st.values[id];
     const sp = specs[id];
     return sp ? sp.default : 0;
@@ -234,6 +256,7 @@
   function setVal(id, v) {
     const sp = specs[id];
     if (sp) v = Math.min(sp.max, Math.max(sp.min, v));
+    if (isMaskId(id)) { maskSet(id, v); return; }
     if (sp && Math.abs(v - sp.default) < 1e-9) delete st.values[id]; else st.values[id] = v;
   }
 
@@ -290,7 +313,7 @@
     n.querySelector(".lc-range").value = v;
     const box = n.querySelector(".lc-val");
     if (document.activeElement !== box) box.value = fmt(sp, v);
-    n.classList.toggle("mod", id === "crop.angle" ? st.angle !== 0 : id in st.values);
+    n.classList.toggle("mod", id === "crop.angle" ? st.angle !== 0 : isMaskId(id) ? Math.abs(v - sp.default) > 1e-9 : id in st.values);
   }
   function syncControls() {
     if (!panelBuilt) return;
@@ -491,6 +514,339 @@
     }, true);
   }
 
+  // ── Máscaras (capas con ajustes locales) ───────────────────────────────────
+  // El modelo es el de LightCraft (`Mask`): cada capa tiene componentes que se
+  // suman o se restan (pincel, degradado lineal, degradado radial, rango de
+  // luminancia, rango de color, y cielo/sujeto/fondo automaticos) y sus propios
+  // ajustes. Las coordenadas van normalizadas al marco de la foto ya girada y
+  // SIN recortar (el mismo del recorte): aqui se pasan a la vista y vuelta.
+  const SHAPES = [
+    ["subject", "Sujeto", "Detección automática del motivo principal"],
+    ["sky", "Cielo", "Detección automática del cielo"],
+    ["background", "Fondo", "Todo menos el sujeto"],
+    ["brush", "Pincel", "Pinta donde quieras el ajuste"],
+    ["linear", "Degradado lineal", "Arrastra sobre la foto para trazarlo"],
+    ["radial", "Degradado radial", "Arrastra sobre la foto para trazarlo"],
+    ["colorRange", "Rango de color", "Toca un color de la foto"],
+    ["luminanceRange", "Rango de luminancia", "Elige qué tonos"],
+  ];
+  const SHAPE_NAME = Object.fromEntries(SHAPES.map(s => [s[0], s[1]]));
+  // Ajustes locales (LocalAdjustments de LightCraft)
+  const LOCAL = [
+    ["amount", "Cantidad", 0, 200, 100, 1, 0, { kind: "plain" }],
+    ["temp", "Temperatura", -100, 100, 0, 1, 0, { kind: "temp" }],
+    ["tint", "Matiz", -100, 100, 0, 1, 0, { kind: "tint" }],
+    ["exposure", "Exposición", -4, 4, 0, 0.01, 2, { kind: "centered" }],
+    ["contrast", "Contraste", -100, 100, 0, 1, 0, { kind: "centered" }],
+    ["highlights", "Iluminaciones", -100, 100, 0, 1, 0, { kind: "centered" }],
+    ["shadows", "Sombras", -100, 100, 0, 1, 0, { kind: "centered" }],
+    ["whites", "Blancos", -100, 100, 0, 1, 0, { kind: "centered" }],
+    ["blacks", "Negros", -100, 100, 0, 1, 0, { kind: "centered" }],
+    ["texture", "Textura", -100, 100, 0, 1, 0, { kind: "centered" }],
+    ["clarity", "Claridad", -100, 100, 0, 1, 0, { kind: "centered" }],
+    ["dehaze", "Neblina", -100, 100, 0, 1, 0, { kind: "centered" }],
+    ["hue", "Tono", -100, 100, 0, 1, 0, { kind: "rainbow" }],
+    ["saturation", "Saturación", -100, 100, 0, 1, 0, { kind: "gradient", from: "#7a7a7a", to: "#e04a3a" }],
+    ["sharpness", "Enfoque", -100, 100, 0, 1, 0, { kind: "centered" }],
+    ["noise", "Ruido", -100, 100, 0, 1, 0, { kind: "centered" }],
+  ];
+  // Parametros de la forma elegida y del pincel
+  const CMP = [
+    ["cmp.feather", "Desvanecer", 0, 100, 50, 1, 0],
+    ["cmp.lo", "Desde", 0, 100, 0, 1, 0], ["cmp.hi", "Hasta", 0, 100, 50, 1, 0],
+    ["cmp.loFeather", "Suavizado oscuros", 0, 100, 10, 1, 0], ["cmp.hiFeather", "Suavizado claros", 0, 100, 10, 1, 0],
+    ["cmp.refine", "Refinar", 0, 100, 50, 1, 0],
+    ["brush.size", "Tamaño", 1, 100, 12, 1, 0], ["brush.feather", "Desvanecer", 0, 100, 50, 1, 0],
+    ["brush.flow", "Flujo", 1, 100, 100, 1, 0],
+  ];
+  function registerMaskSpecs() {
+    for (const [k, label, min, max, def, step, dec, track] of LOCAL)
+      specs["mask." + k] = { id: "mask." + k, label, min, max, default: def, step, decimals: dec, track };
+    for (const [id, label, min, max, def, step, dec] of CMP)
+      specs[id] = { id, label, min, max, default: def, step, decimals: dec, track: { kind: "plain" } };
+  }
+  let selMask = -1, selComp = 0, overlayOn = true, maskMenuFor = null;
+  const brush = { size: 12, feather: 50, flow: 100, erase: false };
+  const curMask = () => (st.masks || [])[selMask] || null;
+  const curComp = () => { const m = curMask(); return m ? m.components[selComp] || null : null; };
+  const masksTouched = () => (st.masks || []).some(m => m.components.length > 0);
+  function newShape(kind) {
+    switch (kind) {
+      case "linear": return { kind, start: { x: 0.5, y: 0.25 }, end: { x: 0.5, y: 0.6 } };
+      case "radial": return { kind, center: { x: 0.5, y: 0.5 }, rx: 0.25, ry: 0.18, angle: 0, feather: 50, invert: false };
+      case "brush": return { kind, strokes: [] };
+      case "colorRange": return { kind, samples: [], refine: 50 };
+      case "luminanceRange": return { kind, lo: 0, hi: 0.5, lo_feather: 0.1, hi_feather: 0.1 };
+      default: return { kind };
+    }
+  }
+  function addShape(kind) {
+    const how = maskMenuFor;
+    maskMenuFor = null;
+    if (how === "new" || !curMask()) {
+      st.masks = st.masks || [];
+      const id = st.masks.reduce((a, m) => Math.max(a, m.id), 0) + 1;
+      st.masks.push({ id, name: SHAPE_NAME[kind], visible: true, invert: false,
+                      components: [{ op: "add", invert: false, shape: newShape(kind) }], adjust: {} });
+      selMask = st.masks.length - 1; selComp = 0;
+    } else {
+      curMask().components.push({ op: how === "sub" ? "subtract" : "add", invert: false, shape: newShape(kind) });
+      selComp = curMask().components.length - 1;
+    }
+    overlayOn = true;
+    commit();
+    renderMaskPanel();
+    requestRender(false);
+  }
+
+  function maskHtml() {
+    return '<div class="lc-head"><h3>Máscaras</h3><button class="lc-btn sm primary" data-a="masknew">+ Nueva</button></div>' +
+      '<div class="lc-mlist"></div>' +
+      '<div class="lc-mmenu"></div>' +
+      '<div class="lc-msel"></div>';
+  }
+  // Repinta la lista de capas y el detalle de la seleccionada
+  function renderMaskPanel() {
+    if (!panelBuilt) return;
+    const masks = st.masks || [];
+    if (selMask >= masks.length) selMask = masks.length - 1;
+    const list = el.querySelector(".lc-mlist");
+    list.innerHTML = masks.length ? masks.map((m, i) =>
+      '<div class="lc-mitem' + (i === selMask ? " on" : "") + '" data-mi="' + i + '">' +
+        '<button class="lc-meye' + (m.visible ? "" : " off") + '" data-a="maskeye" title="Mostrar u ocultar">' + (m.visible ? "◉" : "○") + '</button>' +
+        '<span class="lc-mname">' + escH(m.name) + '</span>' +
+        '<span class="lc-mcount">' + m.components.length + '</span>' +
+        '<button class="lc-mdel" data-a="maskdel" title="Borrar máscara">✕</button></div>').join("")
+      : '<div class="lc-hint" style="margin:0 12px">Las máscaras aplican ajustes solo a una parte de la foto. Pulsa <b>+ Nueva</b> y elige qué seleccionar.</div>';
+    const menu = el.querySelector(".lc-mmenu");
+    menu.classList.toggle("on", !!maskMenuFor);
+    menu.innerHTML = maskMenuFor ?
+      '<div class="lc-sub" style="margin:0 0 6px">' + (maskMenuFor === "new" ? "Nueva máscara" : maskMenuFor === "sub" ? "Restar a la máscara" : "Añadir a la máscara") +
+        '<button class="lc-btn sm" data-a="menuclose">Cancelar</button></div>' +
+      '<div class="lc-mgrid">' + SHAPES.map(s => '<button class="lc-mshape" data-shape="' + s[0] + '"><b>' + s[1] + '</b><small>' + s[2] + '</small></button>').join("") + '</div>' : "";
+    const sel = el.querySelector(".lc-msel");
+    const m = curMask();
+    if (!m) { sel.innerHTML = ""; layoutMaskLayer(); refreshChrome(); return; }
+    const c = curComp();
+    let params = "";
+    if (c) {
+      const k = c.shape.kind;
+      if (k === "radial") params = slider("cmp.feather") + '<label class="lc-chk"><input type="checkbox" data-a="cmpinv"' + (c.shape.invert ? " checked" : "") + '> Invertir esta forma</label>';
+      else if (k === "luminanceRange") params = many(["cmp.lo", "cmp.hi", "cmp.loFeather", "cmp.hiFeather"]);
+      else if (k === "colorRange") params = '<div class="lc-hint">Toca en la foto el color a seleccionar (hasta 5). Colores: <b>' + c.shape.samples.length + '</b> ' +
+        (c.shape.samples.length ? '<button class="lc-btn sm" data-a="cmpclear">Quitar colores</button>' : "") + '</div>' + slider("cmp.refine");
+      else if (k === "brush") params = '<div class="lc-tabs"><button class="lc-btn sm' + (brush.erase ? "" : " on") + '" data-a="brushpaint">Pintar</button>' +
+        '<button class="lc-btn sm' + (brush.erase ? " on" : "") + '" data-a="brusherase">Borrar</button></div>' +
+        many(["brush.size", "brush.feather", "brush.flow"]) + '<div class="lc-hint">Pinta sobre la foto con el dedo o el ratón.</div>';
+      else if (k === "linear" || k === "radial") params = "";
+      else params = '<div class="lc-hint">Selección automática por el motor (heurística, sin IA).</div>';
+      if (k === "linear") params = '<div class="lc-hint">Arrastra los puntos, o traza otro degradado arrastrando sobre la foto.</div>';
+      if (k === "radial") params = '<div class="lc-hint">Arrastra el centro o los bordes, o traza otro arrastrando sobre la foto.</div>' + params;
+    }
+    sel.innerHTML =
+      '<div class="lc-msec">' +
+        '<div class="lc-sub" style="margin-top:4px">Componentes</div>' +
+        '<div class="lc-comps">' + m.components.map((cc, i) =>
+          '<button class="lc-comp' + (i === selComp ? " on" : "") + '" data-ci="' + i + '">' + (cc.op === "subtract" ? "− " : cc.op === "intersect" ? "∩ " : "+ ") +
+          SHAPE_NAME[cc.shape.kind] + '</button>').join("") + '</div>' +
+        '<div class="lc-row"><button class="lc-btn sm" data-a="maskadd">+ Añadir</button><button class="lc-btn sm" data-a="masksub">− Restar</button>' +
+          (m.components.length > 1 ? '<button class="lc-btn sm" data-a="compdel">Quitar componente</button>' : "") + '</div>' +
+        params +
+        '<div class="lc-row" style="margin-top:8px">' +
+          '<label class="lc-chk"><input type="checkbox" data-a="maskinv"' + (m.invert ? " checked" : "") + '> Invertir máscara</label>' +
+          '<label class="lc-chk"><input type="checkbox" data-a="maskov"' + (overlayOn ? " checked" : "") + '> Ver superposición</label></div>' +
+        '<div class="lc-row"><button class="lc-btn sm" data-a="maskrename">Renombrar</button><button class="lc-btn sm" data-a="maskreset">Ajustes a cero</button></div>' +
+      '</div>' +
+      '<div class="lc-sub">Ajustes de la máscara</div>' +
+      LOCAL.map(l => slider("mask." + l[0], l[1])).join("");
+    el.querySelectorAll(".lc-msel .lc-sl, .lc-mmenu .lc-sl").forEach(syncSlider);
+    layoutMaskLayer();
+    refreshChrome();
+  }
+  function maskGet(id) {
+    const m = curMask(), c = curComp();
+    if (id.startsWith("mask.")) { const k = id.slice(5); return m && k in m.adjust ? m.adjust[k] : specs[id].default; }
+    if (id.startsWith("brush.")) return brush[id.slice(6)];
+    if (!c) return specs[id].default;
+    const s = c.shape;
+    switch (id) {
+      case "cmp.feather": return s.feather;
+      case "cmp.lo": return Math.round(s.lo * 100); case "cmp.hi": return Math.round(s.hi * 100);
+      case "cmp.loFeather": return Math.round(s.lo_feather * 100); case "cmp.hiFeather": return Math.round(s.hi_feather * 100);
+      case "cmp.refine": return s.refine;
+    }
+    return 0;
+  }
+  function maskSet(id, v) {
+    const m = curMask(), c = curComp();
+    if (id.startsWith("mask.")) {
+      if (!m) return;
+      const k = id.slice(5);
+      if (Math.abs(v - specs[id].default) < 1e-9) delete m.adjust[k]; else m.adjust[k] = v;
+      overlayOn = false;   // al ajustar se quiere ver el efecto, no el rojo
+      const ov = el.querySelector('[data-a="maskov"]'); if (ov) ov.checked = false;
+      return;
+    }
+    if (id.startsWith("brush.")) { brush[id.slice(6)] = v; return; }
+    if (!c) return;
+    const s = c.shape;
+    switch (id) {
+      case "cmp.feather": s.feather = v; break;
+      case "cmp.lo": s.lo = Math.min(v / 100, s.hi); break; case "cmp.hi": s.hi = Math.max(v / 100, s.lo); break;
+      case "cmp.loFeather": s.lo_feather = v / 100; break; case "cmp.hiFeather": s.hi_feather = v / 100; break;
+      case "cmp.refine": s.refine = v; break;
+    }
+  }
+  function maskAction(a, target) {
+    const m = curMask();
+    if (a === "masknew") { maskMenuFor = "new"; }
+    else if (a === "maskadd" && m) { maskMenuFor = "add"; }
+    else if (a === "masksub" && m) { maskMenuFor = "sub"; }
+    else if (a === "menuclose") { maskMenuFor = null; }
+    else if (a === "maskeye") { const i = +target.closest("[data-mi]").dataset.mi; st.masks[i].visible = !st.masks[i].visible; commit(); requestRender(false); }
+    else if (a === "maskdel") {
+      const i = +target.closest("[data-mi]").dataset.mi;
+      if (!confirm("¿Borrar la máscara «" + st.masks[i].name + "»?")) return true;
+      st.masks.splice(i, 1); selMask = Math.min(selMask, st.masks.length - 1); selComp = 0; commit(); requestRender(false);
+    }
+    else if (a === "compdel" && m && m.components.length > 1) { m.components.splice(selComp, 1); selComp = 0; commit(); requestRender(false); }
+    else if (a === "maskinv" && m) { m.invert = target.checked; commit(); requestRender(false); }
+    else if (a === "cmpinv" && curComp()) { curComp().shape.invert = target.checked; commit(); requestRender(false); }
+    else if (a === "maskov") { overlayOn = target.checked; requestRender(false); }
+    else if (a === "maskrename" && m) { const n = prompt("Nombre de la máscara", m.name); if (n && n.trim()) { m.name = n.trim().slice(0, 40); commit(); } }
+    else if (a === "maskreset" && m) { m.adjust = {}; commit(); requestRender(false); }
+    else if (a === "cmpclear" && curComp()) { curComp().shape.samples = []; commit(); requestRender(false); }
+    else if (a === "brushpaint") brush.erase = false;
+    else if (a === "brusherase") brush.erase = true;
+    else return false;
+    renderMaskPanel();
+    return true;
+  }
+
+  // ── Marco de la foto <-> vista (con recorte y enderezado) ─────────────────
+  function viewMap() {
+    const cv = el.querySelector(".lc-canvas");
+    const [fw, fh] = frameSize();
+    const c = st.crop, a = st.angle * Math.PI / 180, cs = Math.cos(a), sn = Math.sin(a);
+    const cw = cv.offsetWidth, ch = cv.offsetHeight;
+    const L = Math.max(fw, fh), scale = cw / ((c[2] - c[0]) * fw);
+    return {
+      cw, ch, L, scale,
+      // marco normalizado -> px de la vista
+      to(p) {
+        const dx = p.x * fw - fw / 2, dy = p.y * fh - fh / 2;
+        const rx = dx * cs - dy * sn + fw / 2, ry = dx * sn + dy * cs + fh / 2;
+        return { x: (rx / fw - c[0]) / (c[2] - c[0]) * cw, y: (ry / fh - c[1]) / (c[3] - c[1]) * ch };
+      },
+      // px de la vista -> marco normalizado
+      from(x, y) {
+        const rx = (c[0] + x / cw * (c[2] - c[0])) * fw - fw / 2, ry = (c[1] + y / ch * (c[3] - c[1])) * fh - fh / 2;
+        return { x: (rx * cs + ry * sn + fw / 2) / fw, y: (-rx * sn + ry * cs + fh / 2) / fh };
+      },
+    };
+  }
+  // Capa SVG con los tiradores de la forma elegida
+  function layoutMaskLayer() {
+    if (!el) return;
+    const layer = el.querySelector(".lc-mlayer"), cv = el.querySelector(".lc-canvas");
+    const c = tool === "mask" ? curComp() : null;
+    layer.style.display = c ? "block" : "none";
+    if (!c) return;
+    Object.assign(layer.style, { left: cv.offsetLeft + "px", top: cv.offsetTop + "px", width: cv.offsetWidth + "px", height: cv.offsetHeight + "px" });
+    const v = viewMap(), s = c.shape;
+    let g = "";
+    const dot = (p, h, r) => '<circle class="lc-mh" data-mh="' + h + '" cx="' + p.x + '" cy="' + p.y + '" r="' + (r || 9) + '"/>';
+    if (s.kind === "linear") {
+      const a = v.to(s.start), b = v.to(s.end), dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len * 2000, ny = dx / len * 2000;
+      const line = (p, cls) => '<line class="' + cls + '" x1="' + (p.x - nx) + '" y1="' + (p.y - ny) + '" x2="' + (p.x + nx) + '" y2="' + (p.y + ny) + '"/>';
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      g = line(a, "lc-ml") + line(b, "lc-ml lc-dash") + line(mid, "lc-ml lc-faint") +
+          '<line class="lc-ml lc-faint" x1="' + a.x + '" y1="' + a.y + '" x2="' + b.x + '" y2="' + b.y + '"/>' +
+          dot(a, "start") + dot(b, "end") + dot(mid, "move", 7);
+    } else if (s.kind === "radial") {
+      const cpx = v.to(s.center), rx = s.rx * v.L * v.scale, ry = s.ry * v.L * v.scale, ang = s.angle + st.angle;
+      const rot = (dx, dy) => { const t = ang * Math.PI / 180; return { x: cpx.x + dx * Math.cos(t) - dy * Math.sin(t), y: cpx.y + dx * Math.sin(t) + dy * Math.cos(t) }; };
+      const inner = Math.max(0.01, 1 - s.feather / 100);
+      g = '<ellipse class="lc-ml" cx="' + cpx.x + '" cy="' + cpx.y + '" rx="' + rx + '" ry="' + ry + '" transform="rotate(' + ang + ' ' + cpx.x + ' ' + cpx.y + ')"/>' +
+          '<ellipse class="lc-ml lc-dash" cx="' + cpx.x + '" cy="' + cpx.y + '" rx="' + rx * inner + '" ry="' + ry * inner + '" transform="rotate(' + ang + ' ' + cpx.x + ' ' + cpx.y + ')"/>' +
+          dot(cpx, "center") + dot(rot(rx, 0), "rx") + dot(rot(0, -ry), "ry");
+    } else if (s.kind === "colorRange") {
+      g = s.samples.length ? "" : "";
+    }
+    layer.querySelector("svg").innerHTML = g + '<circle class="lc-bcur" r="0" cx="-99" cy="-99"/>';
+  }
+
+  function wireMasks() {
+    const layer = el.querySelector(".lc-mlayer");
+    let drag = null, painting = null;
+    const local = (e) => { const r = layer.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+    layer.addEventListener("pointerdown", async (e) => {
+      const c = curComp();
+      if (!c) return;
+      e.preventDefault();
+      layer.setPointerCapture(e.pointerId);
+      const v = viewMap(), [x, y] = local(e), p = v.from(x, y), s = c.shape;
+      const h = e.target.closest("[data-mh]");
+      if (s.kind === "brush") {
+        const stroke = { points: [{ x: p.x, y: p.y }], size: brush.size / 100 * 0.25, feather: brush.feather, flow: brush.flow,
+                         density: 100, erase: brush.erase, auto_mask: false };
+        s.strokes.push(stroke);
+        painting = stroke;
+        requestRender(true);
+        return;
+      }
+      if (s.kind === "colorRange") {
+        if (s.samples.length >= 5) return;
+        try {
+          const r = await call({ type: "sample", st: st, x: p.x, y: p.y });
+          if (r.lab.length === 3) { s.samples.push(r.lab); overlayOn = true; commit(); renderMaskPanel(); requestRender(false); }
+        } catch (err) { /* fuera de la foto */ }
+        return;
+      }
+      if (h) drag = { h: h.dataset.mh, x, y, s0: JSON.parse(JSON.stringify(s)) };
+      else if (s.kind === "linear") { s.start = p; s.end = { x: p.x, y: p.y }; drag = { h: "end", x, y, s0: JSON.parse(JSON.stringify(s)) }; }
+      else if (s.kind === "radial") { s.center = p; s.rx = s.ry = 0.01; drag = { h: "draw", x, y, s0: JSON.parse(JSON.stringify(s)) }; }
+    });
+    layer.addEventListener("pointermove", (e) => {
+      const c = curComp();
+      if (!c) return;
+      const v = viewMap(), [x, y] = local(e), p = v.from(x, y), s = c.shape;
+      if (s.kind === "brush") {
+        const cur = layer.querySelector(".lc-bcur");
+        if (cur) { cur.setAttribute("cx", x); cur.setAttribute("cy", y); cur.setAttribute("r", brush.size / 100 * 0.25 * v.L * v.scale); }
+        if (painting) {
+          const last = painting.points[painting.points.length - 1];
+          if (Math.hypot(p.x - last.x, p.y - last.y) > 0.004) { painting.points.push({ x: +p.x.toFixed(4), y: +p.y.toFixed(4) }); requestRender(true); }
+        }
+        return;
+      }
+      if (!drag) return;
+      const s0 = drag.s0;
+      if (drag.h === "start") s.start = p;
+      else if (drag.h === "end") s.end = p;
+      else if (drag.h === "move" || drag.h === "center") {
+        const p0 = v.from(drag.x, drag.y), dx = p.x - p0.x, dy = p.y - p0.y;
+        if (s.kind === "linear") { s.start = { x: s0.start.x + dx, y: s0.start.y + dy }; s.end = { x: s0.end.x + dx, y: s0.end.y + dy }; }
+        else s.center = { x: s0.center.x + dx, y: s0.center.y + dy };
+      } else if (s.kind === "radial") {
+        const cpx = v.to(s.center), d = Math.hypot(x - cpx.x, y - cpx.y) / (v.L * v.scale);
+        if (drag.h === "rx") s.rx = Math.max(0.01, d);
+        else if (drag.h === "ry") s.ry = Math.max(0.01, d);
+        else { s.rx = Math.max(0.01, d); s.ry = Math.max(0.01, d * 0.75); }
+      }
+      layoutMaskLayer();
+      requestRender(true);
+    });
+    const end = () => {
+      if (painting) { painting = null; commit(); requestRender(false); }
+      if (drag) { drag = null; commit(); requestRender(false); }
+    };
+    layer.addEventListener("pointerup", end);
+    layer.addEventListener("pointercancel", end);
+    layer.addEventListener("pointerleave", () => { const cur = layer.querySelector(".lc-bcur"); if (cur) cur.setAttribute("r", 0); });
+  }
+
   // ── Construccion del panel ─────────────────────────────────────────────────
   function sec(key, title, body, open, ids) {
     return '<div class="lc-sec' + (open ? " open" : "") + '" data-sec="' + key + '"' + (ids ? ' data-ids="' + ids + '"' : "") + '>' +
@@ -519,15 +875,19 @@
           '<div class="lc-crop"><div class="lc-cbox">' +
             ["nw", "n", "ne", "e", "se", "s", "sw", "w"].map(h => '<div class="lc-ch" data-h="' + h + '"></div>').join("") +
           '</div></div>' +
+          '<div class="lc-mlayer"><svg></svg></div>' +
           '<div class="lc-badge">Antes</div>' +
           '<div class="lc-busy"><div class="lc-spin"></div><div class="lc-busy-t">Cargando...</div></div>' +
         '</div>' +
         '<div class="lc-tools">' +
           '<button class="lc-ib on" data-tool="edit" title="Editar">' + svg(ICON.edit) + '</button>' +
           '<button class="lc-ib" data-tool="crop" title="Recortar y enderezar (R)">' + svg(ICON.crop) + '</button>' +
+          '<button class="lc-ib" data-tool="mask" title="Máscaras (M)">' + svg(ICON.mask) + '</button>' +
         '</div>' +
         '<div class="lc-panel"></div>' +
-      '</div>';
+      '</div>' +
+      '<div class="lc-tabbar">' + GROUPS.map(g => '<button class="lc-tab" data-group="' + g[0] + '">' + svg(ICON[g[0] === "masks" ? "mask" : g[0]]) +
+        '<span>' + g[1] + '</span></button>').join("") + '</div>';
     document.body.appendChild(el);
     wire();
   }
@@ -537,11 +897,11 @@
   function panelHtml() {
     return '<div class="lc-hist"><canvas></canvas><div class="lc-hist-info"><span class="lc-dim"></span><span>LightCraft</span></div></div>' +
           '<div class="lc-only-edit">' +
-            '<div class="lc-head"><h3>Editar</h3>' +
+            '<div class="lc-head lc-g-profile"><h3>Editar</h3>' +
               '<button class="lc-btn sm" data-a="auto" title="Ajuste automático de tono">Auto</button>' +
               '<button class="lc-btn sm" data-a="bw" title="Blanco y negro">B y N</button></div>' +
-            '<div class="lc-prof"><label>Perfil</label><select class="lc-select lc-sel-profile"></select></div>' +
-            '<div class="lc-prof-amt" style="padding:0 12px 8px">' + slider("profile.amount") + '</div>' +
+            '<div class="lc-prof lc-g-profile"><label>Perfil</label><select class="lc-select lc-sel-profile"></select></div>' +
+            '<div class="lc-prof-amt lc-g-profile" style="padding:0 12px 8px">' + slider("profile.amount") + '</div>' +
             sec("light", "Luz",
               many(["light.exposure", "light.contrast", "light.highlights", "light.shadows", "light.whites", "light.blacks"]) +
               curveHtml(), true) +
@@ -574,9 +934,10 @@
               many(["geometry.vertical", "geometry.horizontal", "geometry.rotate", "geometry.aspect", "geometry.scale", "geometry.offsetX", "geometry.offsetY"]), false) +
             sec("calibration", "Calibración",
               many(["calibration.shadowsTint", "calibration.redHue", "calibration.redSat", "calibration.greenHue", "calibration.greenSat", "calibration.blueHue", "calibration.blueSat"]), false) +
-            '<div class="lc-hint" style="padding:12px">Doble clic en un deslizador o en el título de una sección para restablecerlo. ' +
+            '<div class="lc-hint lc-desk-hint" style="padding:12px">Doble clic en un deslizador o en el título de una sección para restablecerlo. ' +
               '<b>\\</b> antes/después · <b>R</b> recortar · <b>Ctrl+Z</b> deshacer. Clic en la foto: zoom 1:1.</div>' +
           '</div>' +
+          '<div class="lc-only-mask">' + maskHtml() + '</div>' +
           '<div class="lc-only-crop">' +
             '<div class="lc-head"><h3>Recortar y enderezar</h3></div>' +
             '<div style="padding:0 12px 12px">' +
@@ -617,6 +978,7 @@
       syncSlider(n);
     });
     panel.addEventListener("change", (e) => {
+      if (e.target.type === "checkbox" && e.target.dataset.a) { maskAction(e.target.dataset.a, e.target); return; }
       if (e.target.classList.contains("lc-sel-profile")) {
         st.profile = e.target.value;
         if (st.profile === "lc.color") delete st.values["profile.amount"];
@@ -668,14 +1030,23 @@
       if (zone) { gradeZone = zone.dataset.zone; rebindDynamic(); return; }
       const asp = e.target.closest("[data-aspect]");
       if (asp) { setAspect(+asp.dataset.aspect); return; }
+      const shp = e.target.closest("[data-shape]");
+      if (shp) { addShape(shp.dataset.shape); return; }
+      const ci = e.target.closest("[data-ci]");
+      if (ci) { selComp = +ci.dataset.ci; renderMaskPanel(); requestRender(false); return; }
+      const mi = e.target.closest("[data-mi]");
+      if (mi && !e.target.closest("[data-a]")) { selMask = +mi.dataset.mi; selComp = 0; overlayOn = true; renderMaskPanel(); requestRender(false); }
     });
 
     el.addEventListener("click", (e) => {
       const t = e.target.closest("[data-tool]");
       if (t) { setTool(t.dataset.tool); return; }
+      const g = e.target.closest(".lc-tab[data-group]");
+      if (g) { setGroup(g.dataset.group); return; }
       const b = e.target.closest("[data-a]");
       if (!b || b.disabled) return;
       const a = b.dataset.a;
+      if (/^(mask|menu|comp|cmp|brush)/.test(a) && b.tagName !== "INPUT") { maskAction(a, b); return; }
       if (a === "close") close(false);
       else if (a === "undo") doUndo();
       else if (a === "redo") doRedo();
@@ -705,6 +1076,8 @@
       rz = setTimeout(() => requestRender(false), 150);
     });
     wireCrop();
+    wireMasks();
+    wireTouch();
   }
 
   function onValue(id, v, dragging) {
@@ -722,12 +1095,13 @@
     if (!el.classList.contains("on")) return;
     const typing = e.target && (e.target.tagName === "INPUT" && e.target.type === "text" || e.target.tagName === "SELECT");
     const mod = e.ctrlKey || e.metaKey;
-    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); if (tool === "crop") setTool("edit"); else close(false); }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); if (tool !== "edit") setTool("edit"); else close(false); }
     else if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); if (e.shiftKey) doRedo(); else doUndo(); }
     else if (mod && e.key.toLowerCase() === "y") { e.preventDefault(); doRedo(); }
     else if (typing) return;
     else if (e.key === "\\") { e.preventDefault(); toggleBefore(); }
     else if (e.key === "r" || e.key === "R") { e.preventDefault(); setTool(tool === "crop" ? "edit" : "crop"); }
+    else if (e.key === "m" || e.key === "M") { e.preventDefault(); setTool(tool === "mask" ? "edit" : "mask"); }
     else return;
     e.stopPropagation();
   }
@@ -741,10 +1115,27 @@
   function setTool(t) {
     tool = t;
     el.classList.toggle("tool-crop", t === "crop");
+    el.classList.toggle("tool-mask", t === "mask");
+    if (t === "mask") { maskMenuFor = (st.masks || []).length ? null : "new"; renderMaskPanel(); }
     el.querySelectorAll(".lc-tools [data-tool]").forEach(b => b.classList.toggle("on", b.dataset.tool === t));
     if (t === "crop" && zoom) { zoom = false; el.querySelector(".lc-stage").classList.remove("zoom"); }
     el.querySelector(".lc-stage").classList.toggle("crop", t === "crop");
+    el.querySelector(".lc-stage").classList.toggle("masking", t === "mask");
+    layoutMaskLayer();
+    el.dataset.group = t === "crop" ? "crop" : t === "mask" ? "masks" : (group === "crop" || group === "masks" ? "light" : group);
+    if (el.dataset.group !== group) group = el.dataset.group;
+    el.querySelectorAll(".lc-tab").forEach(b => b.classList.toggle("on", b.dataset.group === group));
     requestRender(false);
+  }
+  // Grupo de herramientas (barra inferior del movil)
+  let group = "light";
+  function setGroup(g) {
+    if (g === "auto") { runAuto(); g = "light"; }
+    group = g;
+    setTool(g === "crop" ? "crop" : g === "masks" ? "mask" : "edit");
+    const panel = el.querySelector(".lc-panel");
+    if (panel) panel.scrollTop = 0;
+    setTimeout(drawCurve, 0);
   }
 
   async function runAuto() {
@@ -928,9 +1319,13 @@
     undo = [snap()]; redo = [];
     tool = "edit"; before = false; zoom = false; saving = false;
     mixBand = 0; gradeZone = "shadows"; curveCh = "master"; lastHist = null;
+    selMask = -1; selComp = 0; overlayOn = true; maskMenuFor = null; group = "light";
     el.querySelector(".lc-name").textContent = f.name;
-    el.classList.remove("tool-crop");
-    el.querySelector(".lc-stage").classList.remove("zoom", "crop");
+    el.classList.remove("tool-crop", "tool-mask");
+    el.classList.toggle("m", isMobile());
+    el.dataset.group = "light";
+    el.querySelectorAll(".lc-tab").forEach(b => b.classList.toggle("on", b.dataset.group === "light"));
+    el.querySelector(".lc-stage").classList.remove("zoom", "crop", "masking");
     el.querySelectorAll(".lc-tools [data-tool]").forEach(b => b.classList.toggle("on", b.dataset.tool === "edit"));
     el.querySelector('[data-a="before"]').classList.remove("on");
     const cv = el.querySelector(".lc-canvas");
@@ -947,10 +1342,12 @@
       r.controls.forEach(sp => { specs[sp.id] = sp; });
       specs["wb.tempRel"] = { id: "wb.tempRel", min: -100, max: 100, default: 0, step: 1, decimals: 0, track: { kind: "temp" } };
       specs["wb.tintRel"] = { id: "wb.tintRel", min: -100, max: 100, default: 0, step: 1, decimals: 0, track: { kind: "tint" } };
+      registerMaskSpecs();
       if (!panelBuilt) buildPanel();
       el.querySelector(".lc-dim").textContent = W + " × " + H + " (vista de trabajo)";
       syncControls();
       rebindDynamic();
+      renderMaskPanel();
       refreshChrome();
       busy(null);
       requestRender(false);
@@ -987,8 +1384,8 @@
         });
         data = await res.json();
       } else {
-        busy("Revelando a resolución completa con LightCraft...\nPuede tardar unos segundos.");
-        const r = await call({ type: "export", url: "/api/edit_source?path=" + encodeURIComponent(f.path), st: st, quality: 95 });
+        const r = await exportPhoto(f);
+        if (!r) { busy(null); saving = false; refreshChrome(); return; }
         busy("Guardando en el NAS...");
         const isPng = r.bytes[0] === 0x89;
         const fd = new FormData();
@@ -1011,11 +1408,125 @@
     if (window.lcAfterSave) window.lcAfterSave(f.path, data);
   }
 
+  // Revelado a resolucion completa. Un iPhone puede no tener memoria para una
+  // foto grande (el motor trabaja en coma flotante: 24 Mpx son ~300 MB): si
+  // falla, se rearranca el motor y se ofrece guardar a menor tamano.
+  async function exportPhoto(f) {
+    const url = "/api/edit_source?path=" + encodeURIComponent(f.path);
+    for (const side of [0, 4096, 2560]) {
+      busy(side ? "Revelando a " + side + " px..." : "Revelando a resolución completa con LightCraft...\nPuede tardar unos segundos.");
+      try {
+        return await call({ type: "export", url, st, quality: 95, maxSide: side });
+      } catch (e) {
+        if (/HTTP|existe|RAW/.test(e.message)) throw e;      // fallo del servidor, no de memoria
+        busy("Reiniciando el motor...");
+        await restartWorker(f);
+        const next = side === 0 ? 4096 : side === 4096 ? 2560 : 0;
+        if (!next) throw e;
+        busy(null);
+        if (!confirm("Este dispositivo no tiene memoria para revelar la foto a " +
+                     (side ? side + " px" : "resolución completa") + ".\n¿Guardarla a " + next + " px por el lado mayor?")) return null;
+      }
+    }
+    return null;
+  }
+  async function restartWorker(f) {
+    try { worker.terminate(); } catch (e) { /* ya estaba parado */ }
+    worker = null;
+    startWorker();
+    await call({ type: "open", url: bust("/api/preview?path=" + encodeURIComponent(f.path), f.path) });
+  }
+
+  // ── Tactil: iPhone / iPad ─────────────────────────────────────────────────
+  // - Deslizadores relativos: se arrastra desde cualquier punto de la fila
+  //   (no hay que atinar con el tirador), el desplazamiento vertical sigue
+  //   moviendo el panel, y doble toque devuelve el valor por defecto.
+  // - Mantener pulsada la foto: ver el "antes" (como Lightroom movil).
+  // - Doble toque en la foto: zoom 1:1 / encajar.
+  const isMobile = () => window.matchMedia("(max-width: 760px)").matches;
+  const coarse = () => window.matchMedia("(pointer: coarse)").matches;
+  function wireTouch() {
+    const panel = el.querySelector(".lc-panel");
+    let t = null, lastTap = { id: null, at: 0 };
+    panel.addEventListener("pointerdown", (e) => {
+      if (e.pointerType !== "touch") return;
+      const n = e.target.closest(".lc-sl");
+      if (!n || e.target.classList.contains("lc-val")) return;
+      const sp = specs[n.dataset.id];
+      if (!sp) return;
+      t = { n, sp, id: e.pointerId, x: e.clientX, y: e.clientY, v0: getVal(n.dataset.id), on: false,
+            w: n.querySelector(".lc-range").getBoundingClientRect().width || 200 };
+    });
+    panel.addEventListener("pointermove", (e) => {
+      if (!t || e.pointerId !== t.id) return;
+      const dx = e.clientX - t.x, dy = e.clientY - t.y;
+      if (!t.on) {
+        if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { t = null; return; }   // es scroll
+        if (Math.abs(dx) < 6) return;
+        t.on = true;
+        try { t.n.setPointerCapture(e.pointerId); } catch (err) { /* sin captura */ }
+        t.n.classList.add("drag");
+      }
+      e.preventDefault();
+      const span = t.sp.max - t.sp.min;
+      let v = t.v0 + dx / t.w * span;
+      v = Math.round(v / t.sp.step) * t.sp.step;
+      onValue(t.n.dataset.id, Math.min(t.sp.max, Math.max(t.sp.min, v)), true);
+      syncSlider(t.n);
+    }, { passive: false });
+    const up = (e) => {
+      if (!t || e.pointerId !== t.id) return;
+      const n = t.n, id = n.dataset.id;
+      if (t.on) {
+        n.classList.remove("drag");
+        onValue(id, getVal(id), false);
+        commit();
+      } else {
+        // toque sin arrastrar: doble toque = valor por defecto
+        const now = Date.now();
+        if (lastTap.id === id && now - lastTap.at < 350) {
+          onValue(id, specs[id].default, false); syncSlider(n); commit(); lastTap = { id: null, at: 0 };
+        } else lastTap = { id, at: now };
+      }
+      t = null;
+    };
+    panel.addEventListener("pointerup", up);
+    panel.addEventListener("pointercancel", (e) => { if (t && t.on) { t.n.classList.remove("drag"); commit(); } t = null; });
+
+    // Foto: mantener = antes; doble toque = zoom
+    const stage = el.querySelector(".lc-stage");
+    let hold = null, held = false, lastStageTap = 0, sx = 0, sy = 0;
+    stage.addEventListener("pointerdown", (e) => {
+      if (tool !== "edit" || !e.target.closest(".lc-canvas")) return;
+      sx = e.clientX; sy = e.clientY; held = false;
+      hold = setTimeout(() => { held = true; before = true; el.querySelector(".lc-badge").classList.add("on"); requestRender(false); }, 350);
+    });
+    stage.addEventListener("pointermove", (e) => {
+      if (hold && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) { clearTimeout(hold); hold = null; }
+    });
+    const release = () => {
+      clearTimeout(hold); hold = null;
+      if (held) { before = el.querySelector('[data-a="before"]').classList.contains("on"); requestRender(false); }
+    };
+    stage.addEventListener("pointerup", release);
+    stage.addEventListener("pointercancel", release);
+    el.querySelector(".lc-canvas").addEventListener("click", (e) => {
+      if (held) { held = false; e.stopImmediatePropagation(); return; }
+      if (coarse()) {
+        // en tactil, un toque no hace nada; el doble toque cambia el zoom
+        const now = Date.now();
+        if (now - lastStageTap > 350) { lastStageTap = now; e.stopImmediatePropagation(); return; }
+        lastStageTap = 0;
+      }
+    }, true);
+  }
+
   // ¿Puede correr aqui? Hace falta WebAssembly y Workers de modulo
   function supported() {
     return typeof WebAssembly === "object" && typeof Worker === "function";
   }
 
   window.LightCraftEditor = { open: open, close: close, supported: supported,
-                              isOpen: () => !!(el && el.classList.contains("on")) };
+                              isOpen: () => !!(el && el.classList.contains("on")),
+                              state: () => JSON.parse(JSON.stringify(st)) };
 })();

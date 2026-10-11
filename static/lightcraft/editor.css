@@ -39,7 +39,7 @@ html[data-theme="tron"] .lc-btn.primary{color:#001218}
   display:flex;align-items:center;justify-content:center}
 .lc-stage.zoom{overflow:auto;display:block;cursor:zoom-out}
 .lc-stage.zoom .lc-canvas{max-width:none;max-height:none;margin:auto}
-.lc-canvas{display:block;max-width:calc(100% - 32px);max-height:calc(100% - 32px);box-shadow:0 2px 18px rgba(0,0,0,.6);cursor:zoom-in}
+.lc-canvas{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;display:block;max-width:calc(100% - 32px);max-height:calc(100% - 32px);box-shadow:0 2px 18px rgba(0,0,0,.6);cursor:zoom-in}
 .lc-stage.crop .lc-canvas{cursor:default}
 .lc-badge{position:absolute;left:12px;top:12px;padding:3px 8px;border-radius:4px;background:rgba(0,0,0,.65);
   color:#fff;font-size:11px;letter-spacing:.04em;text-transform:uppercase;display:none;pointer-events:none}
@@ -129,19 +129,104 @@ html[data-theme="tron"] .lc-btn.primary{color:#001218}
 .lc-tabs .lc-btn{flex:1;justify-content:center}
 
 .lc-hint{color:var(--lc-dim);font-size:11.5px;margin:8px 0 0;line-height:1.45}
-.lc-only-crop{display:none}
-.lc.tool-crop .lc-only-crop{display:block}
-.lc.tool-crop .lc-only-edit{display:none}
+.lc-only-crop,.lc-only-mask{display:none}
+.lc.tool-crop .lc-only-crop,.lc.tool-mask .lc-only-mask{display:block}
+.lc.tool-crop .lc-only-edit,.lc.tool-mask .lc-only-edit{display:none}
+.lc-tabbar{display:none}
 
-/* movil: foto arriba, panel abajo */
+/* mascaras: lista de capas */
+.lc-mlist{padding:0 12px}
+.lc-mitem{display:flex;align-items:center;gap:8px;padding:8px 8px;border-radius:6px;border:1px solid #333;margin-bottom:6px;cursor:pointer;background:#2a2a2a}
+.lc-mitem.on{border-color:var(--lc-accent);background:#303540}
+.lc-meye,.lc-mdel{width:30px;height:30px;border:0;border-radius:5px;background:transparent;color:var(--lc-text);font-size:15px;cursor:pointer;flex-shrink:0}
+.lc-meye.off{color:#666}
+.lc-mdel:hover,.lc-meye:hover{background:#3a3a3a}
+.lc-mname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--lc-hi)}
+.lc-mcount{font-size:11px;color:var(--lc-dim);background:#1d1d1d;border-radius:9px;padding:1px 7px}
+.lc-mmenu{display:none;padding:4px 12px 10px}
+.lc-mmenu.on{display:block}
+.lc-mgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.lc-mshape{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;padding:9px 10px;border-radius:6px;border:1px solid #3d3d3d;
+  background:#2c2c2c;color:var(--lc-hi);font:inherit;cursor:pointer}
+.lc-mshape:hover{background:#363636;border-color:#555}
+.lc-mshape small{color:var(--lc-dim);font-size:11px;line-height:1.3}
+.lc-msel{padding:0 12px 14px}
+.lc-comps{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}
+.lc-comp{height:28px;padding:0 10px;border-radius:14px;border:1px solid #444;background:#2c2c2c;color:var(--lc-text);font:inherit;font-size:12px;cursor:pointer}
+.lc-comp.on{border-color:var(--lc-accent);color:#fff;background:#303540}
+.lc-chk{display:inline-flex;align-items:center;gap:6px;color:var(--lc-text);cursor:pointer;margin-right:12px;padding:4px 0}
+.lc-chk input{width:16px;height:16px;accent-color:var(--lc-accent)}
+.lc-tabs .lc-btn.on{background:#4a4a4a;border-color:#666}
+
+/* mascaras: tiradores sobre la foto */
+.lc-mlayer{position:absolute;display:none;touch-action:none;cursor:crosshair}
+.lc-mlayer svg{width:100%;height:100%;overflow:visible;display:block}
+.lc-ml{stroke:#fff;stroke-width:1.5;fill:none;filter:drop-shadow(0 0 1.5px rgba(0,0,0,.9))}
+.lc-ml.lc-dash{stroke-dasharray:6 5}
+.lc-ml.lc-faint{stroke-opacity:.5}
+.lc-mh{fill:#fff;stroke:var(--lc-accent);stroke-width:2.5;cursor:grab;filter:drop-shadow(0 1px 2px rgba(0,0,0,.7))}
+.lc-bcur{fill:rgba(255,255,255,.08);stroke:#fff;stroke-width:1.2;pointer-events:none}
+.lc-sl.drag .lc-range{--lc-thumb:#fff}
+.lc-sl.drag label{color:var(--lc-accent)}
+
+/* ── iPhone y moviles: como Lightroom movil ──────────────────────────────
+   Foto lo mas grande posible, un panel corto con SOLO el grupo elegido y una
+   barra de herramientas abajo. Alturas en dvh (no saltan al ocultarse las
+   barras de Safari) y margenes de la zona segura (muesca, barra de inicio). */
 @media (max-width:760px){
-  .lc-body{flex-direction:column}
-  .lc-stage{flex:0 0 46%}
-  .lc-tools{width:auto;height:44px;flex-direction:row;justify-content:center;border-left:0;border-top:1px solid #000;padding:0}
-  .lc-panel{width:auto;flex:1;border-left:0}
-  .lc-hist canvas{height:64px}
+  .lc{height:100dvh;bottom:auto;touch-action:manipulation}
+  .lc-top{height:auto;min-height:48px;padding:env(safe-area-inset-top) 6px 0;gap:2px}
   .lc-top .lc-hide-m{display:none}
-  .lc-range{height:24px}
-  .lc-range::-webkit-slider-thumb{width:18px;height:18px;margin-top:-7.5px}
-  .lc-range::-moz-range-thumb{width:18px;height:18px}
+  .lc-name{font-size:13px;padding:0 4px}
+  .lc-ib{width:42px;height:42px}
+  .lc-btn.primary{height:36px;padding:0 14px}
+  .lc-body{flex-direction:column}
+  .lc-stage{flex:1 1 auto;min-height:0}
+  .lc-canvas{max-width:100%;max-height:100%;box-shadow:none}
+  .lc-tools{display:none}
+  .lc-panel{flex:0 0 auto;width:auto;max-height:38dvh;border-left:0;border-top:1px solid #000;-webkit-overflow-scrolling:touch}
+  .lc-hist,.lc-desk-hint{display:none}
+  .lc.tool-crop .lc-panel,.lc.tool-mask .lc-panel{max-height:44dvh}
+  /* solo el grupo elegido, sin cabeceras plegables */
+  .lc-sec{display:none;border-top:0}
+  .lc-sec-h{display:none}
+  .lc-sec > .lc-sec-b{display:block;padding-top:10px}
+  .lc[data-group="light"] .lc-sec[data-sec="light"],.lc[data-group="color"] .lc-sec[data-sec="color"],
+  .lc[data-group="effects"] .lc-sec[data-sec="effects"],.lc[data-group="detail"] .lc-sec[data-sec="detail"],
+  .lc[data-group="optics"] .lc-sec[data-sec="optics"],.lc[data-group="geometry"] .lc-sec[data-sec="geometry"]{display:block}
+  .lc[data-group="optics"] .lc-sec[data-sec="calibration"]{display:block}
+  .lc-g-profile{display:none}
+  .lc[data-group="profile"] .lc-g-profile{display:flex}
+  .lc[data-group="profile"] .lc-prof-amt{display:block}
+  .lc-head{padding:10px 12px 6px}
+  .lc-head h3{font-size:14px}
+  /* deslizadores grandes para el dedo: se arrastra desde cualquier punto */
+  .lc-sl{padding:7px 2px 6px;touch-action:pan-y}
+  .lc-sl-top label{font-size:14px}
+  .lc-val{font-size:14px;width:64px}
+  .lc-range{height:22px}
+  .lc-range::-webkit-slider-runnable-track{height:4px}
+  .lc-range::-webkit-slider-thumb{width:20px;height:20px;margin-top:-8px}
+  .lc-range::-moz-range-thumb{width:20px;height:20px}
+  .lc-btn.sm{height:34px;padding:0 12px;font-size:13px}
+  .lc-cch{height:34px}
+  .lc-dotb{width:30px;height:30px}
+  .lc-curve canvas{max-width:300px;margin:0 auto}
+  .lc-ch{width:34px;height:34px;margin:-17px 0 0 -17px}
+  .lc.tool-crop .lc-canvas{max-width:calc(100% - 40px);max-height:calc(100% - 40px)}
+  .lc-mh{r:13}
+  /* barra de herramientas inferior */
+  .lc-tabbar{display:flex;flex-shrink:0;overflow-x:auto;gap:2px;background:#1c1c1c;border-top:1px solid #000;
+    padding:4px 6px calc(4px + env(safe-area-inset-bottom));scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .lc-tabbar::-webkit-scrollbar{display:none}
+  .lc-tab{flex:0 0 auto;min-width:64px;height:54px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+    border:0;border-radius:8px;background:transparent;color:var(--lc-dim);font:inherit;font-size:11px;cursor:pointer}
+  .lc-tab svg{width:22px;height:22px;fill:currentColor}
+  .lc-tab.on{color:var(--lc-accent)}
+  .lc-tab[data-group="auto"]{color:#e8c25a}
+}
+/* tactil en general (iPad incluido): sin tirador minimo */
+@media (pointer:coarse){
+  .lc-sl{touch-action:pan-y}
+  .lc-range{pointer-events:none}
 }
