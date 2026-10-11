@@ -1350,6 +1350,7 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
   html[data-theme="tron"] .fc-skeleton{animation:none}
 }
 </style>
+<link rel="stylesheet" href="/static/lightcraft/editor.css">
 </head>
 <body>
 
@@ -3713,6 +3714,7 @@ function closeViewer() {
 
 function viewerKeys(e) {
   if (editorEl.classList.contains("on")) return;   // manda el editor
+  if (window.LightCraftEditor && LightCraftEditor.isOpen()) return;
   if (e.key === "Escape") closeViewer();
   else if (e.key === "ArrowLeft") viewerNav(-1);
   else if (e.key === "ArrowRight") viewerNav(1);
@@ -5548,9 +5550,38 @@ async function edSave() {
   if (viewerEl.classList.contains("on")) showViewerPhoto();
 }
 
+// Despues de guardar una edicion (editor clasico o LightCraft)
+function lcAfterSave(editedPath, data) {
+  sendReport("Editar foto", 1, 1, 0, []);
+  if (data.derived) {
+    // El archivo nuevo no estaba en la galería: hay que recargar la carpeta
+    hideViewer();
+    refreshCurrentView();
+    return;
+  }
+  // Mismo archivo: forzar que se recarguen miniatura y vista previa
+  editedStamps[editedPath] = Date.now();
+  const idx = currentFiles.findIndex(f => f.path === editedPath);
+  if (idx >= 0) {
+    const card = document.querySelector('.fc[data-index="' + idx + '"]');
+    const cardImg = card && card.querySelector("img");
+    if (cardImg) cardImg.src = thumbUrl(currentFiles[idx]);
+  }
+  if (viewerEl.classList.contains("on")) showViewerPhoto();
+}
+
+// Si el motor de LightCraft no arranca (navegador sin WebAssembly, fallo al
+// abrir), se usa el editor clasico para no dejar la foto sin editar
+function lcFallback(f, err) {
+  console.warn("LightCraft no disponible, editor clásico:", err);
+  openEditor(f);
+}
+
 document.getElementById("vw-edit-btn").addEventListener("click", () => {
   const f = currentFiles[viewerIndex];
-  if (f) openEditor(f);
+  if (!f) return;
+  if (window.LightCraftEditor && LightCraftEditor.supported()) LightCraftEditor.open(f);
+  else openEditor(f);
 });
 
 
@@ -5803,5 +5834,7 @@ loadWorkRoot();
 loadFavorites();
 navigate(pathFromHash(), { replace: true });
 </script>
+<!-- Editor LightCraft (motor en WebAssembly, ver lightcraft-bridge/) -->
+<script src="/static/lightcraft/editor.js"></script>
 </body>
 </html>

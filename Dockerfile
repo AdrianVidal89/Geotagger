@@ -14,6 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py ./
 COPY templates/ ./templates/
+# Editor LightCraft: motor ya compilado a WebAssembly (no hace falta Rust aqui)
+COPY static/ ./static/
 
 # Ajustes (carpeta de trabajo, email) y cache de miniaturas. Montar aqui un
 # volumen del NAS para que sobrevivan a recrear el contenedor.
