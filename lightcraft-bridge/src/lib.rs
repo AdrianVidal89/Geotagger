@@ -16,10 +16,30 @@ use std::sync::Arc;
 
 use lightcraft_codecs::{ChromaSubsampling, DecodeOptions, EncodeImage, EncodeMeta};
 use lightcraft_develop::{DevelopSettings, Treatment, WbMode, controls};
-use lightcraft_geom::{Orientation, Rect};
+use lightcraft_geom::{Orientation, Point, Rect};
 use lightcraft_pipeline::{Quality, RenderRequest, SourceInfo, StageCache, auto, profiles};
 use lightcraft_raster::Rgb32f;
 use wasm_bindgen::prelude::*;
+
+// Objetivos del Auto (luminancia de salida, 0..255)
+const KEY_TARGET: f64 = 118.0;     // tono medio
+const WHITE_TARGET: f64 = 246.0;   // percentil 99,5
+const BLACK_TARGET: f64 = 5.0;     // percentil 0,5
+const SHADOW_P10: f64 = 26.0;      // percentil 10: sombras grandes por debajo = foto empastada
+const CLIP_HI_MAX: f64 = 0.004;    // fraccion maxima de pixeles quemados
+const AUTO_SIDE: usize = 320;      // tamano al que se mide
+const AUTO_IDS: [&str; 8] = ["light.exposure", "light.contrast", "light.highlights", "light.shadows",
+                             "light.whites", "light.blacks", "color.vibrance", "color.saturation"];
+
+/// Lo que el Auto mira del histograma de luminancia del resultado.
+struct Stats {
+    key: f64,
+    p005: f64,
+    p10: f64,
+    p995: f64,
+    clip_hi: f64,
+    clip_lo: f64,
+}
 
 /// Lado mayor maximo que se acepta revelar (proteccion de memoria: 65 Mpx).
 const MAX_SIDE: u32 = 12_000;
@@ -165,8 +185,90 @@ impl Editor {
         vec![c.rect.x0, c.rect.y0, c.rect.x1, c.rect.y1]
     }
 
-    /// Auto (tono y viveza como el Auto de Lightroom). Devuelve los valores en JSON.
+    /// Auto de Geotagger: ajusta Exposicion, Iluminaciones, Sombras, Blancos,
+    /// Negros, Contraste e Intensidad MIDIENDO el resultado.
+    ///
+    /// El Auto de LightCraft aplica una receta fija (Contraste +68,
+    /// Iluminaciones -66, Sombras +52) ajustada para RAW; con JPEG, que ya
+    /// vienen revelados, comprimia el rango (blancos a ~200, negros
+    /// levantados) y oscurecia: fotos grises, sin visibilidad. Este revela
+    /// una version pequena, mira su histograma y corrige cada control hasta
+    /// llegar a unos objetivos (lazo cerrado), asi que el resultado es el
+    /// que se busca sea cual sea la foto. Devuelve los valores en JSON.
     pub fn auto_tone(&mut self) -> String {
+        let mut s = self.settings.clone();
+        for id in AUTO_IDS {
+            if let Some(sp) = controls::find(id) {
+                controls::set(&mut s, id, sp.default);
+            }
+        }
+        s.curve.master = Vec::new();
+        // Objetivo de tono medio: se acerca a KEY_TARGET pero conserva un 30 %
+        // del caracter de la foto (una noche sigue siendo oscura, una nevada clara)
+        let key0 = self.measure(&s).key;
+        let target = KEY_TARGET - 0.3 * (KEY_TARGET - key0);
+
+        // 1. Exposicion: el tono medio (media recortada) a un gris medio
+        //    luminoso, sin quemar mas de un 1,5 % de la foto al subirla
+        let ev_key = self.solve(&mut s, "light.exposure", -3.0, 3.5, |m| m.key - target);
+        let ev = if ev_key > 0.0 {
+            let ev_clip = self.solve(&mut s, "light.exposure", 0.0, 3.5, |m| m.clip_hi - 0.015);
+            ev_key.min(ev_clip.max(0.0))
+        } else {
+            ev_key
+        };
+        controls::set(&mut s, "light.exposure", ev);
+
+        // 2. Iluminaciones: rescatar lo quemado, con mesura (a tope aplana el cielo)
+        let m = self.measure(&s);
+        if m.clip_hi > CLIP_HI_MAX {
+            let h = self.solve(&mut s, "light.highlights", -60.0, 0.0, |m| CLIP_HI_MAX - m.clip_hi);
+            controls::set(&mut s, "light.highlights", h);
+        }
+        // 3. Sombras: abrir zonas oscuras grandes, sin tocar un fondo negro puro
+        let m = self.measure(&s);
+        if m.p10 < SHADOW_P10 && m.clip_lo < 0.08 {
+            let sh = self.solve(&mut s, "light.shadows", 0.0, 50.0, |m| m.p10 - SHADOW_P10);
+            controls::set(&mut s, "light.shadows", sh);
+        }
+        // 4. Niveles en la curva maestra: el 0,5 % mas oscuro a negro y el
+        //    0,5 % mas claro a blanco. Es lo que de verdad devuelve el
+        //    contraste a una foto desvaida (Blancos/Negros del motor se
+        //    quedan cortos con JPEG) y queda a la vista en la curva.
+        let m = self.measure(&s);
+        let bx = if m.p005 > BLACK_TARGET + 2.0 { ((m.p005 - BLACK_TARGET) / 255.0).min(0.30) } else { 0.0 };
+        let wx = if m.p995 < WHITE_TARGET - 2.0 { ((m.p995 + 255.0 - WHITE_TARGET) / 255.0).max(0.55) } else { 1.0 };
+        if bx > 0.0 || wx < 1.0 || (m.key - target).abs() > 6.0 {
+            // 5. Tono medio con un punto central (el "gamma" de los niveles):
+            //    sin volver a tocar la exposicion, que bajaria otra vez los blancos
+            let mid_x = bx + (wx - bx) * 0.5;
+            let curve = |my: f64| vec![Point::new(bx, 0.0), Point::new(mid_x, my), Point::new(wx, 1.0)];
+            let (mut lo, mut hi) = (0.30, 0.70);
+            for _ in 0..9 {
+                let my = (lo + hi) / 2.0;
+                s.curve.master = curve(my);
+                if self.measure(&s).key < target { lo = my } else { hi = my }
+            }
+            let my = ((lo + hi) / 2.0 * 1000.0).round() / 1000.0;
+            s.curve.master = if bx == 0.0 && wx == 1.0 && (my - 0.5).abs() < 0.01 { Vec::new() } else { curve(my) };
+        }
+        // (Sin Intensidad ni Saturacion: estirar el histograma ya aviva el color)
+
+        let mut out = Vec::new();
+        for id in AUTO_IDS {
+            let v = controls::get(&s, id).unwrap_or(0.0);
+            let v = if id == "light.exposure" { (v * 100.0).round() / 100.0 } else { v.round() };
+            controls::set(&mut s, id, v);
+            out.push(format!("\"{id}\":{v}"));
+        }
+        let curve: Vec<String> = s.curve.master.iter().flat_map(|p| [format!("{:.4}", p.x), format!("{:.4}", p.y)]).collect();
+        out.push(format!("\"curve.master\":[{}]", curve.join(",")));
+        self.settings = s;
+        format!("{{{}}}", out.join(","))
+    }
+
+    /// El Auto anterior (el de LightCraft), por si se quiere comparar.
+    pub fn auto_tone_lightcraft(&mut self) -> String {
         let a = auto::auto_tone(&self.src, &self.info, &self.settings);
         let l = &mut self.settings.light;
         l.exposure = a.exposure;
@@ -181,6 +283,26 @@ impl Editor {
             "{{\"light.exposure\":{},\"light.contrast\":{},\"light.highlights\":{},\"light.shadows\":{},\"light.whites\":{},\"light.blacks\":{},\"color.vibrance\":{},\"color.saturation\":{}}}",
             a.exposure, a.contrast, a.highlights, a.shadows, a.whites, a.blacks, a.vibrance, a.saturation
         )
+    }
+
+    /// Curva por puntos de un canal (`master`, `red`, `green`, `blue`):
+    /// pares x,y en 0..1 sobre la imagen ya codificada, como en Lightroom.
+    /// Menos de dos puntos = curva neutra.
+    pub fn set_curve(&mut self, channel: &str, xy: &[f64]) {
+        let pts: Vec<Point> = xy
+            .chunks_exact(2)
+            .filter(|p| p[0].is_finite() && p[1].is_finite())
+            .map(|p| Point::new(p[0].clamp(0.0, 1.0), p[1].clamp(0.0, 1.0)))
+            .collect();
+        let pts = if pts.len() < 2 { Vec::new() } else { pts };
+        let c = &mut self.settings.curve;
+        match channel {
+            "master" => c.master = pts,
+            "red" => c.red = pts,
+            "green" => c.green = pts,
+            "blue" => c.blue = pts,
+            _ => {}
+        }
     }
 
     /// Balance de blancos automatico (escala relativa). Devuelve [temp, tint].
@@ -274,6 +396,65 @@ impl Editor {
     }
 }
 
+impl Editor {
+    /// Revela pequeno con los ajustes `s` y mide el histograma de luminancia.
+    fn measure(&self, s: &DevelopSettings) -> Stats {
+        let mut req = RenderRequest::fit(AUTO_SIDE, AUTO_SIDE);
+        req.quality = Quality::Draft;
+        let img = lightcraft_pipeline::render(&self.src, &self.info, s, &req).image;
+        let mut l: Vec<f64> = img
+            .data
+            .iter()
+            .map(|p| 0.2126 * p[0] as f64 + 0.7152 * p[1] as f64 + 0.0722 * p[2] as f64)
+            .collect();
+        if l.is_empty() {
+            l.push(118.0);
+        }
+        l.sort_by(|a, b| a.total_cmp(b));
+        let n = l.len();
+        let q = |p: f64| l.get(((n - 1) as f64 * p).round() as usize).copied().unwrap_or(0.0);
+        // Tono medio sin los negros ni los blancos puros: un fondo negro o un
+        // cielo quemado no deben decidir la exposicion del sujeto
+        // (si lo quemado es mucho, la foto esta sobreexpuesta y si cuenta)
+        let hi_cut = if l.iter().filter(|v| **v >= 251.0).count() * 20 > n { 256.0 } else { 251.0 };
+        let mid: Vec<f64> = l.iter().copied().filter(|v| *v > 4.0 && *v < hi_cut).collect();
+        let key = if mid.len() * 10 >= n {
+            mid.iter().sum::<f64>() / mid.len() as f64
+        } else {
+            l.iter().sum::<f64>() / n as f64
+        };
+        Stats {
+            key,
+            p005: q(0.005),
+            p10: q(0.10),
+            p995: q(0.995),
+            clip_hi: l.iter().filter(|v| **v >= 252.0).count() as f64 / n as f64,
+            clip_lo: l.iter().filter(|v| **v <= 2.0).count() as f64 / n as f64,
+        }
+    }
+
+    /// Busca (biseccion) el valor de `id` en [lo, hi] que lleva `f` a cero;
+    /// `f` crece con el control. Si no hay cero en el rango, el extremo mas cercano.
+    fn solve(&self, s: &mut DevelopSettings, id: &str, lo: f64, hi: f64, f: impl Fn(&Stats) -> f64) -> f64 {
+        let at = |s: &mut DevelopSettings, v: f64| {
+            controls::set(s, id, v);
+            f(&self.measure(s))
+        };
+        let (mut lo, mut hi) = (lo, hi);
+        if at(s, lo) >= 0.0 {
+            return lo;
+        }
+        if at(s, hi) <= 0.0 {
+            return hi;
+        }
+        for _ in 0..9 {
+            let mid = (lo + hi) / 2.0;
+            if at(s, mid) < 0.0 { lo = mid } else { hi = mid }
+        }
+        (lo + hi) / 2.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,6 +514,32 @@ mod tests {
         assert_eq!((back.width, back.height), (150, 100));
         let r = Editor::fit_crop(300.0, 200.0, 10.0, 0.0);
         assert!(r[0] > 0.0 && r[2] < 1.0);
+    }
+
+    #[test]
+    fn curves_and_auto_improve_a_dark_photo() {
+        let mut img = lightcraft_raster::Rgba8::new(200, 150);
+        for (i, p) in img.data.iter_mut().enumerate() {
+            let v = ((i % 200) * 60 / 200) as u8 + 5; // foto oscura y plana: 5..65
+            *p = [v, v, v.saturating_add(4), 255];
+        }
+        let jpg = lightcraft_codecs::encode_jpeg(&EncodeImage::rgba8(&img), 95, ChromaSubsampling::S444, &EncodeMeta::default()).unwrap();
+        let mut e = Editor::new(&jpg, 0, 0).unwrap();
+        let before = e.measure(&e.settings.clone());
+        e.auto_tone();
+        let after = e.measure(&e.settings.clone());
+        assert!(after.key > before.key + 40.0, "{} -> {}", before.key, after.key);
+        assert!(after.p995 - after.p005 > before.p995 - before.p005 + 80.0);
+        // curva maestra que aclara los medios
+        let mut f = Editor::new(&jpg, 0, 0).unwrap();
+        let m0 = f.measure(&f.settings.clone()).key;
+        f.set_curve("master", &[0.0, 0.0, 0.25, 0.5, 1.0, 1.0]);
+        assert!(f.measure(&f.settings.clone()).key > m0 + 20.0);
+        f.set_curve("red", &[0.0, 0.0, 1.0, 0.5]);
+        assert!(!f.is_default());
+        f.set_curve("master", &[]);
+        f.set_curve("red", &[]);
+        assert!(f.is_default());
     }
 
     #[test]

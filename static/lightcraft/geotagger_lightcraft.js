@@ -13,7 +13,16 @@ export class Editor {
         wasm.__wbg_editor_free(ptr, 0);
     }
     /**
-     * Auto (tono y viveza como el Auto de Lightroom). Devuelve los valores en JSON.
+     * Auto de Geotagger: ajusta Exposicion, Iluminaciones, Sombras, Blancos,
+     * Negros, Contraste e Intensidad MIDIENDO el resultado.
+     *
+     * El Auto de LightCraft aplica una receta fija (Contraste +68,
+     * Iluminaciones -66, Sombras +52) ajustada para RAW; con JPEG, que ya
+     * vienen revelados, comprimia el rango (blancos a ~200, negros
+     * levantados) y oscurecia: fotos grises, sin visibilidad. Este revela
+     * una version pequena, mira su histograma y corrige cada control hasta
+     * llegar a unos objetivos (lazo cerrado), asi que el resultado es el
+     * que se busca sea cual sea la foto. Devuelve los valores en JSON.
      * @returns {string}
      */
     auto_tone() {
@@ -21,6 +30,22 @@ export class Editor {
         let deferred1_1;
         try {
             const ret = wasm.editor_auto_tone(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * El Auto anterior (el de LightCraft), por si se quiere comparar.
+     * @returns {string}
+     */
+    auto_tone_lightcraft() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.editor_auto_tone_lightcraft(this.__wbg_ptr);
             deferred1_0 = ret[0];
             deferred1_1 = ret[1];
             return getStringFromWasm0(ret[0], ret[1]);
@@ -227,6 +252,20 @@ export class Editor {
         wasm.editor_set_crop(this.__wbg_ptr, x0, y0, x1, y1, angle);
     }
     /**
+     * Curva por puntos de un canal (`master`, `red`, `green`, `blue`):
+     * pares x,y en 0..1 sobre la imagen ya codificada, como en Lightroom.
+     * Menos de dos puntos = curva neutra.
+     * @param {string} channel
+     * @param {Float64Array} xy
+     */
+    set_curve(channel, xy) {
+        const ptr0 = passStringToWasm0(channel, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArrayF64ToWasm0(xy, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.editor_set_curve(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+    }
+    /**
      * Giro/volteo del usuario, como valor EXIF 1..8 sobre la foto ya orientada.
      * @param {number} exif
      */
@@ -382,6 +421,13 @@ function getUint8ArrayMemory0() {
 function passArray8ToWasm0(arg, malloc) {
     const ptr = malloc(arg.length * 1, 1) >>> 0;
     getUint8ArrayMemory0().set(arg, ptr / 1);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+
+function passArrayF64ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 8, 8) >>> 0;
+    getFloat64ArrayMemory0().set(arg, ptr / 8);
     WASM_VECTOR_LEN = arg.length;
     return ptr;
 }

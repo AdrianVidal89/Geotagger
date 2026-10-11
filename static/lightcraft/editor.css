@@ -108,6 +108,19 @@ html[data-theme="tron"] .lc-btn.primary{color:#001218}
 .lc-range::-moz-range-thumb{width:13px;height:13px;border-radius:50%;background:var(--lc-thumb);box-shadow:0 1px 3px rgba(0,0,0,.6);border:0}
 .lc-range:active::-webkit-slider-thumb{background:#fff;transform:scale(1.15)}
 
+/* curva de tonos */
+.lc-curve-ch{display:flex;gap:4px;margin:4px 0 8px}
+.lc-cch{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;height:26px;border-radius:5px;border:1px solid #3d3d3d;
+  background:#2a2a2a;color:var(--lc-text);font:inherit;font-size:11.5px;cursor:pointer;padding:0 4px;position:relative}
+.lc-cch span{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.lc-cch.on{background:#454545;border-color:#777;color:#fff}
+.lc-cch.mod::after{content:"";position:absolute;top:3px;right:4px;width:5px;height:5px;border-radius:50%;background:var(--lc-accent)}
+.lc-curve{position:relative}
+.lc-curve canvas{width:100%;aspect-ratio:1;display:block;cursor:crosshair;touch-action:none;border-radius:4px}
+.lc-curve-read{height:18px;font-size:11px;color:var(--lc-dim);text-align:center;margin-top:3px;font-variant-numeric:tabular-nums}
+.lc-param{margin-top:6px}
+.lc-param summary{cursor:pointer;color:var(--lc-dim);font-size:11px;text-transform:uppercase;letter-spacing:.06em;padding:6px 0}
+
 /* puntos de color (Mezcla de color / Gradacion) */
 .lc-dots{display:flex;gap:7px;margin:8px 0 4px;flex-wrap:wrap}
 .lc-dotb{width:22px;height:22px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0;box-shadow:inset 0 0 0 1px rgba(0,0,0,.4)}

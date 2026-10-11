@@ -481,6 +481,24 @@ neblina, viñeta, granulado), **Detalle** (enfoque y reduccion de ruido),
 (proporciones, angulo, girar y voltear), **Auto**, antes/despues (`\`),
 deshacer/rehacer y zoom 1:1.
 
+**Curva de tonos** (en Luz): curva por puntos en los canales Maestro,
+Rojo, Verde y Azul, con el histograma del canal de fondo, como en Lightroom.
+Clic sobre la curva añade un punto; arrastrarlo lo mueve; sacarlo del recuadro
+o doble clic lo quita; doble clic en el fondo deja el canal recto. Se dibuja
+con la misma interpolacion (Hermite monotona) que aplica el motor. Debajo
+sigue la curva parametrica (iluminaciones, claros, oscuros, sombras).
+
+**Auto**: no es el de LightCraft. Aquel aplica una receta fija pensada para
+RAW (Contraste +68, Iluminaciones -66, Sombras +52) y con JPEG, que ya vienen
+revelados, comprimia el rango y oscurecia: fotos grises y sin visibilidad.
+El de Geotagger mide: revela la foto en pequeño, mira su histograma y ajusta
+hasta llegar a unos objetivos. Exposicion para el tono medio (sin contar un
+fondo negro o un cielo quemado, y conservando algo del caracter de la foto),
+Iluminaciones si hay zonas quemadas, Sombras si hay zonas grandes empastadas
+y, por ultimo, niveles en la curva maestra: el 0,5 % mas oscuro a negro, el
+0,5 % mas claro a blanco y un punto central para el tono medio. Esos puntos
+quedan a la vista en la curva y se pueden retocar.
+
 El motor es el de [LightCraft](https://github.com/storytold/lightcraft)
 (reimplementacion libre de Lightroom en Rust, MIT/Apache-2.0): su pipeline de
 revelado en coma flotante de 32 bits, compilado a WebAssembly
