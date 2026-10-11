@@ -1936,6 +1936,7 @@ def _index_forget(path):
             conn.commit()
     except Exception:
         pass
+    _faces_forget(path)
 
 def _index_move(old, new):
     """Mover o renombrar no cambia los metadatos: basta con mover la fila."""
@@ -1949,6 +1950,7 @@ def _index_move(old, new):
             conn.commit()
     except Exception:
         pass
+    _faces_move(old, new)
 
 def _index_copy(old, new):
     try:
@@ -1960,6 +1962,363 @@ def _index_copy(old, new):
                 "(path, mtime, size, lat, lon, date, blur, rating) "
                 "SELECT ?, ?, ?, lat, lon, date, blur, rating FROM photos WHERE path = ?",
                 (str(new), int(st.st_mtime), st.st_size, str(old)))
+            conn.commit()
+    except Exception:
+        pass
+    _faces_copy(old, new)
+
+# =============================================================================
+# ROSTROS (preparacion)
+# El reconocimiento facial NO corre en el NAS: es caro (un modelo de IA por
+# cada foto) y el NAS bastante tiene con servir la galeria. Lo hace un equipo
+# Linux que ve las mismas fotos por la red, y Geotagger solo IMPORTA lo que
+# ese equipo ha calculado. El intercambio es un unico fichero JSON (puede ir
+# comprimido en gzip), formato "geotagger-faces" version 1 (ver FACES.md):
+#
+#   - El usuario pulsa "Actualizar información de rostros", elige en su equipo
+#     el fichero que genero la IA y se sube aqui (/api/faces/import).
+#   - Geotagger lo guarda en el indice (tablas faces_photos, faces, persons) y
+#     deja una copia "oficial" ya fusionada en <carpeta de trabajo>/.geotagger/
+#     faces.json.gz. Esa copia es la que el equipo Linux lee en la siguiente
+#     pasada para analizar SOLO lo nuevo o cambiado (compara tamano y fecha de
+#     cada foto) y conservar los ids de persona y los nombres puestos aqui.
+#
+# Las rutas del fichero son relativas a la carpeta de trabajo y con "/", asi
+# valen igual en el NAS (/share/...) que en el Linux (/mnt/nas/...).
+# Mover, renombrar, copiar o borrar fotos desde Geotagger arrastra sus rostros
+# (ver _faces_move & co., llamados desde _index_move & co.).
+# =============================================================================
+
+FACES_FORMAT = "geotagger-faces"
+FACES_VERSION = 1
+FACES_SHARED_DIR = ".geotagger"           # oculta: la galeria y el indice la saltan
+FACES_SHARED_FILE = "faces.json.gz"
+FACES_UPLOAD_MAX = 1024 * 1024 * 1024     # 1 GB: con embeddings, 100.000 caras ~ 300 MB
+FACES_DTYPES = {"float32": 4, "float16": 2}
+
+_faces_ready = False
+_faces_lock = threading.Lock()            # una importacion a la vez
+
+def _faces_db():
+    """Las tablas de rostros viven en el mismo index.db que el resto."""
+    global _faces_ready
+    conn = _index_db()
+    if not _faces_ready:
+        with _index_write:
+            conn.execute("""CREATE TABLE IF NOT EXISTS faces_photos (
+                path TEXT PRIMARY KEY,
+                size INTEGER, mtime INTEGER,
+                width INTEGER, height INTEGER,
+                analyzed_at TEXT)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS faces (
+                id TEXT PRIMARY KEY,
+                path TEXT NOT NULL,
+                x REAL, y REAL, w REAL, h REAL,
+                score REAL,
+                person TEXT,
+                embedding BLOB)""")
+            conn.execute("CREATE INDEX IF NOT EXISTS faces_path ON faces(path)")
+            conn.execute("CREATE INDEX IF NOT EXISTS faces_person ON faces(person)")
+            # name_local = 1: nombre puesto en Geotagger; una importacion no lo pisa
+            conn.execute("""CREATE TABLE IF NOT EXISTS persons (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                cover TEXT,
+                name_local INTEGER DEFAULT 0)""")
+            conn.commit()
+        _faces_ready = True
+    return conn
+
+def _faces_meta_get(key, default=None):
+    row = _faces_db().execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    if not row:
+        return default
+    try:
+        return json.loads(row[0])
+    except Exception:
+        return default
+
+def _faces_meta_set(conn, key, value):
+    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+                 (key, json.dumps(value)))
+
+def _faces_shared_path(root=None):
+    return (root or _work_root()) / FACES_SHARED_DIR / FACES_SHARED_FILE
+
+def _faces_rel(abs_path, root):
+    """Ruta relativa a la carpeta de trabajo, con "/", o None si cae fuera."""
+    try:
+        return Path(abs_path).relative_to(root).as_posix()
+    except ValueError:
+        return None
+
+def _faces_box(raw):
+    """[x, y, w, h] normalizados 0..1 sobre la foto tal y como se VE (ya
+    aplicada la orientacion EXIF). Devuelve None si no es valido."""
+    if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+        return None
+    try:
+        x, y, w, h = (float(v) for v in raw)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (x, y, w, h)) or w <= 0 or h <= 0:
+        return None
+    x = min(max(x, 0.0), 1.0)
+    y = min(max(y, 0.0), 1.0)
+    return (x, y, min(w, 1.0 - x), min(h, 1.0 - y))
+
+def _faces_embedding(raw, nbytes):
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        blob = base64.b64decode(raw, validate=True)
+    except Exception:
+        return None
+    if nbytes and len(blob) != nbytes:
+        return None
+    return blob
+
+def _faces_read_upload(stream):
+    """Vuelca la subida a un temporal (sin cargarla en memoria dos veces) y
+    devuelve el JSON. Acepta el fichero tal cual o comprimido con gzip."""
+    import gzip
+    Path(TMP_DIR).mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix="faces_", suffix=".upload", dir=TMP_DIR)
+    try:
+        total = 0
+        with os.fdopen(fd, "wb") as out:
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > FACES_UPLOAD_MAX:
+                    raise ValueError("el fichero pasa de %d MB" % (FACES_UPLOAD_MAX // 2**20))
+                out.write(chunk)
+        with open(tmp, "rb") as f:
+            gz = f.read(2) == b"\x1f\x8b"
+        opener = gzip.open if gz else open
+        with opener(tmp, "rt", encoding="utf-8") as f:
+            return json.load(f)
+    finally:
+        _discard(tmp)
+
+def _faces_import(data, root):
+    """Fusiona un fichero geotagger-faces en el indice. Devuelve un resumen."""
+    if not isinstance(data, dict) or data.get("format") != FACES_FORMAT:
+        raise ValueError("no es un fichero de rostros de Geotagger (format != %s)" % FACES_FORMAT)
+    try:
+        version = int(data.get("version", 0))
+    except (TypeError, ValueError):
+        version = 0
+    if version < 1 or version > FACES_VERSION:
+        raise ValueError("version %r no soportada (esta app lee hasta la %d)"
+                         % (data.get("version"), FACES_VERSION))
+    full = data.get("mode") == "full"
+    emb = data.get("embedding") or {}
+    dim = int(emb.get("dim") or 0) if isinstance(emb, dict) else 0
+    dtype = emb.get("dtype", "float32") if isinstance(emb, dict) else "float32"
+    nbytes = dim * FACES_DTYPES.get(dtype, 0) if dim else 0
+
+    photos = data.get("photos") or []
+    persons = data.get("persons") or []
+    if not isinstance(photos, list) or not isinstance(persons, list):
+        raise ValueError("'photos' y 'persons' tienen que ser listas")
+
+    summary = {"photos": 0, "faces": 0, "persons": 0, "missing": 0,
+               "invalid": 0, "removed": 0, "missing_examples": []}
+    seen = set()
+    conn = _faces_db()
+    with _index_write:
+        try:
+            # Antes que las caras: los ids de persona a los que apuntan
+            for p in persons:
+                if not isinstance(p, dict) or not p.get("id"):
+                    continue
+                pid = str(p["id"])
+                name = (str(p.get("name")).strip() or None) if p.get("name") else None
+                cover = str(p["cover"]) if p.get("cover") else None
+                conn.execute("INSERT OR IGNORE INTO persons (id) VALUES (?)", (pid,))
+                # El nombre puesto aqui manda; el del fichero solo rellena
+                conn.execute("UPDATE persons SET name = COALESCE(?, name) "
+                             "WHERE id = ? AND COALESCE(name_local, 0) = 0", (name, pid))
+                if cover:
+                    conn.execute("UPDATE persons SET cover = ? WHERE id = ?", (cover, pid))
+                summary["persons"] += 1
+
+            for ph in photos:
+                rel = ph.get("path") if isinstance(ph, dict) else None
+                if not rel or not isinstance(rel, str):
+                    summary["invalid"] += 1
+                    continue
+                rel = rel.replace("\\", "/").strip("/")
+                abs_p = _resolve_path(rel, root)
+                if abs_p is None or abs_p.name.startswith((".", "@")):
+                    summary["invalid"] += 1
+                    continue
+                if not abs_p.is_file():
+                    # La foto ya no esta (o el Linux miraba otra carpeta): no
+                    # se guarda, y se avisa con unos ejemplos
+                    summary["missing"] += 1
+                    if len(summary["missing_examples"]) < 5:
+                        summary["missing_examples"].append(rel)
+                    continue
+                key = str(abs_p)
+                seen.add(key)
+                conn.execute("DELETE FROM faces WHERE path = ?", (key,))
+                conn.execute(
+                    "INSERT OR REPLACE INTO faces_photos "
+                    "(path, size, mtime, width, height, analyzed_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (key, ph.get("size"), ph.get("mtime"), ph.get("width"), ph.get("height"),
+                     ph.get("analyzed_at") or data.get("generated_at")))
+                summary["photos"] += 1
+                for i, fc in enumerate(ph.get("faces") or []):
+                    if not isinstance(fc, dict):
+                        continue
+                    box = _faces_box(fc.get("box"))
+                    if box is None:
+                        summary["invalid"] += 1
+                        continue
+                    fid = str(fc.get("id") or hashlib.sha1(
+                        ("%s#%d" % (rel, i)).encode()).hexdigest()[:16])
+                    person = str(fc["person"]) if fc.get("person") else None
+                    if person:
+                        conn.execute("INSERT OR IGNORE INTO persons (id) VALUES (?)", (person,))
+                    try:
+                        score = float(fc.get("score")) if fc.get("score") is not None else None
+                    except (TypeError, ValueError):
+                        score = None
+                    conn.execute(
+                        "INSERT OR REPLACE INTO faces "
+                        "(id, path, x, y, w, h, score, person, embedding) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (fid, key) + box + (score, person,
+                                            _faces_embedding(fc.get("embedding"), nbytes)))
+                    summary["faces"] += 1
+
+            if full:
+                # Pasada completa: lo que no viene en el fichero ya no existe
+                like = _faces_like(root)
+                old = [r[0] for r in conn.execute(
+                    "SELECT path FROM faces_photos WHERE path LIKE ? ESCAPE '\\'", (like,))]
+                for pth in old:
+                    if pth not in seen:
+                        conn.execute("DELETE FROM faces WHERE path = ?", (pth,))
+                        conn.execute("DELETE FROM faces_photos WHERE path = ?", (pth,))
+                        summary["removed"] += 1
+                # Personas sin ninguna cara y sin nombre puesto aqui
+                conn.execute("DELETE FROM persons WHERE COALESCE(name_local, 0) = 0 "
+                             "AND id NOT IN (SELECT DISTINCT person FROM faces "
+                             "WHERE person IS NOT NULL)")
+
+            if dim:
+                _faces_meta_set(conn, "faces_embedding", {"dim": dim, "dtype": dtype,
+                                "metric": emb.get("metric", "cosine"),
+                                "model": (data.get("generator") or {}).get("model")})
+            _faces_meta_set(conn, "faces_last_import", {
+                "at": int(time.time()),
+                "generated_at": data.get("generated_at"),
+                "generator": data.get("generator"),
+                "mode": "full" if full else "incremental",
+                "summary": {k: v for k, v in summary.items() if k != "missing_examples"},
+            })
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return summary
+
+def _faces_export(dest, root):
+    """Escribe el estado fusionado (formato geotagger-faces, mode=full) en
+    'dest', comprimido. Va foto a foto para no montar todo en memoria."""
+    import gzip
+    conn = _faces_db()
+    emb = _faces_meta_get("faces_embedding") or {}
+    last = _faces_meta_get("faces_last_import") or {}
+    like = _faces_like(root)
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name("." + dest.name + ".tmp")
+    with gzip.open(str(tmp), "wt", encoding="utf-8", compresslevel=6) as out:
+        head = {
+            "format": FACES_FORMAT,
+            "version": FACES_VERSION,
+            "mode": "full",
+            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "generator": {"name": "geotagger", "role": "merged-state",
+                          "source": last.get("generator")},
+            "root": _work_root_rel(),
+            "embedding": emb,
+        }
+        out.write(json.dumps(head, ensure_ascii=False)[:-1])
+        out.write(', "persons": ')
+        people = [{"id": r[0], "name": r[1], "cover": r[2], "name_local": bool(r[3])}
+                  for r in conn.execute("SELECT id, name, cover, name_local FROM persons ORDER BY id")]
+        out.write(json.dumps(people, ensure_ascii=False))
+        out.write(', "photos": [')
+        first = True
+        for path, size, mtime, width, height, at in conn.execute(
+                "SELECT path, size, mtime, width, height, analyzed_at FROM faces_photos "
+                "WHERE path LIKE ? ESCAPE '\\' ORDER BY path", (like,)).fetchall():
+            rel = _faces_rel(path, root)
+            if rel is None:
+                continue
+            faces = []
+            for fid, x, y, w, h, score, person, blob in conn.execute(
+                    "SELECT id, x, y, w, h, score, person, embedding FROM faces "
+                    "WHERE path = ? ORDER BY id", (path,)):
+                fc = {"id": fid, "box": [round(x, 6), round(y, 6), round(w, 6), round(h, 6)],
+                      "score": score, "person": person}
+                if blob:
+                    fc["embedding"] = base64.b64encode(blob).decode("ascii")
+                faces.append(fc)
+            out.write(("" if first else ",") + json.dumps(
+                {"path": rel, "size": size, "mtime": mtime, "width": width, "height": height,
+                 "analyzed_at": at, "faces": faces}, ensure_ascii=False))
+            first = False
+        out.write("]}")
+    os.replace(str(tmp), str(dest))
+    return dest
+
+# Mantener los rostros pegados a su foto cuando Geotagger la mueve o borra
+def _faces_move(old, new):
+    try:
+        conn = _faces_db()
+        with _index_write:
+            conn.execute("DELETE FROM faces WHERE path = ?", (str(new),))
+            conn.execute("DELETE FROM faces_photos WHERE path = ?", (str(new),))
+            conn.execute("UPDATE faces_photos SET path = ? WHERE path = ?", (str(new), str(old)))
+            conn.execute("UPDATE faces SET path = ? WHERE path = ?", (str(new), str(old)))
+            conn.commit()
+    except Exception:
+        pass
+
+def _faces_copy(old, new):
+    try:
+        conn = _faces_db()
+        with _index_write:
+            conn.execute(
+                "INSERT OR REPLACE INTO faces_photos (path, size, mtime, width, height, analyzed_at) "
+                "SELECT ?, size, mtime, width, height, analyzed_at FROM faces_photos WHERE path = ?",
+                (str(new), str(old)))
+            rows = conn.execute("SELECT id, x, y, w, h, score, person, embedding FROM faces "
+                                "WHERE path = ?", (str(old),)).fetchall()
+            for r in rows:
+                # Copia nueva = caras nuevas: id distinto, misma persona
+                fid = hashlib.sha1((str(new) + "#" + r[0]).encode()).hexdigest()[:16]
+                conn.execute("INSERT OR REPLACE INTO faces "
+                             "(id, path, x, y, w, h, score, person, embedding) "
+                             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (fid, str(new)) + tuple(r[1:]))
+            conn.commit()
+    except Exception:
+        pass
+
+def _faces_forget(path):
+    try:
+        conn = _faces_db()
+        with _index_write:
+            conn.execute("DELETE FROM faces WHERE path = ?", (str(path),))
+            conn.execute("DELETE FROM faces_photos WHERE path = ?", (str(path),))
             conn.commit()
     except Exception:
         pass
@@ -3276,6 +3635,139 @@ def delete_files():
         except Exception as e:
             errors.append({"file": path.name, "error": str(e)})
     return jsonify({"ok": ok, "errors": errors})
+
+# ── Rostros: API (ver ROSTROS) ───────────────────────────────────────────────
+def _faces_like(root):
+    prefix = str(root).rstrip(os.sep) + os.sep
+    return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+def _faces_status_dict():
+    root = _work_root()
+    conn = _faces_db()
+    like = _faces_like(root)
+    one = lambda sql, *a: conn.execute(sql, a).fetchone()[0]
+    analyzed = one("SELECT COUNT(*) FROM faces_photos WHERE path LIKE ? ESCAPE '\\'", like)
+    faces = one("SELECT COUNT(*) FROM faces WHERE path LIKE ? ESCAPE '\\'", like)
+    # Fotos del indice que el Linux aun no ha visto, o que cambiaron despues
+    # (editadas, giradas): son las que tocara analizar en la proxima pasada
+    pending = one(
+        "SELECT COUNT(*) FROM photos p LEFT JOIN faces_photos f ON f.path = p.path "
+        "WHERE p.path LIKE ? ESCAPE '\\' AND (f.path IS NULL OR f.size IS NOT p.size "
+        "OR ABS(COALESCE(f.mtime, 0) - COALESCE(p.mtime, 0)) > 2)", like)
+    persons = one("SELECT COUNT(*) FROM persons")
+    named = one("SELECT COUNT(*) FROM persons WHERE name IS NOT NULL AND name != ''")
+    shared = _faces_shared_path(root)
+    return {
+        "analyzed": analyzed, "faces": faces, "pending": pending,
+        "persons": persons, "named": named,
+        "last_import": _faces_meta_get("faces_last_import"),
+        "embedding": _faces_meta_get("faces_embedding"),
+        "shared_file": _faces_rel(shared, Path(NAS_ROOT).resolve()) or str(shared),
+        "shared_exists": shared.is_file(),
+        "work_root": _work_root_rel(),
+        "format": FACES_FORMAT, "version": FACES_VERSION,
+    }
+
+@app.route("/api/faces/status")
+def faces_status():
+    return jsonify(_faces_status_dict())
+
+@app.route("/api/faces/import", methods=["POST"])
+def faces_import():
+    """Recibe el fichero que genero el equipo Linux y lo fusiona."""
+    up = request.files.get("file")
+    if not up or not up.filename:
+        return jsonify({"error": "sin fichero"}), 400
+    if not _faces_lock.acquire(blocking=False):
+        return jsonify({"error": "ya hay una importacion en marcha"}), 409
+    try:
+        try:
+            data = _faces_read_upload(up.stream)
+        except json.JSONDecodeError as e:
+            return jsonify({"error": "el fichero no es un JSON valido (%s)" % e}), 400
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": "no se pudo leer el fichero: %s" % e}), 400
+        root = _work_root()
+        try:
+            summary = _faces_import(data, root)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        del data
+        # Copia fusionada en el NAS para la siguiente pasada del Linux
+        try:
+            _faces_export(_faces_shared_path(root), root)
+            summary["shared_ok"] = True
+        except Exception as e:
+            summary["shared_ok"] = False
+            summary["shared_error"] = str(e)
+        _release_memory()
+        summary["status"] = _faces_status_dict()
+        return jsonify(summary)
+    finally:
+        _faces_lock.release()
+
+@app.route("/api/faces/export")
+def faces_export():
+    """Descarga el estado fusionado (lo mismo que hay en .geotagger/)."""
+    root = _work_root()
+    try:
+        dest = _faces_export(_faces_shared_path(root), root)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return send_file(str(dest), as_attachment=True, download_name=FACES_SHARED_FILE,
+                     mimetype="application/gzip")
+
+@app.route("/api/faces/photo")
+def faces_photo():
+    """Caras de una foto (para pintarlas en el visor mas adelante)."""
+    abs_path = _resolve_path(request.args.get("path", ""))
+    if abs_path is None or not abs_path.is_file():
+        return jsonify({"error": "no existe"}), 404
+    conn = _faces_db()
+    row = conn.execute("SELECT size, mtime, analyzed_at FROM faces_photos WHERE path = ?",
+                       (str(abs_path),)).fetchone()
+    if not row:
+        return jsonify({"analyzed": False, "faces": []})
+    st = abs_path.stat()
+    stale = row[0] != st.st_size or abs(int(row[1] or 0) - int(st.st_mtime)) > 2
+    faces = [{"id": r[0], "box": [r[1], r[2], r[3], r[4]], "score": r[5],
+              "person": r[6], "name": r[7]}
+             for r in conn.execute(
+                 "SELECT f.id, f.x, f.y, f.w, f.h, f.score, f.person, p.name FROM faces f "
+                 "LEFT JOIN persons p ON p.id = f.person WHERE f.path = ?", (str(abs_path),))]
+    return jsonify({"analyzed": True, "stale": stale, "analyzed_at": row[2], "faces": faces})
+
+@app.route("/api/faces/persons")
+def faces_persons():
+    conn = _faces_db()
+    like = _faces_like(_work_root())
+    rows = conn.execute(
+        "SELECT p.id, p.name, p.cover, COUNT(f.id), COUNT(DISTINCT f.path) FROM persons p "
+        "LEFT JOIN faces f ON f.person = p.id AND f.path LIKE ? ESCAPE '\\' "
+        "GROUP BY p.id ORDER BY COUNT(f.id) DESC", (like,)).fetchall()
+    return jsonify({"persons": [{"id": r[0], "name": r[1], "cover": r[2],
+                                 "faces": r[3], "photos": r[4]} for r in rows]})
+
+@app.route("/api/faces/person", methods=["POST"])
+def faces_person():
+    """Pone (o quita) nombre a una persona. Queda marcado como nombre local:
+    las importaciones siguientes no lo pisan y el Linux lo recibe en la copia
+    de .geotagger/ para seguir usando el mismo id."""
+    data = request.json or {}
+    pid = str(data.get("id") or "").strip()
+    if not pid:
+        return jsonify({"error": "falta el id"}), 400
+    name = str(data.get("name") or "").strip() or None
+    conn = _faces_db()
+    with _index_write:
+        cur = conn.execute("UPDATE persons SET name = ?, name_local = ? WHERE id = ?",
+                           (name, 1 if name else 0, pid))
+        conn.commit()
+    if not cur.rowcount:
+        return jsonify({"error": "persona desconocida"}), 404
+    return jsonify({"ok": True, "id": pid, "name": name})
 
 @app.route("/api/download")
 def download_file():
