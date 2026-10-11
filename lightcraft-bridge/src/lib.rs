@@ -17,7 +17,7 @@ use std::sync::Arc;
 use lightcraft_codecs::{ChromaSubsampling, DecodeOptions, EncodeImage, EncodeMeta};
 use lightcraft_develop::{DevelopSettings, Treatment, WbMode, controls};
 use lightcraft_geom::{Orientation, Point, Rect};
-use lightcraft_pipeline::{Quality, RenderRequest, SourceInfo, StageCache, auto, profiles};
+use lightcraft_pipeline::{MaskView, Overlay, Quality, RenderRequest, SourceInfo, StageCache, auto, profiles};
 use lightcraft_raster::Rgb32f;
 use wasm_bindgen::prelude::*;
 
@@ -30,6 +30,46 @@ const CLIP_HI_MAX: f64 = 0.004;    // fraccion maxima de pixeles quemados
 const AUTO_SIDE: usize = 320;      // tamano al que se mide
 const AUTO_IDS: [&str; 8] = ["light.exposure", "light.contrast", "light.highlights", "light.shadows",
                              "light.whites", "light.blacks", "color.vibrance", "color.saturation"];
+
+/// Los ajustes que de verdad se revelan.
+///
+/// Blancos y Negros del motor estan calibrados para RAW (luz lineal de
+/// escena): con un JPEG, que ya viene revelado, Negros -100..+100 movia el
+/// punto negro dos niveles y Blancos unos quince; parecian no hacer nada.
+/// Aqui actuan como en Lightroom con JPEG: sobre la imagen ya codificada, en
+/// el extremo que les toca (Blancos sube o baja las luces altas hasta
+/// quemar o apagar el blanco; Negros hunde o levanta las sombras profundas),
+/// y se componen ANTES de la curva maestra del usuario.
+fn effective(s: &DevelopSettings) -> DevelopSettings {
+    let mut e = s.clone();
+    let (w, b) = (s.light.whites / 100.0, s.light.blacks / 100.0);
+    if w == 0.0 && b == 0.0 {
+        return e;
+    }
+    e.light.whites = 0.0;
+    e.light.blacks = 0.0;
+    let smooth = |e0: f64, e1: f64, x: f64| {
+        let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    let levels = |x: f64| (x + 0.25 * w * smooth(0.35, 1.0, x) + 0.2 * b * (1.0 - smooth(0.0, 0.6, x))).clamp(0.0, 1.0);
+    let user = &s.curve.master;
+    let user_curve = if lightcraft_develop::ToneCurve::point_curve_is_identity(user) {
+        None
+    } else {
+        let pts: Vec<(f64, f64)> = user.iter().map(|p| (p.x, p.y)).collect();
+        Some(lightcraft_color::spline::MonotoneCurve::new(&pts))
+    };
+    const N: usize = 48;
+    e.curve.master = (0..=N)
+        .map(|i| {
+            let x = i as f64 / N as f64;
+            let y = levels(x);
+            Point::new(x, user_curve.as_ref().map_or(y, |c| c.eval(y)))
+        })
+        .collect();
+    e
+}
 
 /// Lo que el Auto mira del histograma de luminancia del resultado.
 struct Stats {
@@ -80,6 +120,8 @@ pub struct Editor {
     out_w: usize,
     out_h: usize,
     histogram: Vec<u32>,
+    /// Mascara cuya superposicion se pinta (-1 = ninguna)
+    overlay: i32,
 }
 
 #[wasm_bindgen]
@@ -102,6 +144,7 @@ impl Editor {
             out_w: 0,
             out_h: 0,
             histogram: Vec::new(),
+            overlay: -1,
         })
     }
 
@@ -352,17 +395,41 @@ impl Editor {
         let mut req = RenderRequest::fit(fw, fh);
         req.quality = if draft { Quality::Draft } else { Quality::Full };
         req.apply_crop = apply_crop;
+        if self.overlay >= 0 && !before {
+            req.overlay = Overlay::Mask { id: self.overlay as u16, view: MaskView::Color, color: [255, 48, 64], opacity: 55 };
+        }
         let r = if before {
             let b = lightcraft_pipeline::before_settings(&self.settings);
             lightcraft_pipeline::render(&self.src, &self.info, &b, &req)
         } else {
-            lightcraft_pipeline::render_cached(&self.src, &self.info, &self.settings, &req, &self.cache)
+            let eff = effective(&self.settings);
+            lightcraft_pipeline::render_cached(&self.src, &self.info, &eff, &req, &self.cache)
         };
         self.out_w = r.image.width;
         self.out_h = r.image.height;
         let h = &r.histogram;
         self.histogram = h.r.iter().chain(&h.g).chain(&h.b).chain(&h.luma).copied().collect();
         r.image.as_bytes()
+    }
+
+    /// Capas de mascara (formato `Mask` de LightCraft, en JSON): cada una con
+    /// sus formas (pincel, degradado lineal o radial, rango de luminancia o de
+    /// color, cielo/sujeto/fondo automaticos) y sus ajustes locales.
+    pub fn set_masks_json(&mut self, json: &str) -> Result<(), JsValue> {
+        self.settings.masks = serde_json::from_str(json).map_err(err)?;
+        Ok(())
+    }
+    /// Pintar la superposicion roja de la mascara `id` (-1: ninguna).
+    pub fn set_overlay(&mut self, id: i32) {
+        self.overlay = id;
+    }
+    /// Color (OkLab) que tomaria una mascara de rango de color en el punto
+    /// normalizado (x, y) de la foto. Vacio si cae fuera.
+    pub fn color_sample(&self, x: f64, y: f64) -> Vec<f64> {
+        let req = RenderRequest::fit(512, 512);
+        lightcraft_pipeline::color_range_sample(&self.src, &self.info, &effective(&self.settings), &req, Point::new(x, y))
+            .map(|v| v.to_vec())
+            .unwrap_or_default()
     }
 
     /// Tamano del ultimo revelado.
@@ -381,9 +448,10 @@ impl Editor {
     /// 4:4:4; o PNG sin perdida si `png`). Sin metadatos: el servidor copia
     /// los del original.
     pub fn export(&mut self, png: bool, quality: u8) -> Result<Vec<u8>, JsValue> {
-        let (w, h) = lightcraft_pipeline::native_output_size(self.src.width, self.src.height, &self.settings);
+        let eff = effective(&self.settings);
+        let (w, h) = lightcraft_pipeline::native_output_size(self.src.width, self.src.height, &eff);
         let req = RenderRequest::fit(w.round().max(1.0) as usize, h.round().max(1.0) as usize);
-        let r = lightcraft_pipeline::render(&self.src, &self.info, &self.settings, &req);
+        let r = lightcraft_pipeline::render(&self.src, &self.info, &eff, &req);
         self.cache.clear();
         let img = EncodeImage::rgba8(&r.image);
         let meta = EncodeMeta::default();
@@ -401,7 +469,7 @@ impl Editor {
     fn measure(&self, s: &DevelopSettings) -> Stats {
         let mut req = RenderRequest::fit(AUTO_SIDE, AUTO_SIDE);
         req.quality = Quality::Draft;
-        let img = lightcraft_pipeline::render(&self.src, &self.info, s, &req).image;
+        let img = lightcraft_pipeline::render(&self.src, &self.info, &effective(s), &req).image;
         let mut l: Vec<f64> = img
             .data
             .iter()
@@ -540,6 +608,38 @@ mod tests {
         f.set_curve("master", &[]);
         f.set_curve("red", &[]);
         assert!(f.is_default());
+    }
+
+    #[test]
+    fn whites_blacks_and_masks_act_on_jpeg() {
+        let mut img = lightcraft_raster::Rgba8::new(120, 80);
+        for (i, p) in img.data.iter_mut().enumerate() {
+            let v = (20 + (i % 120) * 200 / 120) as u8; // 20..220
+            *p = [v, v, v, 255];
+        }
+        let jpg = lightcraft_codecs::encode_jpeg(&EncodeImage::rgba8(&img), 95, ChromaSubsampling::S444, &EncodeMeta::default()).unwrap();
+        let mut e = Editor::new(&jpg, 0, 0).unwrap();
+        let base = e.measure(&e.settings.clone());
+        e.set("light.blacks", -100.0);
+        let crushed = e.measure(&e.settings.clone());
+        assert!(crushed.p005 + 15.0 < base.p005, "{} -> {}", base.p005, crushed.p005);
+        e.set("light.blacks", 0.0);
+        e.set("light.whites", 100.0);
+        let bright = e.measure(&e.settings.clone());
+        assert!(bright.p995 > base.p995 + 15.0, "{} -> {}", base.p995, bright.p995);
+        // una mascara radial con +2 EV aclara el centro y no las esquinas
+        let mut f = Editor::new(&jpg, 0, 0).unwrap();
+        f.set_masks_json(r#"[{"id":1,"name":"m","visible":true,"invert":false,"components":[{"op":"add","invert":false,
+            "shape":{"kind":"radial","center":{"x":0.5,"y":0.5},"rx":0.15,"ry":0.15,"angle":0,"feather":0,"invert":false}}],
+            "adjust":{"exposure":2}}]"#).unwrap();
+        let px = f.render(120, 80, false, true, false);
+        let at = |x: usize, y: usize| px[(y * 120 + x) * 4] as i32;
+        let mut g = Editor::new(&jpg, 0, 0).unwrap();
+        let px0 = g.render(120, 80, false, true, false);
+        let at0 = |x: usize, y: usize| px0[(y * 120 + x) * 4] as i32;
+        assert!(at(60, 40) > at0(60, 40) + 30);
+        assert!((at(3, 3) - at0(3, 3)).abs() < 4);
+        assert_eq!(f.color_sample(0.5, 0.5).len(), 3);
     }
 
     #[test]

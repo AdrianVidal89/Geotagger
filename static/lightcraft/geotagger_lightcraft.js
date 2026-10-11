@@ -71,6 +71,19 @@ export class Editor {
         return ret !== 0;
     }
     /**
+     * Color (OkLab) que tomaria una mascara de rango de color en el punto
+     * normalizado (x, y) de la foto. Vacio si cae fuera.
+     * @param {number} x
+     * @param {number} y
+     * @returns {Float64Array}
+     */
+    color_sample(x, y) {
+        const ret = wasm.editor_color_sample(this.__wbg_ptr, x, y);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
      * Revela a resolucion completa y lo codifica (JPEG con `quality` 1..100,
      * 4:4:4; o PNG sin perdida si `png`). Sin metadatos: el servidor copia
      * los del original.
@@ -266,11 +279,32 @@ export class Editor {
         wasm.editor_set_curve(this.__wbg_ptr, ptr0, len0, ptr1, len1);
     }
     /**
+     * Capas de mascara (formato `Mask` de LightCraft, en JSON): cada una con
+     * sus formas (pincel, degradado lineal o radial, rango de luminancia o de
+     * color, cielo/sujeto/fondo automaticos) y sus ajustes locales.
+     * @param {string} json
+     */
+    set_masks_json(json) {
+        const ptr0 = passStringToWasm0(json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.editor_set_masks_json(this.__wbg_ptr, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
      * Giro/volteo del usuario, como valor EXIF 1..8 sobre la foto ya orientada.
      * @param {number} exif
      */
     set_orientation(exif) {
         wasm.editor_set_orientation(this.__wbg_ptr, exif);
+    }
+    /**
+     * Pintar la superposicion roja de la mascara `id` (-1: ninguna).
+     * @param {number} id
+     */
+    set_overlay(id) {
+        wasm.editor_set_overlay(this.__wbg_ptr, id);
     }
     /**
      * Perfil creativo (`lc.color` = ninguno) y su intensidad 0..200.

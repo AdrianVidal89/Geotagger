@@ -166,6 +166,7 @@ name = "geotagger-lightcraft"
 version = "0.1.0"
 dependencies = [
  "lightcraft-codecs",
+ "lightcraft-color",
  "lightcraft-develop",
  "lightcraft-geom",
  "lightcraft-pipeline",
