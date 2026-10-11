@@ -573,6 +573,8 @@ header .spacer{flex:1}
 .faces-actions{display:flex;flex-wrap:wrap;gap:8px}
 .faces-actions .btn{text-decoration:none}
 
+.fb-range{font-size:.75rem;color:var(--text2);white-space:nowrap}
+
 /* incluir subcarpetas */
 .bc-sub{margin-left:10px;font-size:.78rem;color:var(--primary);white-space:nowrap}
 .fav-sub{font-size:.66rem;text-transform:uppercase;letter-spacing:.04em;color:var(--primary);border:1px solid currentColor;border-radius:8px;padding:0 5px;margin-left:4px;flex-shrink:0}
@@ -1471,6 +1473,7 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
       </div>
       <button class="fb-clear" id="filter-clear">Limpiar</button>
       <span class="fb-count" id="filter-count"></span>
+      <span class="fb-range" id="filter-range"></span>
     </div>
     <div class="content" id="content">
       <div class="empty-state">
@@ -2491,7 +2494,9 @@ function restoreGalleryAnchor(c, card, offset) {
   c.scrollTop += card.getBoundingClientRect().top - top - offset;
 }
 
+let renderToken = 0;
 async function renderFiles(files) {
+  const token = ++renderToken;     // otro render posterior deja este a medias
   currentFiles = files;
   // Reset the load queue for the new folder
   loadQueue.length = 0;
@@ -2539,12 +2544,15 @@ async function renderFiles(files) {
   // Render remaining chunks with rAF pauses so scroll stays smooth
   for (let i = firstEnd; i < files.length; i += RENDER_CHUNK) {
     await new Promise(r => requestAnimationFrame(r));
+    if (token !== renderToken) return;   // ya se esta pintando otra lista
     const end = Math.min(i + RENDER_CHUNK, files.length);
+    const frag = document.createDocumentFragment();
     for (let j = i; j < end; j++) {
       const card = makeCard(files[j], j);
-      grid.appendChild(card);
+      frag.appendChild(card);
       thumbObserver.observe(card);
     }
+    grid.appendChild(frag);
     placeAnchor(end);
   }
 }
@@ -2703,7 +2711,13 @@ function locationLabel(loc) { return loc === NO_LOC ? "Sin ubicación" : loc; }
 // Fecha REAL de la foto en ms. Prioriza la fecha embebida en el nombre por
 // "Renombrar por EXIF" (AAAA-MM-DD_HH-MM-SS); si no existe, usa la fecha del
 // archivo (mtime). Así el filtro/orden coincide con la fecha que ve el usuario.
+// Se calcula una vez por foto (ordenar 20.000 fotos la pedia ~600.000 veces,
+// cada una con una expresion regular)
 function fileTime(f) {
+  if (f._t === undefined) f._t = fileTimeRaw(f);
+  return f._t;
+}
+function fileTimeRaw(f) {
   // 1) La fecha de los METADATOS, que es la fecha real de la foto y la que el
   //    usuario tiene en la cabeza. Antes se usaba la del archivo cuando la foto
   //    no estaba renombrada, y una foto de 2005 copiada al NAS tiene fecha de
@@ -2822,7 +2836,44 @@ function refreshFilterChip() {
   if (!active && dot) dot.remove();
 }
 
+// ── Fechas del filtro dentro del intervalo de las fotos ─────────────────────
+// Los calendarios "Desde" y "Hasta" solo dejan elegir dias entre la foto mas
+// antigua y la mas reciente de lo que se esta viendo: no se puede filtrar 2026
+// si las fotos son de 2024-2025. Se recalcula cuando cambia el listado.
+let boundsFor = null, dateLo = "", dateHi = "";
+const isoDay = (t) => { const d = new Date(t); return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()); };
+function updateDateBounds() {
+  if (boundsFor === allFiles) return;
+  boundsFor = allFiles;
+  let lo = Infinity, hi = -Infinity;
+  for (const f of allFiles) {
+    const t = fileTime(f);
+    if (t > 0) { if (t < lo) lo = t; if (t > hi) hi = t; }
+  }
+  dateLo = lo === Infinity ? "" : isoDay(lo);
+  dateHi = hi === -Infinity ? "" : isoDay(hi);
+  const hint = document.getElementById("filter-range");
+  if (hint) hint.textContent = dateLo ? (dateLo === dateHi ? "Fotos del " + humanDay(dateLo) :
+    "Fotos del " + humanDay(dateLo) + " al " + humanDay(dateHi)) : "";
+  clampDates();
+}
+function humanDay(iso) { const [y, m, d] = iso.split("-"); return d + "/" + m + "/" + y; }
+// Limites de los calendarios (y que "Desde" no pase de "Hasta"), y los valores
+// que hayan quedado fuera se ajustan al extremo
+function clampDates() {
+  if (!fbFrom || !fbTo) return;
+  for (const el of [fbFrom, fbTo]) {
+    el.min = dateLo; el.max = dateHi;
+    el.disabled = !dateLo;
+    if (el.value && dateLo && el.value < dateLo) el.value = dateLo;
+    if (el.value && dateHi && el.value > dateHi) el.value = dateHi;
+  }
+  if (fbFrom.value) fbTo.min = fbFrom.value;
+  if (fbTo.value) fbFrom.max = fbTo.value;
+}
+
 function applyFilters() {
+  updateDateBounds();
   let list = allFiles.slice();
   if (ratingFilter > 0)      list = list.filter(f => (f.rating || 0) >= ratingFilter);
   else if (ratingFilter < 0) list = list.filter(f => !(f.rating || 0));
@@ -2860,7 +2911,7 @@ function applyFilters() {
   updateSelUI();
 }
 
-[fbFrom, fbTo, fbSort].forEach(el => { if (el) el.addEventListener("change", applyFilters); });
+[fbFrom, fbTo, fbSort].forEach(el => { if (el) el.addEventListener("change", () => { clampDates(); applyFilters(); }); });
 
 document.getElementById("filter-clear").addEventListener("click", () => {
   if (fbSort) fbSort.value = "new";

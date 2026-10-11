@@ -121,6 +121,15 @@ fn effective(s: &DevelopSettings, tones: (f64, f64)) -> DevelopSettings {
         let pts: Vec<(f64, f64)> = user.iter().map(|p| (p.x, p.y)).collect();
         Some(lightcraft_color::spline::MonotoneCurve::new(&pts))
     };
+    // Si el usuario no tiene curvas propias, estos ajustes son de BRILLO: se
+    // devuelve a cada pixel la saturacion que tenia (Refine Saturation 0 del
+    // motor), como el Contraste/Sombras de Lightroom. Una curva aplicada por
+    // canal R, G, B la cambiaba (+27..+30 a Contraste +100) y movia tonos.
+    // Con curvas del usuario se respeta su ajuste: una curva RGB es eso.
+    let identity = |p: &Vec<Point>| lightcraft_develop::ToneCurve::point_curve_is_identity(p);
+    if identity(user) && identity(&s.curve.red) && identity(&s.curve.green) && identity(&s.curve.blue) {
+        e.curve.refine_saturation = 0.0;
+    }
     const N: usize = 64;
     e.curve.master = (0..=N)
         .map(|i| {
