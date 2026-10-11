@@ -353,6 +353,22 @@ header .spacer{flex:1}
 .upload-bar-fill{height:100%;width:0;background:var(--primary);border-radius:3px;transition:width .2s}
 @media(max-width:768px){.upload-toast{left:12px;right:12px;transform:none;max-width:none}}
 
+/* ── PREPARAR MINIATURAS (progreso) ──────────────── */
+.tp-bar{height:8px;border-radius:4px;background:var(--surface);overflow:hidden;margin:14px 0 8px}
+.tp-fill{height:100%;width:0;background:var(--primary);border-radius:4px;transition:width .4s}
+.tp-meta{display:flex;justify-content:space-between;gap:12px;font-size:.8rem;color:var(--text2);font-variant-numeric:tabular-nums}
+.tp-note{font-size:.78rem;color:var(--text2);margin-top:12px;line-height:1.45}
+#modal-thumbs .modal-actions{justify-content:flex-end}
+.tp-pill{
+  position:fixed;left:16px;bottom:calc(16px + env(safe-area-inset-bottom));z-index:330;
+  display:none;align-items:center;gap:8px;padding:8px 14px 8px 10px;border-radius:20px;border:none;
+  background:#202124;color:#fff;font-size:.8rem;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.3);
+  font-variant-numeric:tabular-nums;
+}
+.tp-pill.on{display:flex}
+.tp-ring{width:18px;height:18px;border-radius:50%;flex:none;
+  background:conic-gradient(var(--primary) calc(var(--p,0)*1%),rgba(255,255,255,.2) 0)}
+
 /* grid area */
 .content{flex:1;overflow-y:auto;padding:12px;-webkit-overflow-scrolling:touch}
 .empty-state{
@@ -2053,6 +2069,22 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
   </div>
 </div>
 
+<!-- PREPARAR MINIATURAS: carpeta grande abierta por primera vez -->
+<div class="modal-overlay" id="modal-thumbs">
+  <div class="modal">
+    <div class="modal-title">Preparando miniaturas</div>
+    <p class="root-help" id="tp-text"></p>
+    <div class="tp-bar"><div class="tp-fill" id="tp-fill"></div></div>
+    <div class="tp-meta"><span id="tp-count"></span><span id="tp-eta"></span></div>
+    <p class="tp-note">Solo se hace la primera vez: después esta carpeta se abrirá al instante.
+      Únicamente se volverán a preparar las fotos nuevas o editadas.</p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="tp-bg">Seguir en segundo plano</button>
+    </div>
+  </div>
+</div>
+<button class="tp-pill" id="tp-pill" title="Ver el progreso"><span class="tp-ring" id="tp-ring"></span><span id="tp-pill-txt"></span></button>
+
 <!-- MOVE / COPY DESTINATION MODAL -->
 <div class="modal-overlay" id="modal-dest">
   <div class="modal">
@@ -2176,18 +2208,23 @@ const RAW_EXTS = [".cr3",".cr2",".nef",".arw",".raf",".dng",".jpr"];
 // decode bursts on the main thread, and scroll jank.
 const MAX_PARALLEL = 6;
 let activeLoads = 0;
-const loadQueue = []; // { card, src }
+// En la cola solo esperan tarjetas que estan en pantalla (o a punto): al bajar
+// rapido, las que ya se pasaron salen de ella. Antes se quedaban y habia que
+// esperar a todas las de por medio para ver las de donde uno se paraba.
+const loadQueue = []; // tarjetas
 
 function _drainQueue() {
   while (activeLoads < MAX_PARALLEL && loadQueue.length > 0) {
-    const { card, src } = loadQueue.shift();
-    _startLoad(card, src);
+    const card = loadQueue.shift();
+    delete card.dataset.queued;
+    _startLoad(card, card.dataset.src);
   }
 }
 
 function _startLoad(card, src) {
   if (card.dataset.loaded) { _drainQueue(); return; }
   card.dataset.loaded = "1";
+  thumbObserver.unobserve(card);
   activeLoads++;
   const img = card.querySelector("img");
   const skeleton = card.querySelector(".fc-skeleton");
@@ -2217,24 +2254,29 @@ function _startLoad(card, src) {
 }
 
 function _enqueueThumb(card) {
-  if (card.dataset.queued) return;
-  card.dataset.queued = "1";
-  const src = card.dataset.src;
-  if (!src) return;
+  if (card.dataset.queued || card.dataset.loaded || !card.dataset.src) return;
   if (activeLoads < MAX_PARALLEL) {
-    _startLoad(card, src);
+    _startLoad(card, card.dataset.src);
   } else {
-    loadQueue.push({ card, src });
+    card.dataset.queued = "1";
+    loadQueue.push(card);
   }
+}
+
+function _dequeueThumb(card) {
+  if (!card.dataset.queued) return;
+  delete card.dataset.queued;
+  const i = loadQueue.indexOf(card);
+  if (i >= 0) loadQueue.splice(i, 1);
 }
 
 // Preload 500px before entering viewport so images are ready when scrolled to
 const thumbObserver = new IntersectionObserver((entries) => {
   entries.forEach(e => {
-    if (e.isIntersecting) {
-      _enqueueThumb(e.target);
-      thumbObserver.unobserve(e.target);
-    }
+    // Se sigue observando hasta que empieza a cargar: si se aleja antes,
+    // deja su sitio en la cola a las que si se estan viendo
+    if (e.isIntersecting) _enqueueThumb(e.target);
+    else _dequeueThumb(e.target);
   });
 }, { rootMargin: "500px 0px" });
 
@@ -2327,6 +2369,9 @@ async function navigate(path, opts) {
     if (typeof renderFavorites === "function") renderFavorites();
     allFiles = data.files;
     applyFilters();
+    // Al cambiar de carpeta con la ventana de progreso abierta, a segundo plano
+    if (tpFg && !keep) tpSetFg(false);
+    maybePrepareThumbs(path, subMode, data.thumbs_missing);
   } catch(e) {
     c.innerHTML = '<div class="empty-state"><p>Error cargando carpeta</p></div>';
   }
@@ -2410,7 +2455,7 @@ function makeCard(f, i) {
   const card = document.createElement("div");
   card.className = "fc" + (selectedFiles.has(f.path) ? " sel" : "");
   card.dataset.index = i;
-  card.dataset.src = bust("/api/thumb?path=" + encodeURIComponent(f.path), f.path);
+  card.dataset.src = thumbUrl(f);
   const isRaw = RAW_EXTS.includes(f.ext);
   const folderHtml = f.folder && f.folder !== "." ? '<br><small style="opacity:.7">' + esc(f.folder) + '</small>' : '';
   // Con la miniatura de 16px la tarjeta nace con la foto (borrosa) dentro; el
@@ -3791,8 +3836,8 @@ let viewerIndex = -1;
 let vwZoomed = false;
 let viewerDirty = false;   // la galeria quedo desfasada (fotos movidas desde el visor)
 
-function previewUrl(f) { return bust("/api/preview?path=" + encodeURIComponent(f.path), f.path); }
-function thumbUrl(f)   { return bust("/api/thumb?path=" + encodeURIComponent(f.path), f.path); }
+function previewUrl(f) { return bust("/api/preview?path=" + encodeURIComponent(f.path), f.path, f.mtime); }
+function thumbUrl(f)   { return bust("/api/thumb?path=" + encodeURIComponent(f.path), f.path, f.mtime); }
 
 function openViewer(i) {
   if (i < 0 || i >= currentFiles.length) return;
@@ -4246,7 +4291,7 @@ function mapShowPop(ph, x, y) {
   pop.style.left = x + "px";
   pop.style.top = y + "px";
   pop.innerHTML =
-    '<img src="' + bust("/api/thumb?path=" + encodeURIComponent(ph.path), ph.path) + '" alt="">' +
+    '<img src="' + thumbUrl(ph) + '" alt="">' +
     '<div class="map-pop-body">' +
       '<div class="map-pop-name">' + esc(ph.name) + '</div>' +
       '<div class="map-pop-sub">' + esc(ph.folder || workRootName) +
@@ -4530,6 +4575,81 @@ async function goToFavorite(path, recursive) {
 
 document.getElementById("btn-fav-add").addEventListener("click", addFavorite);
 
+
+// ── Preparar miniaturas ──────────────────────────────────────────────────────
+// Al abrir una carpeta grande por primera vez faltan cientos o miles de
+// miniaturas, y bajar rapido era ir a tirones. Si faltan muchas, se preparan
+// de una vez con una barra de progreso; mientras la ventana esta a la vista el
+// servidor usa toda su potencia (el usuario esta esperando). Se puede mandar a
+// segundo plano: queda una pastilla con el porcentaje y el servidor se aparta
+// cuando el usuario pide algo. Lo hecho queda en la cache para siempre.
+const THUMB_PREP_MIN = 60;      // por debajo, el pre-generado normal sobra
+let tpTimer = null, tpFg = false;
+const tpModal = document.getElementById("modal-thumbs");
+const tpPill = document.getElementById("tp-pill");
+const fmtN = (n) => Number(n).toLocaleString("es-ES");
+
+async function maybePrepareThumbs(path, sub, missing) {
+  if (!(missing >= THUMB_PREP_MIN)) return;
+  try {
+    const res = await fetch("/api/thumbs/prepare", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                    body: JSON.stringify({ path: path, recursive: !!sub }) });
+    const d = await res.json();
+    if (d.error || !d.running) return;
+    if (path !== currentPath) { tpSetFg(false); return; }     // ya se fue a otra carpeta
+    tpSetFg(true);
+    tpRender(d);
+  } catch (e) { /* sin red: se queda el pre-generado normal */ }
+}
+
+function tpSetFg(fg) {
+  tpFg = fg;
+  tpModal.classList.toggle("on", fg);
+  if (!fg) fetch("/api/thumbs/background", { method: "POST" }).catch(() => {});
+  tpPoll();
+}
+
+async function tpPoll() {
+  clearTimeout(tpTimer);
+  let d;
+  try { d = await (await fetch("/api/thumbs/progress" + (tpFg ? "?fg=1" : ""))).json(); }
+  catch (e) { tpTimer = setTimeout(tpPoll, 3000); return; }
+  tpRender(d);
+  if (d.running) tpTimer = setTimeout(tpPoll, tpFg ? 500 : 2000);
+  else tpFinish();
+}
+
+function tpRender(d) {
+  const pct = d.total ? Math.min(100, Math.floor(d.done * 100 / d.total)) : 100;
+  const where = d.path ? d.path.split("/").pop() : workRootName;
+  document.getElementById("tp-text").innerHTML = "Es la primera vez que se abre <strong>" + esc(where) +
+    "</strong>" + (d.recursive ? " con sus subcarpetas" : "") + ": faltan las miniaturas de " + fmtN(d.total) + " fotos.";
+  document.getElementById("tp-fill").style.width = pct + "%";
+  document.getElementById("tp-count").textContent = fmtN(d.done) + " de " + fmtN(d.total) + " (" + pct + " %)";
+  let eta = "";
+  if (d.rate > 0 && d.done < d.total) {
+    const s = Math.ceil((d.total - d.done) / d.rate);
+    eta = s < 60 ? "quedan unos " + Math.max(5, Math.ceil(s / 5) * 5) + " s"
+                 : "quedan unos " + Math.ceil(s / 60) + " min";
+  } else if (d.done < d.total) eta = "calculando…";
+  document.getElementById("tp-eta").textContent = eta;
+  document.getElementById("tp-ring").style.setProperty("--p", pct);
+  document.getElementById("tp-pill-txt").textContent = "Miniaturas " + pct + " %";
+  tpPill.classList.toggle("on", !!d.running && !tpFg);
+}
+
+function tpFinish() {
+  clearTimeout(tpTimer);
+  tpFg = false;
+  tpModal.classList.remove("on");
+  tpPill.classList.remove("on");
+}
+
+document.getElementById("tp-bg").addEventListener("click", () => tpSetFg(false));
+tpModal.addEventListener("click", (e) => { if (e.target === tpModal) tpSetFg(false); });
+tpPill.addEventListener("click", () => tpSetFg(true));
+// Al recargar la pagina con un trabajo en marcha, vuelve la pastilla
+fetch("/api/thumbs/progress").then(r => r.json()).then(d => { if (d.running) { tpFg = false; tpRender(d); tpPoll(); } }).catch(() => {});
 
 // ── Carpetas nuevas, mover y copiar ──────────────────────────────────────────
 // El selector de destino navega por dentro de la carpeta de trabajo con el
@@ -4910,8 +5030,13 @@ let edWb = null;              // rangos por canal del equilibrio de color
 // Las miniaturas se sirven con cache "immutable"; tras editar hay que forzar
 // que el navegador vuelva a pedirlas
 const editedStamps = {};
-function bust(url, path) {
-  const v = editedStamps[path];
+// Version en la URL de miniaturas y vistas previas. El servidor las manda como
+// inmutables (30 dias en la cache del navegador), asi que la URL tiene que
+// cambiar cuando cambia la foto: va la fecha del archivo (del listado) y, tras
+// editar en esta sesion, la hora de la edicion. Sin la fecha, al recargar la
+// pagina o en otro dispositivo volvia la miniatura de antes de editar.
+function bust(url, path, ver) {
+  const v = editedStamps[path] || ver;
   return v ? url + "&v=" + v : url;
 }
 
@@ -5728,7 +5853,8 @@ async function edSave() {
   if (idx >= 0) {
     const card = document.querySelector('.fc[data-index="' + idx + '"]');
     const cardImg = card && card.querySelector("img");
-    if (cardImg) cardImg.src = thumbUrl(currentFiles[idx]);
+    if (card) card.dataset.src = thumbUrl(currentFiles[idx]);   // por si aun no se habia cargado
+    if (cardImg && card.dataset.loaded) cardImg.src = thumbUrl(currentFiles[idx]);
   }
   if (viewerEl.classList.contains("on")) showViewerPhoto();
 }
@@ -5748,7 +5874,8 @@ function lcAfterSave(editedPath, data) {
   if (idx >= 0) {
     const card = document.querySelector('.fc[data-index="' + idx + '"]');
     const cardImg = card && card.querySelector("img");
-    if (cardImg) cardImg.src = thumbUrl(currentFiles[idx]);
+    if (card) card.dataset.src = thumbUrl(currentFiles[idx]);   // por si aun no se habia cargado
+    if (cardImg && card.dataset.loaded) cardImg.src = thumbUrl(currentFiles[idx]);
   }
   if (viewerEl.classList.contains("on")) showViewerPhoto();
 }

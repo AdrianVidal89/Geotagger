@@ -792,6 +792,132 @@ def _prefetch_worker(folder, names, gen):
         _cache_sweep()
 
 # =============================================================================
+# PREPARAR UNA CARPETA (con barra de progreso)
+# Una carpeta grande que nunca se abrio tiene miles de miniaturas por hacer, y
+# el pre-generado de arriba es deliberadamente timido (se aparta mientras el
+# usuario hace algo y se queda en 600). Bajar rapido por ella era ir a
+# tirones. Cuando faltan muchas, la galeria lo dice y lanza este trabajo:
+#   - todas las que falten, en el orden de la galeria, sin tope;
+#   - mientras la ventana de progreso esta a la vista (el usuario ESTA
+#     esperando) usa todos los turnos de decodificacion sin apartarse;
+#   - si se manda a segundo plano, se aparta como el pre-generado, pero sigue
+#     hasta terminar aunque se cambie de carpeta;
+#   - solo hay uno: preparar otra carpeta cancela el anterior.
+# Las miniaturas quedan en la cache y solo se rehacen si la foto cambia.
+# =============================================================================
+PREP_FG_TTL = 3.0           # sin noticias de la ventana en 3 s -> segundo plano
+_prep = {"id": 0, "path": "", "total": 0, "done": 0, "errors": 0,
+         "running": False, "started": 0.0, "finished": 0.0, "fg_at": 0.0}
+_prep_lock = threading.Lock()
+
+def _list_photos(abs_path, recursive):
+    """Fotos de una carpeta (y sus subcarpetas) como (ruta absoluta, mtime),
+    mas recientes primero: el orden en que las ensena la galeria."""
+    base = str(abs_path).rstrip("/") + "/"
+    out, pend = [], [""]
+    while pend and len(out) < RECURSIVE_MAX:
+        sub = pend.pop()
+        try:
+            hijos, fotos = _scan_dir(base + sub)
+        except OSError:
+            continue
+        out.extend((base + sub + n, m) for n, _, _, m in fotos)
+        if recursive:
+            pend.extend(sub + h + "/" for h in sorted(hijos, reverse=True))
+    out.sort(key=lambda t: int(t[1]), reverse=True)
+    return out[:RECURSIVE_MAX]
+
+def _prep_worker(job_id, items, cursor):
+    while True:
+        with _prep_lock:
+            if _prep["id"] != job_id or cursor[0] >= len(items):
+                return
+            path, mtime = items[cursor[0]]
+            cursor[0] += 1
+        # En segundo plano, el usuario primero (como el pre-generado)
+        while time.time() - _prep["fg_at"] > PREP_FG_TTL and not _usuario_quieto(PREFETCH_MARGEN):
+            if _prep["id"] != job_id:
+                return
+            time.sleep(PREFETCH_PAUSA)
+        ok = True
+        cache_file = Path(_thumb_cache_name(path, mtime, "WEBP"))
+        try:
+            if not cache_file.exists():
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                with _render_once(str(cache_file)):
+                    if not cache_file.exists():
+                        with _decode_slot():
+                            _make_thumb(Path(path), cache_file, "WEBP")
+        except Exception:
+            ok = False      # una foto rota no para el resto
+        with _prep_lock:
+            if _prep["id"] == job_id:
+                _prep["done"] += 1
+                _prep["errors"] += 0 if ok else 1
+
+def _prep_run(job_id, items):
+    cursor = [0]
+    hilos = [threading.Thread(target=_prep_worker, args=(job_id, items, cursor), daemon=True)
+             for _ in range(DECODE_SLOTS)]
+    for t in hilos:
+        t.start()
+    for t in hilos:
+        t.join()
+    _blur_flush()
+    with _prep_lock:
+        if _prep["id"] == job_id:
+            _prep["running"] = False
+            _prep["finished"] = time.time()
+    _cache_sweep()
+
+def _prep_status():
+    p = dict(_prep)
+    el = (p["finished"] or time.time()) - p["started"] if p["started"] else 0
+    p["rate"] = round(p["done"] / el, 2) if el > 0 else 0
+    p.pop("fg_at", None)
+    return p
+
+@app.route("/api/thumbs/prepare", methods=["POST"])
+def thumbs_prepare():
+    """Prepara las miniaturas que falten de una carpeta (ver arriba)."""
+    global _prefetch_gen
+    data = request.get_json(silent=True) or {}
+    rel = data.get("path", "")
+    abs_path = _resolve_path(rel)
+    if abs_path is None or not abs_path.is_dir():
+        return jsonify({"error": "Ruta no existe"}), 404
+    recursive = bool(data.get("recursive"))
+    with _prep_lock:
+        if _prep["running"] and _prep["path"] == rel and _prep.get("recursive") == recursive:
+            _prep["fg_at"] = time.time()
+            return jsonify(_prep_status())          # ya esta en marcha
+    items = [(p, m) for p, m in _list_photos(abs_path, recursive)
+             if not os.path.exists(_thumb_cache_name(p, m, "WEBP"))]
+    with _prep_lock:
+        _prep.update({"id": _prep["id"] + 1, "path": rel, "recursive": recursive,
+                      "total": len(items), "done": 0, "errors": 0, "running": bool(items),
+                      "started": time.time(), "finished": 0.0 if items else time.time(),
+                      "fg_at": time.time()})
+        job_id = _prep["id"]
+    with _prefetch_guard:
+        _prefetch_gen += 1          # el pre-generado timido sobra: lo hace este
+    if items:
+        threading.Thread(target=_prep_run, args=(job_id, items), daemon=True).start()
+    return jsonify(_prep_status())
+
+@app.route("/api/thumbs/progress")
+def thumbs_progress():
+    # fg=1: la ventana de progreso esta a la vista, el usuario esta esperando
+    if request.args.get("fg") == "1":
+        _prep["fg_at"] = time.time()
+    return jsonify(_prep_status())
+
+@app.route("/api/thumbs/background", methods=["POST"])
+def thumbs_background():
+    _prep["fg_at"] = 0.0
+    return jsonify(_prep_status())
+
+# =============================================================================
 # TOPE DE LA CACHE EN DISCO
 # Las miniaturas son pequenas (unos 8 KB) pero las vistas previas no (de 50 KB
 # a casi 1 MB cada una), y hasta ahora nada las borraba nunca: solo se tiraban
@@ -808,6 +934,7 @@ def _cache_limite_bytes():
         mb = 1024
     return max(0, mb) * 1024 * 1024      # 0 = sin tope
 
+THUMB_SMALL = 48 * 1024     # por debajo, es una miniatura de la galeria
 CACHE_SWEEP_GAP = 1800      # segundos entre repasos, como poco
 _cache_sweep_at = 0
 # Recorrer la cache entera son miles de stat(): que no lo hagan dos hilos a la
@@ -836,13 +963,16 @@ def _cache_sweep():
                     continue
                 total += st.st_size
                 # atime donde el sistema lo actualiza, mtime donde no: para una
-                # cache las dos fechas sirven para saber que sobra antes
-                ficheros.append((max(st.st_atime, st.st_mtime), st.st_size, f))
+                # cache las dos fechas sirven para saber que sobra antes.
+                # Primero se van las vistas previas (las grandes); las
+                # miniaturas (~8 KB) solo si no queda otra: rehacerlas es lo que
+                # hace lenta una carpeta, y se prometio que es "solo una vez".
+                ficheros.append((st.st_size <= THUMB_SMALL, max(st.st_atime, st.st_mtime), st.st_size, f))
         if total <= limite:
             return
         objetivo = limite * 0.85
         ficheros.sort()                  # las mas antiguas primero
-        for _, size, f in ficheros:
+        for _, _, size, f in ficheros:
             if total <= objetivo:
                 break
             try:
@@ -2380,22 +2510,27 @@ def _reverse_geocode(lat, lon):
         print("Reverse geocode error:", str(e))
     return None
 
+def _thumb_cache_name(abs_path, mtime, fmt):
+    """Ruta de cache (cadena) sin tocar el disco: mtime en segundos (float).
+    Sirve para mirar miles de fotos de golpe sin un stat por cada una."""
+    key = _cache_key(abs_path)
+    stamp = hashlib.md5((str(int(mtime * 1000)) + fmt).encode()).hexdigest()[:12]
+    ext = ".webp" if "WEBP" in fmt else ".jpg"
+    return os.path.join(THUMB_CACHE_DIR, key[:2], key[:16] + "_" + stamp + ext)
+
 def _thumb_cache_path(abs_path, fmt="JPEG"):
     """Nombre estable a partir de ruta + fecha + formato. El prefijo depende
     SOLO de la ruta, para poder borrar todas las versiones de una foto."""
     try:
-        mtime = str(int(os.path.getmtime(abs_path) * 1000))
+        mtime = os.path.getmtime(abs_path)
     except Exception:
-        mtime = "0"
-    key = _cache_key(abs_path)
-    stamp = hashlib.md5((mtime + fmt).encode()).hexdigest()[:12]
-    ext = ".webp" if "WEBP" in fmt else ".jpg"
-    folder = _cache_dir_for(key)
+        mtime = 0
+    p = Path(_thumb_cache_name(abs_path, mtime, fmt))
     try:
-        folder.mkdir(parents=True, exist_ok=True)
+        p.parent.mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
-    return folder / (key[:16] + "_" + stamp + ext)
+    return p
 
 def _clean_flat_cache():
     """Limpieza unica de la cache antigua (todo en una carpeta). Son ficheros
@@ -2586,7 +2721,7 @@ def _scan_dir(path):
     """(carpetas, fotos) de una carpeta con os.scandir: el tipo de cada entrada
     viene del propio listado, sin un stat por nombre ni objetos Path (en el
     NAS, con miles de fotos por carpeta, era lo que mas tiempo se llevaba).
-    Fotos: (nombre, mtime, tamano)."""
+    Fotos: (nombre, mtime, tamano, mtime exacto)."""
     dirs, files = [], []
     with os.scandir(path) as it:
         for e in it:
@@ -2600,7 +2735,7 @@ def _scan_dir(path):
                 if os.path.splitext(n)[1].lower() not in SUPPORTED_EXTS:
                     continue
                 st = e.stat()
-                files.append((n, int(st.st_mtime), st.st_size))
+                files.append((n, int(st.st_mtime), st.st_size, st.st_mtime))
             except OSError:
                 continue
     return dirs, files
@@ -2633,7 +2768,8 @@ def browse():
     pre = canon + "/" if canon else ""
     absp = base.rstrip("/") + "/"
     dirs = [{"name": n, "path": pre + n} for n in sub_dirs]
-    files = [_browse_item(n, pre + n, mt, sz, fechas.get(absp + n)) for n, mt, sz in own]
+    files = [_browse_item(n, pre + n, mt, sz, fechas.get(absp + n)) for n, mt, sz, _ in own]
+    exact = [(absp + n, m) for n, _, _, m in own]      # para mirar la cache
     truncated = False
     if recursive:
         # Todas las fotos de las subcarpetas (la carpeta de cada una va en
@@ -2646,10 +2782,11 @@ def browse():
             except OSError:
                 continue
             folder = sub[:-1]
-            for n, mt, sz in fotos:
+            for n, mt, sz, m in fotos:
                 f = _browse_item(n, pre + sub + n, mt, sz, fechas.get(absp + sub + n))
                 f["folder"] = folder
                 files.append(f)
+                exact.append((absp + sub + n, m))
                 if len(files) >= RECURSIVE_MAX:
                     truncated = True
                     break
@@ -2660,15 +2797,21 @@ def browse():
     # La galeria avisa de que va a ENSENAR estas fotos, asi que sus miniaturas
     # se van haciendo de fondo en este mismo orden. El selector de carpeta de
     # destino usa la misma ruta y no lo pide: alli solo se ven carpetas.
+    out_extra = {}
     if request.args.get("prefetch") == "1":
         # (con subcarpetas, el nombre va con su ruta relativa a esta carpeta)
         _prefetch_request(abs_path, [(f["folder"] + "/" if f.get("folder") else "") + f["name"] for f in files])
+        # Cuantas miniaturas faltan: si son muchas, la galeria ofrece
+        # prepararlas de una vez (con barra de progreso) en vez de ir a
+        # tirones al bajar. Solo mira si existe el fichero: sin abrir nada.
+        out_extra["thumbs_missing"] = sum(1 for p, m in exact
+                                          if not os.path.exists(_thumb_cache_name(p, m, "WEBP")))
     # Las diminutas solo de lo que se va a llegar a ver de una sentada: en una
     # carpeta de 3.000 fotos serian 0,6 MB de listado, y para cuando se baja
     # tanto las miniaturas de verdad ya estan hechas.
     for f in files[LQIP_LISTADO_MAX:]:
         f["blur"] = ""
-    out = {"dirs": dirs, "files": files, "current": rel}
+    out = {"dirs": dirs, "files": files, "current": rel, **out_extra}
     if recursive:
         out["recursive"] = True
         out["truncated"] = truncated
@@ -2709,6 +2852,31 @@ def thumb():
     except Exception as e:
         return str(e), 404
 
+def _mpf_preview(abs_path, box):
+    """La vista previa grande que las camaras (Canon, Nikon, Sony, Fuji...)
+    meten dentro del JPEG (MPF, ~1600 px y unos cientos de KB). Para una
+    miniatura da lo mismo que la foto entera y cuesta una fraccion: el JPEG
+    principal obliga a recorrer sus 20-40 MB. None si no la lleva, es pequena
+    o no tiene la forma de la foto (entonces se usa la principal)."""
+    try:
+        with Image.open(str(abs_path)) as im:
+            if getattr(im, "n_frames", 1) < 2:
+                return None
+            w, h = im.size
+            orient = im.getexif().get(0x0112, 1)
+            im.seek(1)
+            pw, ph = im.size
+            if min(pw, ph) < min(box) or abs(pw / ph - w / h) > 0.02:
+                return None
+            _draft(im, box)
+            im.load()
+            img = im.copy()
+        img.thumbnail(box)
+        op = ORIENTATION_OPS.get(orient)
+        return img.transpose(op) if op else img
+    except Exception:
+        return None
+
 def _make_thumb(abs_path, cache_file, fmt):
     """Genera la miniatura y la deja en la cache. NUNCA toca el original."""
     ext = abs_path.suffix.lower()
@@ -2729,7 +2897,9 @@ def _make_thumb(abs_path, cache_file, fmt):
             _cache_store(cache_file, buf.getvalue())
             return
 
-    img = _fit(_open_scaled(abs_path, box), box)
+    img = _mpf_preview(abs_path, box) if ext in (".jpg", ".jpeg") else None
+    if img is None:
+        img = _fit(_open_scaled(abs_path, box), box)
     # Ya esta descomprimida y pequena: sacar aqui la version diminuta es casi
     # gratis, y asi tambien la tienen las fotos sin miniatura EXIF incrustada
     # (escaneos, PNG, las que salen de editar).
