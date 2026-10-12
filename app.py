@@ -1229,6 +1229,7 @@ def _rotate_lossless(path, op):
     if current not in table:
         current = 1
     new = table[current]
+    _orig_backup(path, "girar", {"op": op})
     result = subprocess.run(
         ["exiftool", "-Orientation=" + str(new), "-n", "-overwrite_original", str(path)],
         capture_output=True, text=True, timeout=30
@@ -1613,7 +1614,7 @@ def _prewarm_cache(img, dest):
     except Exception:
         pass
 
-def _save_edit(img, abs_path):
+def _save_edit(img, abs_path, kind="editar", params=None):
     """Guarda una imagen editada: escribe primero un temporal, le pone los
     metadatos del original y solo entonces reemplaza el archivo. Asi un fallo a
     medias nunca deja el original corrupto. Devuelve (destino, es_derivado).
@@ -1629,6 +1630,8 @@ def _save_edit(img, abs_path):
         _save_pixels(img, tmp, dest.suffix.lower(), exif=exif)
         if _needs_metadata_copy(abs_path, exif is not None):
             _copy_metadata(abs_path, tmp)
+        if not derived:
+            _orig_backup(abs_path, kind, params)
         os.replace(str(tmp), str(dest))
     except Exception:
         try:
@@ -1643,6 +1646,190 @@ def _save_edit(img, abs_path):
     _prewarm_cache(img, dest)
     _index_stale(dest)
     return dest, derived
+
+# =============================================================================
+# ORIGINALES (deshacer una edicion)
+# Editar sobrescribe la foto, por diseno: la galeria, Fotos de Apple o el
+# visor del NAS ven ya la version buena. Para poder volver atras, ANTES de la
+# primera edicion el archivo original (los bytes exactos) se guarda una sola
+# vez en un almacen oculto, junto con el historial de ajustes aplicados.
+# Guardar solo los ajustes no bastaria: al guardar, los pixeles se recortan y
+# se recomprimen, y el original no se puede reconstruir a partir de ellos.
+#
+# - Una copia por foto, por muchas veces que se edite: la primera.
+# - El almacen es una carpeta oculta (empieza por punto: ni la galeria ni el
+#   indice la ven) en la misma unidad que las fotos, para que entre en las
+#   copias de seguridad del NAS. Su ruta se fija la primera vez y se guarda en
+#   los ajustes: cambiar de carpeta de trabajo no la mueve. ORIGINALS_DIR la
+#   fuerza.
+# - La copia sigue a la foto si se renombra o se mueve desde la app, y se
+#   tira al borrarla o al restaurarla.
+# - Si no se puede guardar la copia, la edicion NO se hace.
+# =============================================================================
+
+ORIGINALS_DIRNAME = ".geotagger_originales"
+ORIGINALS_PARAMS_MAX = 64 * 1024      # historial: tope por entrada (las mascaras pesan)
+_orig_lock = threading.Lock()
+_orig_conn = {"dir": None, "conn": None}
+
+def _orig_dir():
+    """Carpeta del almacen (absoluta). Se decide una vez y queda en ajustes."""
+    env = os.environ.get("ORIGINALS_DIR", "").strip()
+    if env:
+        return Path(env)
+    saved = _load_settings().get("originals_dir")
+    if saved:
+        return Path(saved)
+    d = _work_root() / ORIGINALS_DIRNAME
+    _save_settings({"originals_dir": str(d)})
+    return d
+
+def _orig_db():
+    """Conexion al catalogo del almacen (un SQLite dentro del propio almacen:
+    copias y catalogo viajan juntos). Llamar con _orig_lock tomado."""
+    d = _orig_dir()
+    if _orig_conn["conn"] is not None and _orig_conn["dir"] == str(d):
+        return _orig_conn["conn"], d
+    d.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(d / "originales.db"), check_same_thread=False, timeout=30)
+    conn.execute("CREATE TABLE IF NOT EXISTS originals ("
+                 "path TEXT PRIMARY KEY, blob TEXT NOT NULL, size INTEGER, "
+                 "saved_at REAL, history TEXT)")
+    conn.commit()
+    _orig_conn.update(dir=str(d), conn=conn)
+    return conn, d
+
+def _orig_entry(kind, params):
+    entry = {"at": time.time(), "kind": kind}
+    if params is not None:
+        txt = json.dumps(params, separators=(",", ":"), default=str)
+        entry["params"] = params if len(txt) <= ORIGINALS_PARAMS_MAX else "(demasiado grande)"
+    return entry
+
+def _orig_backup(path, kind, params=None):
+    """Llamar JUSTO ANTES de sobrescribir `path` con una edicion. La primera
+    vez copia el original al almacen; las siguientes solo apuntan el ajuste.
+    Lanza excepcion si no se pudo guardar la copia (y entonces no se edita)."""
+    key = str(path)
+    with _orig_lock:
+        conn, d = _orig_db()
+        row = conn.execute("SELECT history FROM originals WHERE path = ?", (key,)).fetchone()
+        if row:
+            hist = json.loads(row[0] or "[]")
+            hist.append(_orig_entry(kind, params))
+            conn.execute("UPDATE originals SET history = ? WHERE path = ?", (json.dumps(hist), key))
+            conn.commit()
+            return
+        blob_id = hashlib.sha1((key + str(time.time())).encode()).hexdigest() + Path(key).suffix.lower()
+        blob = d / blob_id[:2] / blob_id
+        tmp = blob.with_name("." + blob.name + ".tmp")
+        try:
+            blob.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(key, str(tmp))
+            if os.path.getsize(str(tmp)) != os.path.getsize(key):
+                raise OSError("copia incompleta")
+            os.replace(str(tmp), str(blob))
+        except Exception as e:
+            _discard(tmp)
+            raise Exception("no se pudo guardar una copia del original (" + str(e) + "); la foto no se ha tocado")
+        conn.execute("INSERT INTO originals (path, blob, size, saved_at, history) VALUES (?, ?, ?, ?, ?)",
+                     (key, blob_id, os.path.getsize(str(blob)), time.time(),
+                      json.dumps([_orig_entry(kind, params)])))
+        conn.commit()
+
+def _orig_get(path):
+    try:
+        with _orig_lock:
+            conn, d = _orig_db()
+            row = conn.execute("SELECT blob, size, saved_at, history FROM originals WHERE path = ?",
+                               (str(path),)).fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    return {"blob": d / row[0][:2] / row[0], "size": row[1], "saved_at": row[2],
+            "history": json.loads(row[3] or "[]")}
+
+def _orig_paths():
+    """Rutas con original guardado (para marcar el listado)."""
+    try:
+        with _orig_lock:
+            conn, _ = _orig_db()
+            return {r[0] for r in conn.execute("SELECT path FROM originals")}
+    except Exception:
+        return set()
+
+def _orig_move(old, new):
+    try:
+        with _orig_lock:
+            conn, _ = _orig_db()
+            conn.execute("UPDATE originals SET path = ? WHERE path = ?", (str(new), str(old)))
+            conn.commit()
+    except Exception:
+        pass
+
+def _orig_drop(path):
+    """Olvida la copia de `path` y tira su archivo."""
+    try:
+        with _orig_lock:
+            conn, d = _orig_db()
+            row = conn.execute("SELECT blob FROM originals WHERE path = ?", (str(path),)).fetchone()
+            if not row:
+                return
+            conn.execute("DELETE FROM originals WHERE path = ?", (str(path),))
+            conn.commit()
+        _discard(d / row[0][:2] / row[0])
+    except Exception:
+        pass
+
+def _orig_restore(path):
+    """Devuelve la foto a su original. Lo que se le haya hecho DESPUES de
+    editarla y no es de la edicion (GPS, fecha, estrellas) se conserva."""
+    info = _orig_get(path)
+    if not info:
+        raise Exception("esta foto no tiene original guardado")
+    if not info["blob"].is_file():
+        raise Exception("falta el archivo del original en el almacen")
+    tmp = path.with_name("." + path.name + ".restore_tmp" + path.suffix)
+    try:
+        shutil.copy2(str(info["blob"]), str(tmp))
+        subprocess.run(
+            ["exiftool", "-P", "-overwrite_original", "-TagsFromFile", str(path),
+             "-gps:all", "-xmp:gps*", "-DateTimeOriginal", "-CreateDate", "-ModifyDate",
+             "-OffsetTime*", "-XMP:Rating", "-XMP:DateCreated", str(tmp)],
+            capture_output=True, text=True, timeout=60)
+        os.replace(str(tmp), str(path))
+    except Exception:
+        _discard(tmp)
+        raise
+    _orig_drop(path)
+    _trigger_reindex(path)
+    _evict_thumb_cache(path)
+    _index_stale(path)
+
+@app.route("/api/original")
+def original_info():
+    path = _resolve_path(request.args.get("path", ""))
+    if path is None or not path.is_file():
+        return jsonify({"error": "la foto no existe"}), 404
+    info = _orig_get(path)
+    if not info:
+        return jsonify({"has": False})
+    return jsonify({"has": True, "size": info["size"], "saved_at": info["saved_at"],
+                    "edits": len(info["history"]), "history": info["history"]})
+
+@app.route("/api/original/restore", methods=["POST"])
+def original_restore():
+    data = request.json or {}
+    path = _resolve_path(data.get("path", ""))
+    if path is None or not path.is_file():
+        return jsonify({"error": "la foto no existe"}), 404
+    try:
+        _orig_restore(path)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"ok": True})
+
 
 def _unique_target(dest_dir, name):
     """Nombre libre dentro de dest_dir, anadiendo un sufijo si hace falta."""
@@ -2126,6 +2313,7 @@ def _index_forget(path):
     except Exception:
         pass
     _faces_forget(path)
+    _orig_drop(path)
 
 def _index_move(old, new):
     """Mover o renombrar no cambia los metadatos: basta con mover la fila."""
@@ -2140,6 +2328,7 @@ def _index_move(old, new):
     except Exception:
         pass
     _faces_move(old, new)
+    _orig_move(old, new)
 
 def _index_copy(old, new):
     try:
@@ -2861,6 +3050,10 @@ def browse():
     absp = base.rstrip("/") + "/"
     dirs = [{"name": n, "path": pre + n} for n in sub_dirs]
     files = [_browse_item(n, pre + n, mt, sz, fechas.get(absp + n)) for n, mt, sz, _ in own]
+    editadas = _orig_paths()           # las que tienen original guardado
+    for f, (n, _, _, _) in zip(files, own):
+        if absp + n in editadas:
+            f["orig"] = True
     exact = [(absp + n, m) for n, _, _, m in own]      # para mirar la cache
     truncated = False
     if recursive:
@@ -2877,6 +3070,8 @@ def browse():
             for n, mt, sz, m in fotos:
                 f = _browse_item(n, pre + sub + n, mt, sz, fechas.get(absp + sub + n))
                 f["folder"] = folder
+                if absp + sub + n in editadas:
+                    f["orig"] = True
                 files.append(f)
                 exact.append((absp + sub + n, m))
                 if len(files) >= RECURSIVE_MAX:
@@ -3724,7 +3919,9 @@ def edit_image():
             # graduarlo despues)
             img = _apply_sharpen(img, sharpen)
             img = _apply_adjustments(img, adj)
-            dest, derived = _save_edit(img, abs_path)
+            dest, derived = _save_edit(img, abs_path, "editar", {
+                "rotate": rotate, "flip_h": flip_h, "flip_v": flip_v, "crop": crop,
+                "straighten": angle, "sharpen": sharpen, "adj": adj})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -3801,7 +3998,7 @@ def edit_source():
     resp.headers.update(headers)
     return resp
 
-def _save_edit_jpeg_bytes(data, abs_path, dest):
+def _save_edit_jpeg_bytes(data, abs_path, dest, kind="editar", params=None):
     """Escribe un JPEG ya codificado como edicion de abs_path, con los
     metadatos del original (EXIF incrustado sin recomprimir; XMP/IPTC con
     ExifTool solo si los hay). Mismo esquema temporal + replace que _save_edit."""
@@ -3817,6 +4014,8 @@ def _save_edit_jpeg_bytes(data, abs_path, dest):
                 exif = None
         if _needs_metadata_copy(abs_path, exif is not None):
             _copy_metadata(abs_path, tmp)
+        if dest == abs_path:
+            _orig_backup(abs_path, kind, params)
         os.replace(str(tmp), str(dest))
     except Exception:
         _discard(tmp)
@@ -3846,10 +4045,14 @@ def edit_upload():
     data = up.read(LC_UPLOAD_MAX + 1)
     if len(data) > LC_UPLOAD_MAX:
         return jsonify({"error": "archivo demasiado grande"}), 400
+    try:
+        params = json.loads(request.form.get("params") or "null")
+    except ValueError:
+        params = None
     dest, derived = _edit_destination(abs_path)
     try:
         if data[:3] == b"\xff\xd8\xff" and dest.suffix.lower() in (".jpg", ".jpeg"):
-            _save_edit_jpeg_bytes(data, abs_path, dest)
+            _save_edit_jpeg_bytes(data, abs_path, dest, "editar", params)
         elif data[:8] == b"\x89PNG\r\n\x1a\n":
             with _user_decode():
                 img = Image.open(io.BytesIO(data))
@@ -3857,7 +4060,7 @@ def edit_upload():
                 # El motor siempre devuelve RGBA: un alfa opaco no se guarda
                 if img.mode == "RGBA" and img.getchannel("A").getextrema() == (255, 255):
                     img = img.convert("RGB")
-                dest, derived = _save_edit(img, abs_path)
+                dest, derived = _save_edit(img, abs_path, "editar", params)
         else:
             return jsonify({"error": "formato de edicion inesperado"}), 400
     except Exception as e:
@@ -4018,7 +4221,8 @@ def auto_edit_files():
                 adj = _auto_levels(_downscaled(img, (512, 512)))
                 img = _apply_sharpen(img, sharpen)
                 img = _apply_adjustments(img, adj)
-                dest, derived = _save_edit(img, path)
+                dest, derived = _save_edit(img, path, "auto restaurar",
+                                           {"adj": adj, "sharpen": sharpen})
             ok.append({"name": path.name, "new": dest.name,
                        "path": str(dest.relative_to(root)), "derived": derived})
         except Exception as e:

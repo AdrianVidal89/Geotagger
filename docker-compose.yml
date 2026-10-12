@@ -25,6 +25,10 @@ services:
       # Son ficheros regenerables: al pasarse se tiran los menos usados. Por
       # defecto 1024; con 0 se desactiva el tope y crece sin limite.
       # THUMB_CACHE_MAX_MB: 1024
+      # Donde se guardan los originales de las fotos editadas, para poder
+      # restaurarlas (opcional). Por defecto, .geotagger_originales dentro de
+      # la carpeta de trabajo. Mejor en el mismo volumen que las fotos.
+      # ORIGINALS_DIR: /share/Multimedia/.geotagger_originales
     volumes:
       # El share del NAS montado en la MISMA ruta dentro y fuera. En QNAP las
       # carpetas de /share son symlinks a /share/CACHEDEV1_DATA/..., y solo
