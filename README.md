@@ -305,6 +305,20 @@ yendo lento. No era el servidor (2 ms por miniatura) sino el navegador:
 - Al recortar la cache por tamano se tiran antes las vistas previas (grandes)
   que las miniaturas (~8 KB), para que lo preparado no se pierda.
 
+
+### Linea de tiempo (saltar a un año, mes o dia)
+
+En carpetas grandes ordenadas por fecha ("Más recientes" o "Más antiguas"), la
+barra de scroll se sustituye por una linea de tiempo como la de Google Fotos /
+Fotos de Apple:
+
+- En el borde derecho aparecen los años y, si caben, los meses.
+- Arrastrando el tirador se recorre la carpeta y una burbuja indica el dia
+  exacto (p. ej. "11 mar 2022") de la fila que queda arriba.
+- Tocar un año o un mes salta directamente a su primera foto.
+- Se oculta sola si la carpeta cabe en unas pocas pantallas o si se ordena por
+  nombre o estrellas (ahi las fechas no siguen un orden).
+
 ### Miniaturas despues de editar
 
 Las miniaturas y vistas previas se sirven como inmutables (30 dias en la cache
