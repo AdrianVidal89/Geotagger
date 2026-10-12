@@ -4553,11 +4553,14 @@ def faces_person():
 
 @app.route("/api/download")
 def download_file():
-    """Descarga el archivo original sin modificarlo."""
+    """Descarga el archivo original sin modificarlo. Con inline=1 se sirve
+    para mostrarlo (el visor lo usa al ampliar: mas detalle que la vista previa)."""
     rel = request.args.get("path", "")
     abs_path = _resolve_path(rel)
     if abs_path is None or not abs_path.exists() or not abs_path.is_file():
         return "", 404
+    if request.args.get("inline") == "1":
+        return send_file(str(abs_path), conditional=True, max_age=0)
     return send_file(str(abs_path), as_attachment=True, download_name=abs_path.name)
 
 @app.route("/api/download_zip", methods=["POST"])
