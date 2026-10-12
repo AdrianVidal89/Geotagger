@@ -812,6 +812,7 @@ header .spacer{flex:1}
 .vw-name{font-size:.85rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .vw-meta{font-size:.72rem;color:rgba(255,255,255,.65);display:flex;gap:8px;align-items:center}
 .vw-ext{border:1px solid rgba(255,255,255,.4);border-radius:4px;padding:0 5px;font-size:.62rem;letter-spacing:.04em}
+.vw-btn[hidden]{display:none}
 .vw-btn{
   background:rgba(255,255,255,.12);border:none;border-radius:50%;
   width:40px;height:40px;display:flex;align-items:center;justify-content:center;
@@ -1745,6 +1746,9 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
     <div class="stars-row vw-stars" id="vw-stars" title="Clasificar (teclas 1-5, 0 para quitar)"></div>
     <button class="vw-btn" id="vw-edit-btn" title="Editar foto (girar, recortar, luz y color)">
       <svg viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
+    </button>
+    <button class="vw-btn" id="vw-orig-btn" title="Restaurar el original (deshacer las ediciones)" hidden>
+      <svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
     </button>
     <button class="vw-btn" id="vw-move-btn" title="Mover o copiar esta foto (M)">
       <svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 12v-3h-4v-4h4V8l5 5-5 5z"/></svg>
@@ -4242,6 +4246,7 @@ function showViewerPhoto() {
   document.getElementById("vw-prev").classList.toggle("hidden", viewerIndex === 0);
   document.getElementById("vw-next").classList.toggle("hidden", viewerIndex === currentFiles.length - 1);
   updateViewerSelBtn();
+  document.getElementById("vw-orig-btn").hidden = !f.orig;
   paintStars(vwStars, f.rating || 0);
   showViewerDate(f);
 
@@ -5266,7 +5271,11 @@ async function runAutoEdit() {
   }
   if (ok) {
     // Las miniaturas se sirven con cache immutable: forzar que se recarguen
-    data.ok.forEach(o => { editedStamps[o.path] = Date.now(); });
+    data.ok.forEach(o => {
+      editedStamps[o.path] = Date.now();
+      const it = !o.derived && allFiles.find(f => f.path === o.path);
+      if (it) it.orig = true;            // ya se puede restaurar el original
+    });
     setTimeout(() => {
       document.getElementById("modal-autoedit").classList.remove("on");
       selectedFiles.clear();
@@ -6177,7 +6186,17 @@ async function edSave() {
   }
 
   // Mismo archivo: forzar que se recarguen miniatura y vista previa
+  refreshEditedPhoto(editedPath, true);
+}
+
+// Recarga miniatura y vista previa de una foto reescrita en su sitio.
+// hasOrig: si ahora tiene original guardado (tras editar) o no (tras restaurar)
+function refreshEditedPhoto(editedPath, hasOrig) {
   editedStamps[editedPath] = Date.now();
+  for (const list of [currentFiles, allFiles]) {
+    const it = list.find(f => f.path === editedPath);
+    if (it) it.orig = hasOrig;
+  }
   const idx = currentFiles.findIndex(f => f.path === editedPath);
   if (idx >= 0) {
     const card = document.querySelector('.fc[data-index="' + idx + '"]');
@@ -6198,7 +6217,17 @@ function lcAfterSave(editedPath, data) {
     return;
   }
   // Mismo archivo: forzar que se recarguen miniatura y vista previa
+  refreshEditedPhoto(editedPath, true);
+}
+
+// Recarga miniatura y vista previa de una foto reescrita en su sitio.
+// hasOrig: si ahora tiene original guardado (tras editar) o no (tras restaurar)
+function refreshEditedPhoto(editedPath, hasOrig) {
   editedStamps[editedPath] = Date.now();
+  for (const list of [currentFiles, allFiles]) {
+    const it = list.find(f => f.path === editedPath);
+    if (it) it.orig = hasOrig;
+  }
   const idx = currentFiles.findIndex(f => f.path === editedPath);
   if (idx >= 0) {
     const card = document.querySelector('.fc[data-index="' + idx + '"]');
@@ -6221,6 +6250,32 @@ document.getElementById("vw-edit-btn").addEventListener("click", () => {
   if (!f) return;
   if (window.LightCraftEditor && LightCraftEditor.supported()) LightCraftEditor.open(f);
   else openEditor(f);
+});
+
+// Deshacer ediciones: el servidor guardo el original antes de la primera
+// edicion (ver ORIGINALES en app.py)
+document.getElementById("vw-orig-btn").addEventListener("click", async () => {
+  const f = currentFiles[viewerIndex];
+  if (!f) return;
+  let info = {};
+  try { info = await (await fetch("/api/original?path=" + encodeURIComponent(f.path))).json(); } catch (e) {}
+  if (!info.has) { alert("Esta foto no tiene original guardado."); return; }
+  const when = new Date(info.saved_at * 1000).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" });
+  const msg = "Restaurar el original de " + f.name + "?\n\n" +
+    (info.edits === 1 ? "Se deshace la edición guardada el " : "Se deshacen las " + info.edits + " ediciones guardadas desde el ") + when + ". " +
+    "El GPS, la fecha y las estrellas que tenga ahora se conservan.";
+  if (!confirm(msg)) return;
+  try {
+    const r = await (await fetch("/api/original/restore", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ path: f.path })
+    })).json();
+    if (r.error) throw new Error(r.error);
+  } catch (e) {
+    alert("No se pudo restaurar: " + e.message);
+    return;
+  }
+  refreshEditedPhoto(f.path, false);
 });
 
 

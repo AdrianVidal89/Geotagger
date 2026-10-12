@@ -1602,6 +1602,7 @@
         const isPng = r.bytes[0] === 0x89;
         const fd = new FormData();
         fd.append("path", f.path);
+        fd.append("params", snap());       // para el historial del original
         fd.append("file", new Blob([r.bytes], { type: isPng ? "image/png" : "image/jpeg" }), isPng ? "edit.png" : "edit.jpg");
         const res = await fetch("/api/edit_upload", { method: "POST", body: fd });
         data = await res.json();

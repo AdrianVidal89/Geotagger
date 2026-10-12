@@ -306,6 +306,32 @@ yendo lento. No era el servidor (2 ms por miniatura) sino el navegador:
   que las miniaturas (~8 KB), para que lo preparado no se pierda.
 
 
+### Deshacer una edicion (original guardado)
+
+Editar una foto la sobrescribe, por diseno: la galeria, Fotos de Apple o el
+visor del NAS ven ya la version buena. Para poder volver atras:
+
+- **Antes de la primera edicion** (editor, "Auto restaurar" o un giro) se
+  guarda el archivo original, byte a byte, en un almacen oculto. Una sola copia
+  por foto, por muchas veces que se edite; tambien se apunta cada ajuste
+  aplicado (historial).
+- En el visor, las fotos editadas muestran el boton **Restaurar original**
+  (icono de reloj). Devuelve la foto a como era, pero conserva el GPS, la fecha
+  y las estrellas que se le pusieran despues.
+- La copia sigue a la foto si se renombra o se mueve desde la app. Se borra al
+  restaurar o al eliminar la foto.
+- Si no se puede guardar la copia (disco lleno, permisos), la edicion no se
+  hace y la foto queda intacta.
+
+Guardar solo los ajustes no bastaria: al guardar, los pixeles se recortan y se
+recomprimen, y el original no se puede reconstruir a partir de ellos.
+
+El almacen es `.geotagger_originales/` dentro de la carpeta de trabajo que haya
+la primera vez (en la misma unidad que las fotos, asi entra en las copias de
+seguridad del NAS). Su ruta queda guardada en los ajustes: cambiar despues de
+carpeta de trabajo no lo mueve. Se puede fijar con `ORIGINALS_DIR`. Ocupa lo
+mismo que las fotos editadas, no toda la fototeca.
+
 ### Linea de tiempo (saltar a un año, mes o dia)
 
 En carpetas grandes ordenadas por fecha ("Más recientes" o "Más antiguas"), la
