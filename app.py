@@ -2852,6 +2852,45 @@ def _same_origin_only():
 def index():
     return render_template("index.html")
 
+# ── Logotipo e instalacion como app ──────────────────────────────────────────
+# Los navegadores piden /favicon.ico y iOS /apple-touch-icon.png en la raiz
+# aunque la pagina diga otra cosa; el manifiesto hace que "Anadir a pantalla
+# de inicio" la abra a pantalla completa, con su nombre y su icono.
+ICONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "icons")
+
+@app.route("/favicon.ico")
+def favicon_ico():
+    return send_file(os.path.join(ICONS_DIR, "favicon.ico"), mimetype="image/x-icon", max_age=86400)
+
+@app.route("/apple-touch-icon.png")
+@app.route("/apple-touch-icon-precomposed.png")
+def apple_touch_icon():
+    return send_file(os.path.join(ICONS_DIR, "apple-touch-icon.png"), mimetype="image/png", max_age=86400)
+
+@app.route("/manifest.webmanifest")
+def manifest():
+    data = {
+        "name": "GeoTagger",
+        "short_name": "GeoTagger",
+        "description": "Fotos del NAS: ubicacion, fechas, estrellas y edicion",
+        "lang": "es",
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#05080d",
+        "theme_color": "#05080d",
+        "icons": [
+            {"src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+            {"src": "/static/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png",
+             "purpose": "maskable"},
+            {"src": "/static/icons/favicon.svg", "sizes": "any", "type": "image/svg+xml"},
+        ],
+    }
+    resp = app.response_class(json.dumps(data, ensure_ascii=False), mimetype="application/manifest+json")
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
 @app.route("/api/settings", methods=["GET", "POST"])
 def settings():
     if request.method == "GET":
