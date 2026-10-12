@@ -713,6 +713,13 @@ Ctrl+rueda para el zoom y rueda para desplazarse. Si el telefono
 no tiene memoria para revelar la foto entera al guardar, se ofrece guardarla
 a 4096 px (o 2560).
 
+**El visor tiene el mismo zoom**: pellizco hasta 8x, desplazar con uno o dos
+dedos con inercia, doble toque para acercar o encajar y, en el ordenador,
+clic, arrastre, Ctrl+rueda o pellizco del trackpad. Al ampliar, la vista
+previa (2048 px) se cambia por el original si el navegador lo sabe abrir
+(JPEG, PNG, WebP), para ver el detalle real. Sin zoom, deslizar sigue
+cambiando de foto y deslizar hacia abajo cierra.
+
 **Auto**: no es el de LightCraft. Aquel aplica una receta fija pensada para
 RAW (Contraste +68, Iluminaciones -66, Sombras +52) y con JPEG, que ya vienen
 revelados, comprimia el rango y oscurecia: fotos grises y sin visibilidad.

@@ -834,14 +834,17 @@ header .spacer{flex:1}
 .vw-stage{
   position:absolute;inset:0;
   display:flex;align-items:center;justify-content:center;overflow:hidden;
+  /* Los gestos (pellizco, arrastre) los lleva el visor, no el navegador */
+  touch-action:none;
 }
 .vw-stage img{
   max-width:100%;max-height:100%;object-fit:contain;
-  opacity:0;transition:opacity .25s,transform .25s;
-  transform-origin:center center;-webkit-user-drag:none;cursor:zoom-in;
+  opacity:0;transition:opacity .25s;
+  transform-origin:0 0;-webkit-user-drag:none;cursor:zoom-in;
+  user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
 }
 .vw-stage img.ready{opacity:1}
-.vw-stage img.zoomed{cursor:zoom-out}
+.vw-stage img.zoomed{cursor:grab}
 .vw-spinner{
   position:absolute;width:34px;height:34px;
   border-color:rgba(255,255,255,.25);border-top-color:#fff;
@@ -4226,8 +4229,11 @@ function viewerNav(dir) {
 }
 
 function resetViewerZoom() {
+  vwStopInertia();
+  vwView.s = 1; vwView.tx = 0; vwView.ty = 0;
   vwZoomed = false;
   vwImg.classList.remove("zoomed");
+  vwImg.style.transition = "";
   vwImg.style.transform = "";
 }
 
@@ -4254,6 +4260,7 @@ function showViewerPhoto() {
   spinner.style.display = "block";
   vwImg.classList.remove("ready");
 
+  vwHiRes = null;
   const load = (src, fallback) => {
     const probe = new Image();
     probe.onload = () => {
@@ -4322,30 +4329,203 @@ document.getElementById("vw-download").addEventListener("click", () => {
 
 // Tocar el fondo (fuera de la imagen) cierra el visor
 document.getElementById("vw-stage").addEventListener("click", (e) => {
-  if (e.target === e.currentTarget) closeViewer();
+  // No si viene de soltar un pellizco o un arrastre
+  if (e.target === e.currentTarget && !vwZoomed && Date.now() - vwGestureAt > 350) closeViewer();
 });
 
-// Doble click / doble tap sobre la imagen: zoom 2.5x centrado en el punto tocado
-let vwLastTap = 0;
-vwImg.addEventListener("click", (e) => {
-  const now = Date.now();
-  if (now - vwLastTap < 300) {
-    vwLastTap = 0;
-    if (vwZoomed) {
-      resetViewerZoom();
-    } else {
-      const r = vwImg.getBoundingClientRect();
-      const ox = ((e.clientX - r.left) / r.width * 100).toFixed(1);
-      const oy = ((e.clientY - r.top) / r.height * 100).toFixed(1);
-      vwImg.style.transformOrigin = ox + "% " + oy + "%";
-      vwImg.style.transform = "scale(2.5)";
-      vwImg.classList.add("zoomed");
-      vwZoomed = true;
-    }
-  } else {
-    vwLastTap = now;
+// ── Zoom y desplazamiento (como en el editor y en Fotos de iPhone / iPad) ────
+// La foto se transforma (translate + scale) sin volver a cargarla, asi que el
+// gesto va fluido. Pellizco: zoom alrededor de los dedos. Con zoom, uno o dos
+// dedos la mueven, con inercia y bordes elasticos. Doble toque: acercar ahi /
+// encajar. Raton: clic para acercar o encajar, arrastrar para mover,
+// ctrl+rueda o pellizco del trackpad para el zoom y rueda para moverse.
+// Al ampliar se cambia la vista previa (2048 px) por el original si el
+// navegador lo sabe abrir, para ver el detalle de verdad.
+const vwStage = document.getElementById("vw-stage");
+const vwView = { s: 1, tx: 0, ty: 0 };
+const VW_MAX_S = 8, VW_ZOOM_TAP = 2.5;
+const VW_FULLRES_EXTS = [".jpg", ".jpeg", ".png", ".webp", ".gif"];
+let vwInertia = null, vwHiRes = null, vwGestureAt = 0;
+
+function vwApply(animated) {
+  vwImg.style.transition = animated ? "opacity .25s, transform .3s cubic-bezier(.2,.8,.2,1)" : "opacity .25s";
+  vwImg.style.transform = vwView.s === 1 && vwView.tx === 0 && vwView.ty === 0 ? ""
+    : "translate(" + vwView.tx + "px," + vwView.ty + "px) scale(" + vwView.s + ")";
+  vwZoomed = vwView.s > 1.01;
+  vwImg.classList.toggle("zoomed", vwZoomed);
+}
+// Limites: ampliada, la foto cubre la pantalla; si es mas pequena, centrada
+function vwBounds(s) {
+  const W = vwStage.clientWidth, H = vwStage.clientHeight;
+  const x0 = vwImg.offsetLeft, y0 = vwImg.offsetTop, w = vwImg.offsetWidth, h = vwImg.offsetHeight;
+  const ax = s * w <= W ? [(W - s * w) / 2 - x0, (W - s * w) / 2 - x0] : [W - x0 - s * w, -x0];
+  const ay = s * h <= H ? [(H - s * h) / 2 - y0, (H - s * h) / 2 - y0] : [H - y0 - s * h, -y0];
+  return { ax, ay };
+}
+const vwClamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const vwRubber = (v, lo, hi) => v < lo ? lo - (lo - v) / (1 + (lo - v) / 120) * 0.55
+                               : v > hi ? hi + (v - hi) / (1 + (v - hi) / 120) * 0.55 : v;
+function vwSettle(animated) {
+  vwView.s = vwClamp(vwView.s, 1, VW_MAX_S);
+  if (vwView.s < 1.01) { vwView.s = 1; vwView.tx = 0; vwView.ty = 0; }
+  else {
+    const b = vwBounds(vwView.s);
+    vwView.tx = vwClamp(vwView.tx, b.ax[0], b.ax[1]);
+    vwView.ty = vwClamp(vwView.ty, b.ay[0], b.ay[1]);
   }
-});
+  vwApply(animated);
+  if (vwZoomed) vwLoadFullRes();
+}
+// Zoom a escala s dejando quieto el punto (px, py) de la pantalla (relativo
+// a la imagen sin transformar)
+function vwZoomAt(s, px, py, animated) {
+  const qx = (px - vwView.tx) / vwView.s, qy = (py - vwView.ty) / vwView.s;
+  vwView.s = s; vwView.tx = px - s * qx; vwView.ty = py - s * qy;
+  vwSettle(animated);
+}
+function vwStopInertia() { if (vwInertia) { cancelAnimationFrame(vwInertia); vwInertia = null; } }
+function vwStartInertia(vx, vy) {
+  let last = performance.now();
+  const step = (now) => {
+    const dt = Math.min(40, now - last); last = now;
+    vwView.tx += vx * dt; vwView.ty += vy * dt;
+    const decay = Math.pow(0.995, dt);
+    vx *= decay; vy *= decay;
+    const b = vwBounds(vwView.s);
+    if (vwView.tx < b.ax[0] || vwView.tx > b.ax[1]) vx *= 0.6;
+    if (vwView.ty < b.ay[0] || vwView.ty > b.ay[1]) vy *= 0.6;
+    vwApply(false);
+    if (Math.hypot(vx, vy) > 0.02) vwInertia = requestAnimationFrame(step);
+    else { vwInertia = null; vwSettle(true); }
+  };
+  vwInertia = requestAnimationFrame(step);
+}
+// Original a resolucion completa (una vez por foto y visita)
+function vwLoadFullRes() {
+  const f = currentFiles[viewerIndex];
+  if (!f || vwHiRes === f.path || !VW_FULLRES_EXTS.includes((f.ext || "").toLowerCase())) return;
+  vwHiRes = f.path;
+  const src = bust("/api/download?inline=1&path=" + encodeURIComponent(f.path), f.path, f.mtime);
+  const probe = new Image();
+  probe.onload = () => {
+    if (currentFiles[viewerIndex] !== f || vwHiRes !== f.path) return;
+    // Mismo encuadre: solo se cambia si de verdad tiene mas detalle
+    if (probe.naturalWidth > vwImg.naturalWidth) vwImg.src = src;
+  };
+  probe.src = src;
+}
+
+(function viewerGestures() {
+  const pts = new Map();
+  let g = null, moved = false, lastTap = { t: 0, x: 0, y: 0 };
+  // Coordenadas relativas a la esquina de la imagen SIN transformar
+  const rel = (e) => {
+    const r = vwStage.getBoundingClientRect();
+    return [e.clientX - r.left - vwImg.offsetLeft, e.clientY - r.top - vwImg.offsetTop];
+  };
+  const centroid = () => { let x = 0, y = 0; for (const p of pts.values()) { x += p[0]; y += p[1]; } return [x / pts.size, y / pts.size]; };
+  const dist = () => { const [a, b] = [...pts.values()]; return Math.hypot(a[0] - b[0], a[1] - b[1]); };
+  const beginPinch = () => { g = { kind: "pinch", d0: Math.max(10, dist()), c0: centroid(), s0: vwView.s, tx0: vwView.tx, ty0: vwView.ty }; };
+  const beginPan = (p) => { g = { kind: "pan", p0: p, tx0: vwView.tx, ty0: vwView.ty, hist: [[performance.now(), p[0], p[1]]] }; };
+  const ready = () => vwImg.classList.contains("ready");
+
+  vwStage.addEventListener("pointerdown", (e) => {
+    if (!ready() || e.button > 0) return;
+    vwStopInertia();
+    const p = rel(e);
+    if (e.isPrimary) { pts.clear(); g = null; }
+    pts.set(e.pointerId, p);
+    moved = false;
+    if (pts.size === 2) { beginPinch(); return; }
+    if (pts.size > 2) return;
+    if (vwZoomed) {
+      beginPan(p);
+      try { vwStage.setPointerCapture(e.pointerId); } catch (err) { /* sin captura */ }
+    }
+  });
+  vwStage.addEventListener("pointermove", (e) => {
+    if (!pts.has(e.pointerId)) return;
+    const p = rel(e), prev = pts.get(e.pointerId);
+    const start = g && g.p0 ? g.p0 : prev;
+    if (!moved && Math.hypot(p[0] - start[0], p[1] - start[1]) > 6) moved = true;
+    pts.set(e.pointerId, p);
+    if (!g) return;
+    e.preventDefault();
+    if (g.kind === "pinch" && pts.size >= 2) {
+      const c = centroid();
+      let s = g.s0 * dist() / g.d0;
+      s = s < 1 ? 1 - (1 - s) * 0.35 : s > VW_MAX_S ? VW_MAX_S + (s - VW_MAX_S) * 0.25 : s;
+      const qx = (g.c0[0] - g.tx0) / g.s0, qy = (g.c0[1] - g.ty0) / g.s0;
+      vwView.s = s;
+      const b = vwBounds(Math.max(1, s));
+      vwView.tx = vwRubber(c[0] - s * qx, b.ax[0], b.ax[1]);
+      vwView.ty = vwRubber(c[1] - s * qy, b.ay[0], b.ay[1]);
+      vwApply(false);
+    } else if (g.kind === "pan") {
+      const b = vwBounds(vwView.s);
+      vwView.tx = vwRubber(g.tx0 + p[0] - g.p0[0], b.ax[0], b.ax[1]);
+      vwView.ty = vwRubber(g.ty0 + p[1] - g.p0[1], b.ay[0], b.ay[1]);
+      g.hist.push([performance.now(), p[0], p[1]]);
+      if (g.hist.length > 6) g.hist.shift();
+      vwApply(false);
+    }
+  }, { passive: false });
+  const up = (e) => {
+    if (!pts.has(e.pointerId)) return;
+    const p = pts.get(e.pointerId);
+    pts.delete(e.pointerId);
+    if (g && g.kind === "pinch") {
+      vwGestureAt = Date.now();
+      if (pts.size === 1 && vwView.s > 1.01) { beginPan([...pts.values()][0]); return; }
+      if (pts.size === 0) { g = null; vwSettle(true); }
+      return;
+    }
+    if (g && g.kind === "pan") {
+      const h = g.hist, a = h[0], z = h[h.length - 1], dt = z[0] - a[0];
+      g = null;
+      if (moved) {
+        vwGestureAt = Date.now();
+        if (dt > 0 && performance.now() - z[0] < 80) vwStartInertia((z[1] - a[1]) / dt, (z[2] - a[2]) / dt);
+        else vwSettle(true);
+        return;
+      }
+    }
+    // Toque sin moverse sobre la foto: doble toque (o clic con raton) = acercar ahi / encajar
+    // (con el dedo capturado el destino es el escenario: se mira si cae en la foto)
+    const ir = vwImg.getBoundingClientRect();
+    const onImg = e.clientX >= ir.left && e.clientX <= ir.right && e.clientY >= ir.top && e.clientY <= ir.bottom;
+    if (moved || e.type !== "pointerup" || !onImg) return;
+    const now = Date.now(), isMouse = e.pointerType === "mouse";
+    const dbl = now - lastTap.t < 320 && Math.hypot(p[0] - lastTap.x, p[1] - lastTap.y) < 30;
+    if (isMouse || dbl) {
+      lastTap = { t: 0, x: 0, y: 0 };
+      vwGestureAt = now;                 // que el clic que sigue no cierre el visor
+      if (vwZoomed) { vwView.s = 1; vwSettle(true); }
+      else vwZoomAt(VW_ZOOM_TAP, p[0], p[1], true);
+    } else lastTap = { t: now, x: p[0], y: p[1] };
+  };
+  vwStage.addEventListener("pointerup", up);
+  vwStage.addEventListener("pointercancel", up);
+
+  vwStage.addEventListener("wheel", (e) => {
+    if (!ready()) return;
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      vwStopInertia();
+      const [x, y] = rel(e);
+      vwZoomAt(vwClamp(vwView.s * Math.exp(-e.deltaY * 0.004), 1, VW_MAX_S), x, y, false);
+    } else if (vwZoomed) {
+      e.preventDefault();
+      vwStopInertia();
+      vwView.tx -= e.deltaX; vwView.ty -= e.deltaY;
+      vwSettle(false);
+    }
+  }, { passive: false });
+  // Safari en iOS: que el pellizco no amplie la pagina entera
+  ["gesturestart", "gesturechange", "gestureend"].forEach(t => viewerEl.addEventListener(t, (e) => e.preventDefault()));
+  // Al girar el iPad o cambiar la ventana, la foto se vuelve a encajar
+  window.addEventListener("resize", () => { if (vwZoomed) resetViewerZoom(); });
+})();
 
 // Swipe horizontal en móvil para cambiar de foto; swipe hacia abajo cierra
 let vwTouchX = null, vwTouchY = null;
@@ -4355,7 +4535,7 @@ viewerEl.addEventListener("touchstart", (e) => {
   vwTouchY = e.touches[0].clientY;
 }, { passive: true });
 viewerEl.addEventListener("touchend", (e) => {
-  if (vwTouchX === null || vwZoomed) return;
+  if (vwTouchX === null || vwZoomed || Date.now() - vwGestureAt < 350) return;
   const dx = e.changedTouches[0].clientX - vwTouchX;
   const dy = e.changedTouches[0].clientY - vwTouchY;
   vwTouchX = null;
