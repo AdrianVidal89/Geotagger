@@ -32,6 +32,25 @@ elegir cualquier carpeta como grupo de trabajo. Sin `NAS_ROOT`, y con solo
 `/photos` montado, la app se comporta como antes: la galería se limita a esa
 carpeta.
 
+
+## Logotipo
+
+<img src="static/icons/logo.svg" width="96" alt="GeoTagger">
+
+Un pin de ubicacion cuya cabeza es el diafragma de una camara: geo + foto, en
+los colores del tema Tron. Sale en la pestana del navegador, en la cabecera y
+al anadir la app a la pantalla de inicio del iPad o el iPhone (Safari o
+Chrome: Compartir, "Anadir a pantalla de inicio"), donde se abre a pantalla
+completa como una app. En Android/Chrome tambien se puede instalar.
+
+Los iconos se generan, no se dibujan a mano:
+
+    python3 tools/make_logo.py                  # SVG en static/icons/
+    node tools/render_icons.mjs                 # PNG (Chromium de Playwright)
+
+Si un iPad ya tenia la app en la pantalla de inicio con el icono viejo, hay que
+quitarla y volver a anadirla: iOS guarda el icono al crear el acceso.
+
 ## Organizar
 
 - **Nueva carpeta**: desde la barra superior se crea una carpeta dentro de la

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0b2233"/><stop offset="1" stop-color="#040a12"/></linearGradient>
+<linearGradient id="pin" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5ff4ff"/><stop offset=".55" stop-color="#14b8e8"/><stop offset="1" stop-color="#0a6fd6"/></linearGradient>
+<radialGradient id="glow" cx=".5" cy=".42" r=".5"><stop offset="0" stop-color="#00e5ff" stop-opacity=".28"/><stop offset="1" stop-color="#00e5ff" stop-opacity="0"/></radialGradient>
+<radialGradient id="lens" cx=".42" cy=".36" r=".7"><stop offset="0" stop-color="#123a52"/><stop offset="1" stop-color="#050d16"/></radialGradient>
+</defs>
+<rect width="512" height="512" rx="112" fill="url(#bg)"/>
+<g stroke="#1d4a63" stroke-width="2" opacity=".55"><path d="M96 0V512"/><path d="M176 0V512"/><path d="M336 0V512"/><path d="M416 0V512"/><path d="M0 120H512"/><path d="M0 300H512"/><path d="M0 390H512"/></g>
+<circle cx="256" cy="230" r="230" fill="url(#glow)"/>
+<ellipse cx="256" cy="462" rx="58" ry="11" fill="#00e5ff" opacity=".22"/>
+<g transform="translate(256 256) scale(1) translate(-256 -256)">
+<path d="M145.76 284.6A132 132 0 1 1 366.24 284.6L267.02 435.26Q256 454 244.98 435.26Z" fill="url(#pin)"/>
+<circle cx="256" cy="212" r="100" fill="url(#lens)"/>
+<path d="M284.53 221.27L262.24 241.34L207.8 290.36A92 92 0 0 1 164.04 209.44Z" fill="#2fe6ff" stroke="#06121c" stroke-width="3.5" stroke-linejoin="round"/>
+<path d="M262.24 241.34L233.71 232.07L164.04 209.44A92 92 0 0 1 212.24 131.07Z" fill="#19c8f0" stroke="#06121c" stroke-width="3.5" stroke-linejoin="round"/>
+<path d="M233.71 232.07L227.47 202.73L212.24 131.07A92 92 0 0 1 304.2 133.64Z" fill="#0ea5e0" stroke="#06121c" stroke-width="3.5" stroke-linejoin="round"/>
+<path d="M227.47 202.73L249.76 182.66L304.2 133.64A92 92 0 0 1 347.96 214.56Z" fill="#2fe6ff" stroke="#06121c" stroke-width="3.5" stroke-linejoin="round"/>
+<path d="M249.76 182.66L278.29 191.93L347.96 214.56A92 92 0 0 1 299.76 292.93Z" fill="#19c8f0" stroke="#06121c" stroke-width="3.5" stroke-linejoin="round"/>
+<path d="M278.29 191.93L284.53 221.27L299.76 292.93A92 92 0 0 1 207.8 290.36Z" fill="#0ea5e0" stroke="#06121c" stroke-width="3.5" stroke-linejoin="round"/>
+<path d="M284.53 221.27L262.24 241.34L233.71 232.07L227.47 202.73L249.76 182.66L278.29 191.93Z" fill="#040a12"/>
+<path d="M194 166A78 78 0 0 1 236 136" fill="none" stroke="#ffffff" stroke-opacity=".55" stroke-width="7" stroke-linecap="round"/>
+</g></svg>
