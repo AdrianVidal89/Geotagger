@@ -46,6 +46,7 @@ try {
   --text2: #5f6368;
   --green: #34a853;
   --yellow: #f9ab00;
+  --redo: #e8710a;            /* marca "para reeditar" */
   --sidebar-w: 216px;
   --panel-w: 288px;
   --hdr-h: 56px;
@@ -280,6 +281,22 @@ header .spacer{flex:1}
   transition:opacity .2s;
 }
 .fc:hover .fc-stars,.fc.sel .fc-stars{opacity:0}
+
+/* ── MARCA "PARA REEDITAR" ───────────────────
+   Distintivo naranja fijo en la esquina: tiene que verse de un vistazo en la
+   rejilla sin pasar el ratón. Sin animación: se pone decenas de veces seguidas. */
+.fc-redo{
+  position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;
+  background:var(--redo);display:flex;align-items:center;justify-content:center;
+  box-shadow:0 1px 3px rgba(0,0,0,.35);pointer-events:none;
+}
+.fc-redo svg{width:13px;height:13px;fill:#fff}
+.rb-chip.rb-redo{display:inline-flex;align-items:center;gap:5px}
+.rb-chip.rb-redo svg{width:13px;height:13px;fill:var(--redo)}
+.rb-chip.rb-redo.on{background:#fdeee1;border-color:var(--redo);color:#a14a00}
+.vw-btn.redo-on{background:var(--redo)}
+.btn.redo-on svg{fill:var(--redo)}
+.sbar-btn.redo-on svg{fill:var(--redo)}
 
 /* estrellas del panel de selección */
 .pnl-rate{display:flex;align-items:center;gap:6px}
@@ -1521,6 +1538,9 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
       <span class="rb-lbl">Estrellas</span>
       <div class="stars-row" id="rb-stars"></div>
       <button class="rb-chip" id="rb-none" title="Sólo las fotos sin clasificar">Sin estrellas</button>
+      <button class="rb-chip rb-redo" id="rb-redo" title="Sólo las fotos marcadas para reeditar desde el RAW">
+        <svg viewBox="0 0 24 24"><path d="M7 14c-1.66 0-3 1.34-3 3 0 1.31-1.16 2-2 2 .92 1.22 2.49 2 4 2 2.21 0 4-1.79 4-4 0-1.66-1.34-3-3-3zm13.71-9.37l-1.34-1.34a.9959.9959 0 0 0-1.41 0L9 12.25 11.75 15l8.96-8.96c.39-.39.39-1.02 0-1.41z"/></svg>Para reeditar
+      </button>
       <span class="rb-state" id="rb-state">Todas las fotos</span>
       <button class="rb-chip rb-clear-btn" id="rb-clear">Quitar filtro</button>
     </div>
@@ -1618,6 +1638,10 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
         <div class="stars-row" id="pnl-stars"></div>
         <button class="pnl-rate-clear" id="pnl-stars-clear" title="Quitar las estrellas">Quitar</button>
       </div>
+      <button class="btn btn-secondary" id="btn-redo" disabled title="Marcar o desmarcar para reeditar desde el RAW">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 14c-1.66 0-3 1.34-3 3 0 1.31-1.16 2-2 2 .92 1.22 2.49 2 4 2 2.21 0 4-1.79 4-4 0-1.66-1.34-3-3-3zm13.71-9.37l-1.34-1.34a.9959.9959 0 0 0-1.41 0L9 12.25 11.75 15l8.96-8.96c.39-.39.39-1.02 0-1.41z"/></svg>
+        <span id="btn-redo-lbl">Marcar para reeditar</span>
+      </button>
       <button class="btn btn-secondary" id="btn-select-all">Seleccionar todas</button>
       <button class="btn btn-primary" id="btn-apply" disabled>
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>
@@ -1678,6 +1702,10 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
   <button class="sbar-btn" id="sbar-rate" title="Clasificar con estrellas">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
     <span class="sbar-lbl">Estrellas</span>
+  </button>
+  <button class="sbar-btn" id="sbar-redo" title="Marcar o desmarcar para reeditar">
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 14c-1.66 0-3 1.34-3 3 0 1.31-1.16 2-2 2 .92 1.22 2.49 2 4 2 2.21 0 4-1.79 4-4 0-1.66-1.34-3-3-3zm13.71-9.37l-1.34-1.34a.9959.9959 0 0 0-1.41 0L9 12.25 11.75 15l8.96-8.96c.39-.39.39-1.02 0-1.41z"/></svg>
+    <span class="sbar-lbl">Reeditar</span>
   </button>
   <button class="sbar-btn" id="sbar-download" title="Descargar">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
@@ -1752,6 +1780,9 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
       <span class="vw-meta"><span id="vw-count"></span><span class="vw-ext" id="vw-ext"></span><span id="vw-date"></span></span>
     </div>
     <div class="stars-row vw-stars" id="vw-stars" title="Clasificar (teclas 1-5, 0 para quitar)"></div>
+    <button class="vw-btn" id="vw-redo-btn" title="Marcar para reeditar desde el RAW (R)">
+      <svg viewBox="0 0 24 24"><path d="M7 14c-1.66 0-3 1.34-3 3 0 1.31-1.16 2-2 2 .92 1.22 2.49 2 4 2 2.21 0 4-1.79 4-4 0-1.66-1.34-3-3-3zm13.71-9.37l-1.34-1.34a.9959.9959 0 0 0-1.41 0L9 12.25 11.75 15l8.96-8.96c.39-.39.39-1.02 0-1.41z"/></svg>
+    </button>
     <button class="vw-btn" id="vw-edit-btn" title="Editar foto (girar, recortar, luz y color)">
       <svg viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
     </button>
@@ -2834,7 +2865,8 @@ function makeCard(f, i) {
     fondo +
     '<div class="fc-overlay"><div class="fc-check"></div></div>' +
     '<div class="fc-name">' + esc(f.name) + folderHtml + '</div>' +
-    (f.rating ? '<div class="fc-stars">' + starText(f.rating) + '</div>' : '');
+    (f.rating ? '<div class="fc-stars">' + starText(f.rating) + '</div>' : '') +
+    (f.redo ? REDO_BADGE : '');
   // Ya vista en esta sesion: se pinta sin pedirla
   const mem = thumbMem.get(card.dataset.src);
   if (mem) {
@@ -3022,6 +3054,8 @@ function updateSelUI() {
   document.getElementById("mob-btn-download").disabled = n === 0;
   document.getElementById("pnl-rate").classList.toggle("off", n === 0);
   paintStars(pnlStars, selectionRating());
+  document.getElementById("btn-redo").disabled = n === 0;
+  paintRedoButtons();
 
   const bar = document.getElementById("sel-bar");
   if (n > 0) { bar.classList.add("up"); } else { bar.classList.remove("up"); }
@@ -3285,6 +3319,7 @@ function clampDates() {
 function applyFilters() {
   updateDateBounds();
   let list = allFiles.slice();
+  if (redoFilter)            list = list.filter(f => f.redo);
   if (ratingFilter > 0)      list = list.filter(f => (f.rating || 0) >= ratingFilter);
   else if (ratingFilter < 0) list = list.filter(f => !(f.rating || 0));
   if (selectedLocations.size > 0) {
@@ -3326,6 +3361,7 @@ function applyFilters() {
 document.getElementById("filter-clear").addEventListener("click", () => {
   if (fbSort) fbSort.value = "new";
   ratingFilter = 0;
+  redoFilter = false;
   paintRatingFilter();
   resetFilters();
   applyFilters();
@@ -3447,6 +3483,7 @@ async function rateSelection(stars) {
 // ── Filtro por estrellas (barra siempre visible) ──────────────────────────────
 // 0 = todas · 1..5 = esa estrella o más · -1 = sólo las que no tienen ninguna
 let ratingFilter = 0;
+let redoFilter = false;      // sólo las marcadas "para reeditar"
 const rbStars = document.getElementById("rb-stars");
 const pnlStars = document.getElementById("pnl-stars");
 
@@ -3454,11 +3491,15 @@ function paintRatingFilter() {
   paintStars(rbStars, ratingFilter > 0 ? ratingFilter : 0);
   document.getElementById("rb-none").classList.toggle("on", ratingFilter < 0);
   const st = document.getElementById("rb-state");
-  st.textContent = ratingFilter > 0
+  document.getElementById("rb-redo").classList.toggle("on", redoFilter);
+  let txt = ratingFilter > 0
     ? ratingFilter + (ratingFilter === 1 ? " estrella o más" : " estrellas o más")
-    : (ratingFilter < 0 ? "Sólo sin clasificar" : "Todas las fotos");
-  st.classList.toggle("on", ratingFilter !== 0);
-  document.getElementById("rb-clear").style.visibility = ratingFilter === 0 ? "hidden" : "visible";
+    : (ratingFilter < 0 ? "Sólo sin clasificar" : "");
+  if (redoFilter) txt = txt ? txt + " · para reeditar" : "Sólo para reeditar";
+  st.textContent = txt || "Todas las fotos";
+  const activo = ratingFilter !== 0 || redoFilter;
+  st.classList.toggle("on", activo);
+  document.getElementById("rb-clear").style.visibility = activo ? "visible" : "hidden";
 }
 
 function setRatingFilter(v) {
@@ -3471,7 +3512,15 @@ buildStars(rbStars, (n) => setRatingFilter(n));
 paintRatingFilter();
 document.getElementById("rb-none").addEventListener("click",
   () => setRatingFilter(ratingFilter < 0 ? 0 : -1));
-document.getElementById("rb-clear").addEventListener("click", () => setRatingFilter(0));
+document.getElementById("rb-clear").addEventListener("click", () => {
+  redoFilter = false;
+  setRatingFilter(0);
+});
+document.getElementById("rb-redo").addEventListener("click", () => {
+  redoFilter = !redoFilter;
+  paintRatingFilter();
+  applyFilters();
+});
 
 // ── Clasificar la selección ───────────────────────────────────────────────────
 buildStars(pnlStars, (n) => rateSelection(n));
@@ -3504,6 +3553,103 @@ async function rateViewerPhoto(stars) {
   if (currentFiles[viewerIndex] === f) paintStars(vwStars, f.rating || 0);
 }
 buildStars(vwStars, (n) => rateViewerPhoto(n));
+
+// ── PARA REEDITAR ─────────────────────────────────────────────────────────────
+// Fotos que al repasarlas piden volver al RAW y hacer el revelado completo. Se
+// marcan de un toque (botón del pincel en el visor o tecla R) y luego se sacan
+// con "Para reeditar" en la barra de filtros. La marca vive DENTRO de la foto
+// (XMP:Label = "Reeditar", la etiqueta de Lightroom), como las estrellas.
+const REDO_BADGE = '<div class="fc-redo" title="Para reeditar"><svg viewBox="0 0 24 24">' +
+  '<path d="M7 14c-1.66 0-3 1.34-3 3 0 1.31-1.16 2-2 2 .92 1.22 2.49 2 4 2 2.21 0 4-1.79 4-4 0-1.66-1.34-3-3-3zm13.71-9.37l-1.34-1.34a.9959.9959 0 0 0-1.41 0L9 12.25 11.75 15l8.96-8.96c.39-.39.39-1.02 0-1.41z"/>' +
+  '</svg></div>';
+
+function paintCardRedo(card, redo) {
+  const el = card.querySelector(".fc-redo");
+  if (!redo) { if (el) el.remove(); return; }
+  if (!el) card.insertAdjacentHTML("beforeend", REDO_BADGE);
+}
+
+// Igual que con las estrellas: la rejilla no se vuelve a filtrar al marcar,
+// para que la foto no desaparezca bajo el dedo.
+function setLocalRedo(paths, redo) {
+  const set = new Set(paths);
+  [allFiles, currentFiles].forEach(arr => arr.forEach(f => {
+    if (set.has(f.path)) f.redo = redo ? 1 : 0;
+  }));
+  currentFiles.forEach((f, i) => {
+    if (!set.has(f.path)) return;
+    const card = document.querySelector('.fc[data-index="' + i + '"]');
+    if (card) paintCardRedo(card, redo);
+  });
+}
+
+async function applyRedo(paths, redo) {
+  if (!paths.length) return null;
+  try {
+    const res = await fetch("/api/redo", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ files: paths, redo: !!redo })
+    });
+    const data = await res.json();
+    const fallidas = new Set();
+    (data.errors || []).forEach(e => fallidas.add(e.file));
+    const hechas = paths.filter(p => !fallidas.has(p) && !fallidas.has(p.split("/").pop()));
+    setLocalRedo(hechas, redo);
+    return data;
+  } catch (e) {
+    return { ok: [], errors: [{ file: "", error: "Error de conexión" }] };
+  }
+}
+
+// ¿Están ya marcadas TODAS las seleccionadas? Entonces el botón desmarca.
+function selectionAllRedo() {
+  let n = 0;
+  for (const f of currentFiles) {
+    if (!selectedFiles.has(f.path)) continue;
+    if (!f.redo) return false;
+    n++;
+  }
+  return n > 0;
+}
+
+function paintRedoButtons() {
+  const todas = selectionAllRedo();
+  document.getElementById("btn-redo-lbl").textContent =
+    todas ? "Quitar marca de reeditar" : "Marcar para reeditar";
+  document.getElementById("btn-redo").classList.toggle("redo-on", todas);
+  document.getElementById("sbar-redo").classList.toggle("redo-on", todas);
+}
+
+async function toggleRedoSelection() {
+  const paths = Array.from(selectedFiles);
+  if (!paths.length) return;
+  const redo = !selectionAllRedo();
+  const data = await applyRedo(paths, redo);
+  const err = data && data.errors ? data.errors.length : 0;
+  if (err) alert("No se pudo cambiar la marca de " + err + " foto(s).");
+  paintRedoButtons();
+}
+document.getElementById("btn-redo").addEventListener("click", toggleRedoSelection);
+document.getElementById("sbar-redo").addEventListener("click", toggleRedoSelection);
+
+function paintViewerRedo(f) {
+  const b = document.getElementById("vw-redo-btn");
+  const on = !!(f && f.redo);
+  b.classList.toggle("redo-on", on);
+  b.title = on ? "Quitar la marca de reeditar (R)" : "Marcar para reeditar desde el RAW (R)";
+}
+
+async function toggleViewerRedo() {
+  const f = currentFiles[viewerIndex];
+  if (!f) return;
+  const redo = !f.redo;
+  paintViewerRedo({ redo });                  // respuesta inmediata
+  const data = await applyRedo([f.path], redo);
+  if (data && data.errors && data.errors.length) alert("No se pudo cambiar la marca de esta foto.");
+  if (currentFiles[viewerIndex] === f) paintViewerRedo(f);
+}
+document.getElementById("vw-redo-btn").addEventListener("click", toggleViewerRedo);
 
 // ── Location search ───────────────────────────────────────────────────────────
 function setupSearch(inputId, sugsId, coordsCardId, latId, lonId, applyBtnId) {
@@ -4219,6 +4365,7 @@ function viewerKeys(e) {
   else if (e.key === "ArrowLeft") viewerNav(-1);
   else if (e.key === "ArrowRight") viewerNav(1);
   else if ((e.key === "m" || e.key === "M") && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); moveViewerPhoto(); }
+  else if ((e.key === "r" || e.key === "R") && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); toggleViewerRedo(); }
   // Clasificar sin soltar el teclado: 1-5 pone estrellas, 0 las quita
   else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key >= "0" && e.key <= "5") {
     e.preventDefault();
@@ -4259,6 +4406,7 @@ function showViewerPhoto() {
   updateViewerSelBtn();
   document.getElementById("vw-orig-btn").hidden = !f.orig;
   paintStars(vwStars, f.rating || 0);
+  paintViewerRedo(f);
   showViewerDate(f);
 
   const spinner = document.getElementById("vw-spinner");
@@ -4831,7 +4979,7 @@ let mapAlbum = null;
 
 function mapPhotoToFile(ph) {
   return {name: ph.name, path: ph.path, ext: ph.ext || "", mtime: ph.mtime || 0,
-          rating: ph.rating || 0,
+          rating: ph.rating || 0, redo: ph.redo || 0,
           date: (ph.date || "").replace(/^(\d{4}):(\d{2}):(\d{2})/, "$1-$2-$3")};
 }
 

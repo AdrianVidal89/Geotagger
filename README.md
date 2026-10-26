@@ -613,6 +613,28 @@ a regenerar las miniaturas de unas fotos que no han cambiado de aspecto. Lo que
 si cambia es el tamano del archivo, asi que una copia de seguridad que compare
 tamano y fecha (rsync, Hyper Backup) sigue viendo la foto como modificada.
 
+## Para reeditar
+
+Al repasar fotos aparecen algunas que piden volver al RAW y pasar por el
+revelado completo. Se marcan en un toque para hacerlo mas adelante:
+
+- **En el visor**: el boton del pincel de la barra superior, o la tecla **R**.
+  Volver a pulsar quita la marca. El boton se pone naranja si la foto la lleva.
+- **Sobre una seleccion**: el boton **Marcar para reeditar** del panel derecho
+  (en movil, **Reeditar** en la barra flotante). Si todas las seleccionadas ya
+  estan marcadas, el mismo boton las desmarca.
+
+En la rejilla las fotos marcadas llevan un distintivo naranja en la esquina
+superior derecha. Para sacarlas, el chip **Para reeditar** de la barra de
+estrellas (se combina con el filtro de estrellas y los demas). Con
+**Subcarpetas** activado se ven las de todo el arbol de carpetas.
+
+La marca se guarda **dentro de la foto**, en `XMP:Label = Reeditar`: la etiqueta
+estandar de Lightroom, Bridge y digiKam. Igual que las estrellas, no toca ni un
+pixel, conserva la fecha del archivo y sobrevive a copiar la foto o a borrar el
+indice. Al quitarla solo se borra la etiqueta de las fotos que la llevan: una
+foto con otra etiqueta de color puesta en Lightroom no la pierde.
+
 ## Renombrar despues de aplicar GPS
 
 El flujo normal es subir la foto, ponerle la ubicacion y renombrarla. Por eso,

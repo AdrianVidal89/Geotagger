@@ -435,6 +435,26 @@ def _rating_value(row):
             return n
     return _clamp_rating(_tag_value(row, "Rating"))
 
+# =============================================================================
+# LA MARCA "PARA REEDITAR"
+# Fotos que al repasarlas piden pasar otra vez por el revelado completo desde el
+# RAW. Se marca en un toque y luego se filtran. Se guarda en XMP:Label, la
+# etiqueta ESTANDAR de Lightroom, Bridge y digiKam (la de los colores): asi la
+# marca viaja DENTRO de la foto, igual que las estrellas, y Lightroom la ensena
+# como etiqueta "Reeditar" al importar.
+# =============================================================================
+
+REDO_LABEL = "Reeditar"
+REDO_ARGS = ["-XMP:Label"]
+
+def _redo_value(row):
+    """1 si la foto lleva la etiqueta "Reeditar", 0 si no (otra etiqueta de
+    color de Lightroom no cuenta como marca)."""
+    label = row.get("XMP:Label")
+    if label is None:
+        label = _tag_value(row, "Label")
+    return 1 if str(label or "").strip().lower() == REDO_LABEL.lower() else 0
+
 def _resolve_photo_date(row):
     """De lo que devuelve ExifTool, la primera fecha valida por orden de
     preferencia. Devuelve (fecha, de que campo salio)."""
@@ -1784,7 +1804,8 @@ def _orig_drop(path):
 
 def _orig_restore(path):
     """Devuelve la foto a su original. Lo que se le haya hecho DESPUES de
-    editarla y no es de la edicion (GPS, fecha, estrellas) se conserva."""
+    editarla y no es de la edicion (GPS, fecha, estrellas, marca de reeditar)
+    se conserva."""
     info = _orig_get(path)
     if not info:
         raise Exception("esta foto no tiene original guardado")
@@ -1796,7 +1817,7 @@ def _orig_restore(path):
         subprocess.run(
             ["exiftool", "-P", "-overwrite_original", "-TagsFromFile", str(path),
              "-gps:all", "-xmp:gps*", "-DateTimeOriginal", "-CreateDate", "-ModifyDate",
-             "-OffsetTime*", "-XMP:Rating", "-XMP:DateCreated", str(tmp)],
+             "-OffsetTime*", "-XMP:Rating", "-XMP:Label", "-XMP:DateCreated", str(tmp)],
             capture_output=True, text=True, timeout=60)
         os.replace(str(tmp), str(path))
     except Exception:
@@ -1884,7 +1905,7 @@ def _index_db():
                 path TEXT PRIMARY KEY,
                 mtime INTEGER, size INTEGER,
                 lat REAL, lon REAL, date TEXT,
-                blur TEXT, rating INTEGER)""")
+                blur TEXT, rating INTEGER, redo INTEGER)""")
             try:
                 # Bases de datos de versiones anteriores: se les anade la
                 # columna y el proximo repaso la va rellenando.
@@ -1893,6 +1914,12 @@ def _index_db():
                 pass                                 # ya la tiene
             try:
                 conn.execute("ALTER TABLE photos ADD COLUMN rating INTEGER")
+            except sqlite3.OperationalError:
+                pass                                 # ya la tiene
+            try:
+                # La marca "para reeditar" nace con esta version: ninguna foto
+                # la tiene todavia, asi que no hace falta releer el indice
+                conn.execute("ALTER TABLE photos ADD COLUMN redo INTEGER")
             except sqlite3.OperationalError:
                 pass                                 # ya la tiene
             # Nombres de lugar ya consultados: Nominatim obliga a esperar un
@@ -2020,7 +2047,7 @@ def _index_read_batch(paths):
     cmd = ["exiftool", "-fast2", "-json", "-n", "-q", "-q", "-b",
            "-ThumbnailImage",
            "-GPSLatitude", "-GPSLongitude", "-SourceFile"] \
-          + RATING_ARGS + PHOTO_DATE_ARGS + paths
+          + RATING_ARGS + REDO_ARGS + PHOTO_DATE_ARGS + paths
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         items = json.loads(result.stdout) if result.stdout.strip() else []
@@ -2049,7 +2076,8 @@ def _index_read_batch(paths):
         else:
             crudo = b""
         read[os.path.abspath(src)] = (lat, lon, _resolve_photo_date(item)[0],
-                                      _lqip_from_bytes(crudo), _rating_value(item))
+                                      _lqip_from_bytes(crudo), _rating_value(item),
+                                      _redo_value(item))
     return read
 
 def _index_scan(base):
@@ -2082,14 +2110,15 @@ def _index_scan(base):
         read = _index_read_batch(batch)
         rows = []
         for path in batch:
-            lat, lon, date, blur, rating = read.get(path, (None, None, "", None, None))
+            lat, lon, date, blur, rating, redo = read.get(
+                path, (None, None, "", None, None, 0))
             mtime, size = current[path]
-            rows.append((path, mtime, size, lat, lon, date, blur, rating))
+            rows.append((path, mtime, size, lat, lon, date, blur, rating, redo))
         with _index_write:
             conn.executemany(
                 "INSERT OR REPLACE INTO photos "
-                "(path, mtime, size, lat, lon, date, blur, rating) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+                "(path, mtime, size, lat, lon, date, blur, rating, redo) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
             conn.commit()
         _index_state["done"] += len(batch)
         # Un respiro entre lotes: el repaso es de fondo y no debe comerse el
@@ -2127,7 +2156,7 @@ def _index_photos(base):
     """Fotos CON coordenadas bajo base, tal como las conoce el indice."""
     lo, hi = _index_range(base)
     return _index_db().execute(
-        "SELECT path, lat, lon, date, mtime, rating FROM photos "
+        "SELECT path, lat, lon, date, mtime, rating, redo FROM photos "
         "WHERE path >= ? AND path < ? AND lat IS NOT NULL AND lon IS NOT NULL",
         (lo, hi)).fetchall()
 
@@ -2142,17 +2171,18 @@ def _index_dates(folder, children=False):
         lo, hi = _index_range(folder)
         # children: solo las fotos de la carpeta, no las de todo el subarbol
         # (en la raiz de la biblioteca serian todas las filas del indice)
-        sql = ("SELECT path, mtime, size, date, blur, rating FROM photos "
+        sql = ("SELECT path, mtime, size, date, blur, rating, redo FROM photos "
                "WHERE path >= ? AND path < ?")
         args = (lo, hi)
         if children:
             sql += " AND instr(substr(path, ?), '/') = 0"
             args = (lo, hi, len(lo) + 1)
-        for path, mtime, size, date, blur, rating in _index_db().execute(sql, args).fetchall():
+        for path, mtime, size, date, blur, rating, redo in _index_db().execute(sql, args).fetchall():
             if date and not _clean_date(date):
                 sucias.append(path)
                 continue
-            out[path] = (mtime, size, date or "", blur, _clamp_rating(rating) or 0)
+            out[path] = (mtime, size, date or "", blur, _clamp_rating(rating) or 0,
+                         1 if redo else 0)
     except Exception:
         pass
     for path in sucias:
@@ -2195,7 +2225,7 @@ def _index_without_gps(base):
     """Fotos que el indice sabe que NO tienen coordenadas."""
     lo, hi = _index_range(base)
     return _index_db().execute(
-        "SELECT path, mtime, date, rating FROM photos "
+        "SELECT path, mtime, date, rating, redo FROM photos "
         "WHERE path >= ? AND path < ? AND lat IS NULL", (lo, hi)).fetchall()
 
 # ~1,1 km: el nombre que devuelve Nominatim a este nivel de zoom es el del
@@ -2293,6 +2323,31 @@ def _index_set_rating(path, rating):
     except Exception:
         pass
 
+def _index_set_redo(path, redo):
+    """Como _index_set_rating, pero para la marca "para reeditar"."""
+    try:
+        st = os.stat(str(path))
+        conn = _index_db()
+        with _index_write:
+            cur = conn.execute(
+                "UPDATE photos SET mtime = ?, size = ?, redo = ? WHERE path = ?",
+                (int(st.st_mtime), st.st_size, 1 if redo else 0, str(path)))
+            if cur.rowcount == 0:
+                conn.execute(
+                    "INSERT OR REPLACE INTO photos (path, mtime, size, redo) "
+                    "VALUES (?, -1, ?, ?)", (str(path), st.st_size, 1 if redo else 0))
+            conn.commit()
+    except Exception:
+        pass
+
+def _index_is_redo(path):
+    try:
+        row = _index_db().execute("SELECT redo FROM photos WHERE path = ?",
+                                  (str(path),)).fetchone()
+        return bool(row and row[0])
+    except Exception:
+        return False
+
 def _index_stale(path):
     """Marca una foto para que el proximo repaso la relea (sin perder lo que ya
     sabemos de ella, que sigue siendo valido para el mapa)."""
@@ -2337,8 +2392,8 @@ def _index_copy(old, new):
         with _index_write:
             conn.execute(
                 "INSERT OR REPLACE INTO photos "
-                "(path, mtime, size, lat, lon, date, blur, rating) "
-                "SELECT ?, ?, ?, lat, lon, date, blur, rating FROM photos WHERE path = ?",
+                "(path, mtime, size, lat, lon, date, blur, rating, redo) "
+                "SELECT ?, ?, ?, lat, lon, date, blur, rating, redo FROM photos WHERE path = ?",
                 (str(new), int(st.st_mtime), st.st_size, str(old)))
             conn.commit()
     except Exception:
@@ -3035,6 +3090,7 @@ def _browse_item(name, rel_path, mtime, size, fila):
         # Las estrellas van en el listado para que el filtro sea instantaneo:
         # preguntarlas foto a foto seria una peticion por tarjeta
         "rating": fila[4] if al_dia else 0,
+        "redo": fila[5] if al_dia else 0,
     }
 
 def _scan_dir(path):
@@ -3670,6 +3726,74 @@ def write_rating():
             anotar(path)
     return jsonify({"ok": ok, "errors": errors, "rating": stars})
 
+@app.route("/api/redo", methods=["POST"])
+def write_redo():
+    """Pone o quita la marca "para reeditar" (XMP:Label = Reeditar).
+
+    Igual que las estrellas: es una anotacion de metadatos, no se toca ni un
+    pixel y la fecha del archivo se deja exactamente como estaba (ver
+    write_rating). Al QUITARLA solo se borra la etiqueta de las fotos que de
+    verdad la llevan: una foto con otra etiqueta de color puesta en Lightroom
+    no pierde la suya por ir en la misma seleccion.
+    """
+    data = request.json or {}
+    redo = bool(data.get("redo"))
+    files = data.get("files") or []
+
+    targets, sellos, ok, errors = [], {}, [], []
+    for rel in files:
+        path = _resolve_path(rel)
+        if path is None or not path.exists():
+            errors.append({"file": rel, "error": "no existe o ruta invalida"})
+            continue
+        if path.suffix.lower() not in SUPPORTED_EXTS:
+            errors.append({"file": path.name, "error": "formato no soportado"})
+            continue
+        try:
+            path = sanitize_path(path)
+            if not redo and not _index_is_redo(path):
+                ok.append(path.name)       # no la llevaba: nada que quitar
+                continue
+            st = os.stat(str(path))
+            sellos[str(path)] = (st.st_atime_ns, st.st_mtime_ns)
+            targets.append(path)
+        except Exception as e:
+            errors.append({"file": path.name, "error": str(e)})
+
+    args = ["-P", "-XMP:Label=" + (REDO_LABEL if redo else "")]
+
+    def anotar(path):
+        sello = sellos.get(str(path))
+        if sello:
+            try:
+                os.utime(str(path), ns=sello)
+            except OSError:
+                pass
+        _trigger_reindex(path)
+        _index_set_redo(path, redo)
+        ok.append(path.name)
+
+    for chunk in _chunks(targets, EXIFTOOL_CHUNK):
+        try:
+            result = _run_exiftool_batch(args, chunk)
+        except Exception as e:
+            for path in chunk:
+                errors.append({"file": path.name, "error": str(e)})
+            continue
+        if result.returncode != 0:
+            for path in chunk:
+                try:
+                    uno = _exiftool_write(args, [path])
+                    if uno.returncode != 0:
+                        raise RuntimeError(uno.stderr or "ExifTool no pudo escribir")
+                    anotar(path)
+                except Exception as e:
+                    errors.append({"file": path.name, "error": str(e)})
+            continue
+        for path in chunk:
+            anotar(path)
+    return jsonify({"ok": ok, "errors": errors, "redo": 1 if redo else 0})
+
 @app.route("/api/dateinfo")
 def dateinfo():
     """Fechas actuales de una foto (solo LECTURA)."""
@@ -4196,7 +4320,7 @@ def gps_map():
     # repaso en segundo plano: la interfaz va completando el mapa sola
     _index_request(root)
     photos = []
-    for path, lat, lon, date, mtime, rating in _index_photos(base):
+    for path, lat, lon, date, mtime, rating, redo in _index_photos(base):
         try:
             relative = Path(path).relative_to(root)
         except Exception:
@@ -4214,6 +4338,7 @@ def gps_map():
             "mtime": mtime or 0,
             "ext": os.path.splitext(path)[1].lower(),
             "rating": _clamp_rating(rating) or 0,
+            "redo": 1 if redo else 0,
         })
     return jsonify({
         "photos": photos,
@@ -4281,7 +4406,7 @@ def missing_gps():
     rootp = str(root).rstrip("/") + "/"
     vistos = {}            # carpeta -> nombres que hay (un listado por carpeta,
                            # no un stat por foto: en el NAS cada uno es un viaje)
-    for path, mtime, date, rating in _index_without_gps(base):
+    for path, mtime, date, rating, redo in _index_without_gps(base):
         if not path.startswith(rootp):
             continue
         carpeta, _, name = path.rpartition("/")
@@ -4302,6 +4427,7 @@ def missing_gps():
             "mtime": mtime if mtime and mtime > 0 else 0,
             "date": _ui_date(date),
             "rating": _clamp_rating(rating) or 0,
+            "redo": 1 if redo else 0,
         })
     found.sort(key=lambda f: f["mtime"], reverse=True)
     return jsonify({"files": found, "count": len(found), "index": _index_status_dict()})
