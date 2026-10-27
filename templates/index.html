@@ -361,6 +361,7 @@ header .spacer{flex:1}
 .loc-opt:hover{background:var(--surface)}
 .loc-opt input{width:18px;height:18px;accent-color:var(--primary);flex-shrink:0;margin:0}
 .loc-opt span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.loc-opt .loc-n{margin-left:auto;padding-left:8px;font-size:.75rem;color:var(--text2);flex-shrink:0}
 .loc-empty{padding:16px 14px;font-size:.8rem;color:var(--text2);text-align:center}
 
 /* ── UPLOAD TOAST (mobile + desktop) ─────────────── */
@@ -1554,6 +1555,13 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
           <svg class="caret" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
         </button>
       </div>
+      <div class="fb-field fb-loc" id="filter-lens-field" title="Objetivo con que se hizo la foto">
+        <svg viewBox="0 0 24 24"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4zM9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z" fill="currentColor"/></svg>
+        <button type="button" class="fb-loc-btn" id="filter-lens-btn">
+          <span class="fb-loc-txt placeholder" id="filter-lens-label">Objetivo</span>
+          <svg class="caret" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
+        </button>
+      </div>
       <div class="fb-field">
         <label>Desde</label><input type="date" id="filter-from">
       </div>
@@ -1681,6 +1689,16 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
   </div>
   <input type="text" class="loc-search" id="loc-search" placeholder="Buscar ubicación..." autocomplete="off">
   <div class="loc-list" id="loc-list"></div>
+</div>
+
+<!-- LENS MULTI-SELECT MENU (posicionado por JS) -->
+<div class="loc-menu" id="filter-lens-menu">
+  <div class="loc-menu-head">
+    <span>Objetivos</span>
+    <button type="button" id="lens-clear-sel">Limpiar</button>
+  </div>
+  <input type="text" class="loc-search" id="lens-search" placeholder="Buscar objetivo..." autocomplete="off">
+  <div class="loc-list" id="lens-list"></div>
 </div>
 
 <!-- UPLOAD PROGRESS TOAST -->
@@ -3228,6 +3246,7 @@ function renderLocMenu(filterText) {
 // El menu se posiciona con position:fixed para no ser recortado por el scroll
 // horizontal de la barra de filtros en movil.
 function openLocMenu() {
+  closeLensMenu();
   const field = document.getElementById("filter-loc-field");
   const menu = document.getElementById("filter-loc-menu");
   const r = field.getBoundingClientRect();
@@ -3260,10 +3279,100 @@ document.addEventListener("click", (e) => {
   if (menu.classList.contains("on") && !menu.contains(e.target) && !field.contains(e.target)) closeLocMenu();
 });
 
+// ── Filtro por objetivo ───────────────────────────────────────────────────────
+// El objetivo sale de los metadatos de la foto (EXIF LensModel), que el índice
+// lee en su repaso y viaja en el listado: filtrar es instantáneo. Las fotos que
+// no lo dicen (escaneos, capturas, cámaras antiguas) van a "Sin datos".
+const NO_LENS = " sin";
+let selectedLenses = new Set();
+
+function fileLens(f) { return f.lens || NO_LENS; }
+function lensLabel(l) { return l === NO_LENS ? "Sin datos de objetivo" : l; }
+
+// Objetivos de lo que se está viendo, con cuántas fotos hay de cada uno
+function availableLenses() {
+  const n = new Map();
+  allFiles.forEach(f => { const l = fileLens(f); n.set(l, (n.get(l) || 0) + 1); });
+  const out = [...n.keys()].filter(l => l !== NO_LENS).sort((a, b) => a.localeCompare(b, "es"));
+  if (n.has(NO_LENS)) out.push(NO_LENS);
+  return out.map(l => [l, n.get(l)]);
+}
+
+function updateLensLabel() {
+  const el = document.getElementById("filter-lens-label");
+  const n = selectedLenses.size;
+  if (n === 0)      { el.textContent = "Objetivo"; el.classList.add("placeholder"); }
+  else if (n === 1) { el.textContent = lensLabel([...selectedLenses][0]); el.classList.remove("placeholder"); }
+  else              { el.textContent = n + " objetivos"; el.classList.remove("placeholder"); }
+}
+
+function renderLensMenu(filterText) {
+  const list = document.getElementById("lens-list");
+  const lenses = availableLenses();
+  if (lenses.length === 0 || (lenses.length === 1 && lenses[0][0] === NO_LENS && !selectedLenses.size)) {
+    list.innerHTML = '<div class="loc-empty">Ninguna foto dice con qué objetivo se hizo.<br>' +
+      'Si acabas de actualizar, espera a que termine el repaso del índice.</div>';
+    return;
+  }
+  const q = _norm(filterText || "");
+  const shown = q ? lenses.filter(([l]) => _norm(lensLabel(l)).includes(q)) : lenses;
+  if (shown.length === 0) { list.innerHTML = '<div class="loc-empty">Sin coincidencias</div>'; return; }
+  list.innerHTML = shown.map(([l, n]) => {
+    const checked = selectedLenses.has(l) ? " checked" : "";
+    return '<label class="loc-opt"><input type="checkbox" data-lens="' + encodeURIComponent(l) + '"' + checked + '>' +
+           '<span>' + esc(lensLabel(l)) + '</span><span class="loc-n">' + n + '</span></label>';
+  }).join("");
+  list.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.addEventListener("change", () => {
+      const l = decodeURIComponent(cb.dataset.lens);
+      if (cb.checked) selectedLenses.add(l); else selectedLenses.delete(l);
+      updateLensLabel();
+      applyFilters();
+    });
+  });
+}
+
+function openLensMenu() {
+  closeLocMenu();
+  const field = document.getElementById("filter-lens-field");
+  const menu = document.getElementById("filter-lens-menu");
+  const r = field.getBoundingClientRect();
+  menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 298)) + "px";
+  menu.style.top = (r.bottom + 6) + "px";
+  document.getElementById("lens-search").value = "";
+  renderLensMenu("");
+  menu.classList.add("on");
+  field.classList.add("open");
+}
+function closeLensMenu() {
+  document.getElementById("filter-lens-menu").classList.remove("on");
+  document.getElementById("filter-lens-field").classList.remove("open");
+}
+document.getElementById("filter-lens-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const isOpen = document.getElementById("filter-lens-menu").classList.contains("on");
+  if (isOpen) closeLensMenu(); else openLensMenu();
+});
+document.getElementById("lens-search").addEventListener("input", (e) => renderLensMenu(e.target.value));
+document.getElementById("lens-clear-sel").addEventListener("click", () => {
+  selectedLenses.clear();
+  updateLensLabel();
+  renderLensMenu(document.getElementById("lens-search").value);
+  applyFilters();
+});
+document.addEventListener("click", (e) => {
+  const menu = document.getElementById("filter-lens-menu");
+  const field = document.getElementById("filter-lens-field");
+  if (menu.classList.contains("on") && !menu.contains(e.target) && !field.contains(e.target)) closeLensMenu();
+});
+
 function resetFilters() {
   selectedLocations.clear();
   updateLocLabel();
   closeLocMenu();
+  selectedLenses.clear();
+  updateLensLabel();
+  closeLensMenu();
   if (fbFrom) fbFrom.value = "";
   if (fbTo) fbTo.value = "";
   // Se conserva el criterio de orden elegido por el usuario entre carpetas.
@@ -3271,7 +3380,7 @@ function resetFilters() {
 }
 
 function refreshFilterChip() {
-  const active = selectedLocations.size > 0 || (fbFrom && fbFrom.value) ||
+  const active = selectedLocations.size > 0 || selectedLenses.size > 0 || (fbFrom && fbFrom.value) ||
                  (fbTo && fbTo.value) || (fbSort && fbSort.value !== "new");
   const chip = document.getElementById("chip-filter");
   chip.classList.toggle("on", !!active);
@@ -3325,6 +3434,7 @@ function applyFilters() {
   if (selectedLocations.size > 0) {
     list = list.filter(f => selectedLocations.has(fileLocation(f)));
   }
+  if (selectedLenses.size > 0) list = list.filter(f => selectedLenses.has(fileLens(f)));
   const fromP = fbFrom && fbFrom.value ? fbFrom.value.split("-").map(Number) : null;
   const toP   = fbTo && fbTo.value ? fbTo.value.split("-").map(Number) : null;
   const from = fromP ? new Date(fromP[0], fromP[1] - 1, fromP[2], 0, 0, 0).getTime() : null;
@@ -3370,7 +3480,7 @@ document.getElementById("filter-clear").addEventListener("click", () => {
 document.getElementById("chip-filter").addEventListener("click", () => {
   const bar = document.getElementById("filter-bar");
   bar.classList.toggle("on");
-  if (!bar.classList.contains("on")) closeLocMenu();
+  if (!bar.classList.contains("on")) { closeLocMenu(); closeLensMenu(); }
 });
 
 // ── ESTRELLAS ─────────────────────────────────────────────────────────────────
@@ -4979,7 +5089,7 @@ let mapAlbum = null;
 
 function mapPhotoToFile(ph) {
   return {name: ph.name, path: ph.path, ext: ph.ext || "", mtime: ph.mtime || 0,
-          rating: ph.rating || 0, redo: ph.redo || 0,
+          rating: ph.rating || 0, redo: ph.redo || 0, lens: ph.lens || "",
           date: (ph.date || "").replace(/^(\d{4}):(\d{2}):(\d{2})/, "$1-$2-$3")};
 }
 

@@ -635,6 +635,23 @@ pixel, conserva la fecha del archivo y sobrevive a copiar la foto o a borrar el
 indice. Al quitarla solo se borra la etiqueta de las fotos que la llevan: una
 foto con otra etiqueta de color puesta en Lightroom no la pierde.
 
+## Filtrar por objetivo
+
+En la barra de **Filtros**, el desplegable **Objetivo** lista los objetivos con
+que se hicieron las fotos que se estan viendo, con cuantas hay de cada uno. Se
+pueden marcar varios y se combina con la ubicacion, las fechas y las estrellas.
+Las fotos que no dicen con que objetivo se hicieron (escaneos, capturas,
+objetivos manuales) salen en **Sin datos de objetivo**.
+
+El objetivo se lee de los metadatos de la propia foto, RAW incluidos:
+`EXIF:LensModel`, que escriben Canon, Nikon Z, Sony, Fuji y los moviles, o
+`XMP:LensModel` / `XMP:Lens` si la foto ha pasado por Lightroom. Lo lee el
+indice en su repaso normal; al actualizar a esta version, el primer repaso
+relee una vez todas las fotos ya indexadas para sacar su objetivo (de fondo, sin
+dejar la rejilla sin fechas mientras tanto). Algunas reflex antiguas solo
+guardan el objetivo en sus MakerNotes, que el repaso no lee para no hacer lento
+cada RAW: esas fotos salen como "Sin datos".
+
 ## Renombrar despues de aplicar GPS
 
 El flujo normal es subir la foto, ponerle la ubicacion y renombrarla. Por eso,
