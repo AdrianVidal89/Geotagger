@@ -455,6 +455,35 @@ def _redo_value(row):
         label = _tag_value(row, "Label")
     return 1 if str(label or "").strip().lower() == REDO_LABEL.lower() else 0
 
+# =============================================================================
+# EL OBJETIVO CON QUE SE HIZO LA FOTO
+# Para filtrar por objetivo. La camara lo deja en EXIF:LensModel (Canon, Nikon
+# Z, Sony, Fuji, moviles y casi todo lo de los ultimos diez anos, RAW incluido);
+# Lightroom y otros lo copian a XMP. Las MakerNotes, donde algunas camaras
+# antiguas guardan solo un numero de objetivo, no se miran: el repaso del indice
+# usa -fast2, que se las salta, y leerlas haria mucho mas lento cada RAW.
+# =============================================================================
+
+LENS_TAGS = ("EXIF:LensModel", "XMP:LensModel", "XMP:Lens")
+LENS_ARGS = ["-" + tag for tag in LENS_TAGS]
+LENS_MAX = 120
+# Lo que dejan algunas camaras cuando no saben que objetivo llevan (manual,
+# adaptado o sin contactos): no es un objetivo, es "sin datos"
+_LENS_JUNK = re.compile(r"^(?:[-\s.0]*|0(?:\.0)?\s*mm\s*f/?0(?:\.0)?|unknown.*|none|n/a)$",
+                        re.IGNORECASE)
+
+def _lens_value(row):
+    """El nombre del objetivo de una respuesta pedida con -G0, o "" si la foto
+    no lo dice."""
+    for tag in LENS_TAGS:
+        val = row.get(tag)
+        if val is None:
+            continue
+        s = " ".join(str(val).split())
+        if s and not _LENS_JUNK.match(s):
+            return s[:LENS_MAX]
+    return ""
+
 def _resolve_photo_date(row):
     """De lo que devuelve ExifTool, la primera fecha valida por orden de
     preferencia. Devuelve (fecha, de que campo salio)."""
@@ -1905,7 +1934,7 @@ def _index_db():
                 path TEXT PRIMARY KEY,
                 mtime INTEGER, size INTEGER,
                 lat REAL, lon REAL, date TEXT,
-                blur TEXT, rating INTEGER, redo INTEGER)""")
+                blur TEXT, rating INTEGER, redo INTEGER, lens TEXT)""")
             try:
                 # Bases de datos de versiones anteriores: se les anade la
                 # columna y el proximo repaso la va rellenando.
@@ -1920,6 +1949,13 @@ def _index_db():
                 # La marca "para reeditar" nace con esta version: ninguna foto
                 # la tiene todavia, asi que no hace falta releer el indice
                 conn.execute("ALTER TABLE photos ADD COLUMN redo INTEGER")
+            except sqlite3.OperationalError:
+                pass                                 # ya la tiene
+            try:
+                # El objetivo llega despues: las fotos ya indexadas lo tienen a
+                # NULL ("sin leer") y el repaso las relee solas (ver
+                # _index_scan); "" es "leida, y no dice que objetivo lleva"
+                conn.execute("ALTER TABLE photos ADD COLUMN lens TEXT")
             except sqlite3.OperationalError:
                 pass                                 # ya la tiene
             # Nombres de lugar ya consultados: Nominatim obliga a esperar un
@@ -2047,7 +2083,7 @@ def _index_read_batch(paths):
     cmd = ["exiftool", "-fast2", "-json", "-n", "-q", "-q", "-b",
            "-ThumbnailImage",
            "-GPSLatitude", "-GPSLongitude", "-SourceFile"] \
-          + RATING_ARGS + REDO_ARGS + PHOTO_DATE_ARGS + paths
+          + RATING_ARGS + REDO_ARGS + LENS_ARGS + PHOTO_DATE_ARGS + paths
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         items = json.loads(result.stdout) if result.stdout.strip() else []
@@ -2077,7 +2113,7 @@ def _index_read_batch(paths):
             crudo = b""
         read[os.path.abspath(src)] = (lat, lon, _resolve_photo_date(item)[0],
                                       _lqip_from_bytes(crudo), _rating_value(item),
-                                      _redo_value(item))
+                                      _redo_value(item), _lens_value(item))
     return read
 
 def _index_scan(base):
@@ -2089,10 +2125,12 @@ def _index_scan(base):
     for full, mtime, size in _index_walk(base):
         current[full] = (mtime, size)
 
-    known = {}
-    for path, mtime, size in conn.execute(
-            "SELECT path, mtime, size FROM photos WHERE path >= ? AND path < ?", (lo, hi)):
+    known, sin_objetivo = {}, set()
+    for path, mtime, size, lens in conn.execute(
+            "SELECT path, mtime, size, lens FROM photos WHERE path >= ? AND path < ?", (lo, hi)):
         known[path] = (mtime, size)
+        if lens is None:
+            sin_objetivo.add(path)
 
     # Ojo: no basta con "no estaba en el recorrido". Una foto copiada mientras
     # se recorria el arbol no aparece en esa foto fija, y borrarla la sacaria
@@ -2103,22 +2141,26 @@ def _index_scan(base):
             conn.executemany("DELETE FROM photos WHERE path = ?", [(p,) for p in gone])
             conn.commit()
 
-    todo = [p for p, v in sorted(current.items()) if known.get(p) != v]
+    # Tambien las que se indexaron antes de que se leyera el objetivo: su
+    # archivo no ha cambiado, pero hay que leerlo una vez. Asi no hace falta
+    # marcarlas sucias, que dejaria la rejilla sin fechas hasta el repaso.
+    todo = [p for p, v in sorted(current.items())
+            if known.get(p) != v or p in sin_objetivo]
     _index_state.update(total=len(todo), done=0, root=str(base))
     for i in range(0, len(todo), INDEX_BATCH):
         batch = todo[i:i + INDEX_BATCH]
         read = _index_read_batch(batch)
         rows = []
         for path in batch:
-            lat, lon, date, blur, rating, redo = read.get(
-                path, (None, None, "", None, None, 0))
+            lat, lon, date, blur, rating, redo, lens = read.get(
+                path, (None, None, "", None, None, 0, ""))
             mtime, size = current[path]
-            rows.append((path, mtime, size, lat, lon, date, blur, rating, redo))
+            rows.append((path, mtime, size, lat, lon, date, blur, rating, redo, lens))
         with _index_write:
             conn.executemany(
                 "INSERT OR REPLACE INTO photos "
-                "(path, mtime, size, lat, lon, date, blur, rating, redo) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+                "(path, mtime, size, lat, lon, date, blur, rating, redo, lens) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
             conn.commit()
         _index_state["done"] += len(batch)
         # Un respiro entre lotes: el repaso es de fondo y no debe comerse el
@@ -2156,7 +2198,7 @@ def _index_photos(base):
     """Fotos CON coordenadas bajo base, tal como las conoce el indice."""
     lo, hi = _index_range(base)
     return _index_db().execute(
-        "SELECT path, lat, lon, date, mtime, rating, redo FROM photos "
+        "SELECT path, lat, lon, date, mtime, rating, redo, lens FROM photos "
         "WHERE path >= ? AND path < ? AND lat IS NOT NULL AND lon IS NOT NULL",
         (lo, hi)).fetchall()
 
@@ -2171,18 +2213,18 @@ def _index_dates(folder, children=False):
         lo, hi = _index_range(folder)
         # children: solo las fotos de la carpeta, no las de todo el subarbol
         # (en la raiz de la biblioteca serian todas las filas del indice)
-        sql = ("SELECT path, mtime, size, date, blur, rating, redo FROM photos "
+        sql = ("SELECT path, mtime, size, date, blur, rating, redo, lens FROM photos "
                "WHERE path >= ? AND path < ?")
         args = (lo, hi)
         if children:
             sql += " AND instr(substr(path, ?), '/') = 0"
             args = (lo, hi, len(lo) + 1)
-        for path, mtime, size, date, blur, rating, redo in _index_db().execute(sql, args).fetchall():
+        for path, mtime, size, date, blur, rating, redo, lens in _index_db().execute(sql, args).fetchall():
             if date and not _clean_date(date):
                 sucias.append(path)
                 continue
             out[path] = (mtime, size, date or "", blur, _clamp_rating(rating) or 0,
-                         1 if redo else 0)
+                         1 if redo else 0, lens or "")
     except Exception:
         pass
     for path in sucias:
@@ -2225,7 +2267,7 @@ def _index_without_gps(base):
     """Fotos que el indice sabe que NO tienen coordenadas."""
     lo, hi = _index_range(base)
     return _index_db().execute(
-        "SELECT path, mtime, date, rating, redo FROM photos "
+        "SELECT path, mtime, date, rating, redo, lens FROM photos "
         "WHERE path >= ? AND path < ? AND lat IS NULL", (lo, hi)).fetchall()
 
 # ~1,1 km: el nombre que devuelve Nominatim a este nivel de zoom es el del
@@ -2392,8 +2434,8 @@ def _index_copy(old, new):
         with _index_write:
             conn.execute(
                 "INSERT OR REPLACE INTO photos "
-                "(path, mtime, size, lat, lon, date, blur, rating, redo) "
-                "SELECT ?, ?, ?, lat, lon, date, blur, rating, redo FROM photos WHERE path = ?",
+                "(path, mtime, size, lat, lon, date, blur, rating, redo, lens) "
+                "SELECT ?, ?, ?, lat, lon, date, blur, rating, redo, lens FROM photos WHERE path = ?",
                 (str(new), int(st.st_mtime), st.st_size, str(old)))
             conn.commit()
     except Exception:
@@ -3091,6 +3133,8 @@ def _browse_item(name, rel_path, mtime, size, fila):
         # preguntarlas foto a foto seria una peticion por tarjeta
         "rating": fila[4] if al_dia else 0,
         "redo": fila[5] if al_dia else 0,
+        # El objetivo, para filtrar por el sin preguntar foto a foto
+        "lens": fila[6] if al_dia else "",
     }
 
 def _scan_dir(path):
@@ -4320,7 +4364,7 @@ def gps_map():
     # repaso en segundo plano: la interfaz va completando el mapa sola
     _index_request(root)
     photos = []
-    for path, lat, lon, date, mtime, rating, redo in _index_photos(base):
+    for path, lat, lon, date, mtime, rating, redo, lens in _index_photos(base):
         try:
             relative = Path(path).relative_to(root)
         except Exception:
@@ -4339,6 +4383,7 @@ def gps_map():
             "ext": os.path.splitext(path)[1].lower(),
             "rating": _clamp_rating(rating) or 0,
             "redo": 1 if redo else 0,
+            "lens": lens or "",
         })
     return jsonify({
         "photos": photos,
@@ -4406,7 +4451,7 @@ def missing_gps():
     rootp = str(root).rstrip("/") + "/"
     vistos = {}            # carpeta -> nombres que hay (un listado por carpeta,
                            # no un stat por foto: en el NAS cada uno es un viaje)
-    for path, mtime, date, rating, redo in _index_without_gps(base):
+    for path, mtime, date, rating, redo, lens in _index_without_gps(base):
         if not path.startswith(rootp):
             continue
         carpeta, _, name = path.rpartition("/")
@@ -4428,6 +4473,7 @@ def missing_gps():
             "date": _ui_date(date),
             "rating": _clamp_rating(rating) or 0,
             "redo": 1 if redo else 0,
+            "lens": lens or "",
         })
     found.sort(key=lambda f: f["mtime"], reverse=True)
     return jsonify({"files": found, "count": len(found), "index": _index_status_dict()})
