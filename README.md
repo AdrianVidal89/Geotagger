@@ -652,6 +652,23 @@ dejar la rejilla sin fechas mientras tanto). Algunas reflex antiguas solo
 guardan el objetivo en sus MakerNotes, que el repaso no lee para no hacer lento
 cada RAW: esas fotos salen como "Sin datos".
 
+## Filtrar por color
+
+En la barra de **Filtros**, el boton **Color** abre doce circulos (rojo, naranja,
+amarillo, verde, turquesa, azul, morado, rosa, marron, blanco, gris y negro).
+Al tocar uno salen las fotos en las que ese color ocupa al menos un 10% de la
+imagen; con varios marcados, las que tienen todos a la vez (azul + blanco para
+cielos con nubes, verde + azul para paisajes...). Cada circulo dice cuantas
+fotos de las que se ven lo tienen. Se combina con los demas filtros.
+
+Los colores los saca el indice en su repaso normal de la miniatura que la camara
+mete en la foto (la misma de la version diminuta), asi que no cuesta leer mas:
+la reduce a 40 px, quita las franjas negras que suelen traer esas miniaturas y
+cuenta que parte cae en cada color. Las fotos que no traen miniatura (escaneos,
+PNG, algunas editadas) los toman de su miniatura de la cache, o la primera vez
+que se genera. Al actualizar a esta version, el primer repaso relee una vez las
+fotos ya indexadas para sacar sus colores, de fondo.
+
 ## Renombrar despues de aplicar GPS
 
 El flujo normal es subir la foto, ponerle la ubicacion y renombrarla. Por eso,

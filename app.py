@@ -1934,7 +1934,7 @@ def _index_db():
                 path TEXT PRIMARY KEY,
                 mtime INTEGER, size INTEGER,
                 lat REAL, lon REAL, date TEXT,
-                blur TEXT, rating INTEGER, redo INTEGER, lens TEXT)""")
+                blur TEXT, rating INTEGER, redo INTEGER, lens TEXT, colors TEXT)""")
             try:
                 # Bases de datos de versiones anteriores: se les anade la
                 # columna y el proximo repaso la va rellenando.
@@ -1956,6 +1956,11 @@ def _index_db():
                 # NULL ("sin leer") y el repaso las relee solas (ver
                 # _index_scan); "" es "leida, y no dice que objetivo lleva"
                 conn.execute("ALTER TABLE photos ADD COLUMN lens TEXT")
+            except sqlite3.OperationalError:
+                pass                                 # ya la tiene
+            try:
+                # Los colores, igual que el objetivo: NULL es "sin leer"
+                conn.execute("ALTER TABLE photos ADD COLUMN colors TEXT")
             except sqlite3.OperationalError:
                 pass                                 # ya la tiene
             # Nombres de lugar ya consultados: Nominatim obliga a esperar un
@@ -2072,6 +2077,92 @@ def _lqip_from_bytes(data):
     except Exception:
         return None
 
+# =============================================================================
+# LOS COLORES DOMINANTES
+# Para filtrar por color. Salen de la misma miniatura incrustada que la version
+# diminuta (o de la miniatura de la cache si la foto no trae ninguna): cada
+# pixel de una copia de 40 px se lleva a uno de doce colores con nombre, y se
+# guardan los que ocupan al menos un 5% como "b42w20s12" (letra y porcentaje,
+# de mas a menos). Cuesta ~1 ms por foto.
+# =============================================================================
+
+COLOR_PX = 40
+COLOR_MIN_PCT = 5
+# r rojo, o naranja, y amarillo, g verde, c turquesa, b azul, p morado,
+# k rosa, n marron/beige, w blanco, s gris, x negro (las mismas en index.html)
+COLOR_CODES = "roygcbpknwsx"
+
+def _color_code(h, s, v):
+    """Uno de los doce colores para un pixel en HSV de Pillow (0-255 todo)."""
+    h, s, v = h * 360 / 255, s / 255, v / 255
+    if v < 0.2:
+        return "x"
+    if s < 0.16 or (s < 0.3 and v < 0.35):
+        return "w" if v > 0.8 else ("s" if v > 0.2 else "x")
+    if 15 <= h < 45 and (v < 0.55 or s < 0.45):
+        return "n"                     # tierra, madera, arena, piel
+    if h < 15 or h >= 340:
+        return "k" if s < 0.45 and v > 0.7 else "r"
+    if h < 45:
+        return "o"
+    if h < 70:
+        return "y"
+    if h < 160:
+        return "g"
+    if h < 195:
+        return "c"
+    if h < 255:
+        return "b"
+    if h < 290:
+        return "p"
+    return "k"
+
+def _colors(img):
+    """Colores dominantes de una imagen ya abierta, o "" si no se puede."""
+    try:
+        small = _downscaled(img, (COLOR_PX, COLOR_PX)).convert("RGB")
+        # Las miniaturas EXIF son 4:3 y la foto suele ser 3:2: vienen con
+        # franjas negras arriba y abajo que no son de la foto
+        bbox = small.convert("L").point(lambda p: 255 if p > 10 else 0).getbbox()
+        if bbox and bbox != (0, 0) + small.size:
+            small = small.crop(bbox)
+        counts = {}
+        for hsv in small.convert("HSV").getdata():
+            c = _color_code(*hsv)
+            counts[c] = counts.get(c, 0) + 1
+        total = sum(counts.values())
+        if not total:
+            return ""
+        pct = sorted(((round(n * 100 / total), c) for c, n in counts.items()), reverse=True)
+        return "".join("%s%d" % (c, p) for p, c in pct if p >= COLOR_MIN_PCT)
+    except Exception:
+        return ""
+
+def _colors_from_bytes(data):
+    if not data:
+        return ""
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            return _colors(img)
+    except Exception:
+        return ""
+
+def _colors_from_cache(path):
+    """Para las fotos sin miniatura incrustada: la que ya este en la cache."""
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return ""
+    for fmt in ("WEBP", "JPEG"):
+        name = _thumb_cache_name(path, mtime, fmt)
+        if os.path.exists(name):
+            try:
+                with Image.open(name) as img:
+                    return _colors(img)
+            except Exception:
+                pass
+    return ""
+
 def _index_read_batch(paths):
     """Lee un lote con UNA sola llamada a ExifTool."""
     # -fast2 corta la lectura en cuanto tiene los metadatos: en un RAW o un PNG
@@ -2111,9 +2202,11 @@ def _index_read_batch(paths):
                 crudo = b""
         else:
             crudo = b""
-        read[os.path.abspath(src)] = (lat, lon, _resolve_photo_date(item)[0],
-                                      _lqip_from_bytes(crudo), _rating_value(item),
-                                      _redo_value(item), _lens_value(item))
+        full = os.path.abspath(src)
+        read[full] = (lat, lon, _resolve_photo_date(item)[0],
+                      _lqip_from_bytes(crudo), _rating_value(item),
+                      _redo_value(item), _lens_value(item),
+                      _colors_from_bytes(crudo) or _colors_from_cache(full))
     return read
 
 def _index_scan(base):
@@ -2126,10 +2219,11 @@ def _index_scan(base):
         current[full] = (mtime, size)
 
     known, sin_objetivo = {}, set()
-    for path, mtime, size, lens in conn.execute(
-            "SELECT path, mtime, size, lens FROM photos WHERE path >= ? AND path < ?", (lo, hi)):
+    for path, mtime, size, lens, colors in conn.execute(
+            "SELECT path, mtime, size, lens, colors FROM photos WHERE path >= ? AND path < ?", (lo, hi)):
         known[path] = (mtime, size)
-        if lens is None:
+        # Sin objetivo o sin colores leidos: indexadas antes de que se leyeran
+        if lens is None or colors is None:
             sin_objetivo.add(path)
 
     # Ojo: no basta con "no estaba en el recorrido". Una foto copiada mientras
@@ -2152,15 +2246,15 @@ def _index_scan(base):
         read = _index_read_batch(batch)
         rows = []
         for path in batch:
-            lat, lon, date, blur, rating, redo, lens = read.get(
-                path, (None, None, "", None, None, 0, ""))
+            lat, lon, date, blur, rating, redo, lens, colors = read.get(
+                path, (None, None, "", None, None, 0, "", ""))
             mtime, size = current[path]
-            rows.append((path, mtime, size, lat, lon, date, blur, rating, redo, lens))
+            rows.append((path, mtime, size, lat, lon, date, blur, rating, redo, lens, colors))
         with _index_write:
             conn.executemany(
                 "INSERT OR REPLACE INTO photos "
-                "(path, mtime, size, lat, lon, date, blur, rating, redo, lens) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+                "(path, mtime, size, lat, lon, date, blur, rating, redo, lens, colors) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
             conn.commit()
         _index_state["done"] += len(batch)
         # Un respiro entre lotes: el repaso es de fondo y no debe comerse el
@@ -2198,7 +2292,7 @@ def _index_photos(base):
     """Fotos CON coordenadas bajo base, tal como las conoce el indice."""
     lo, hi = _index_range(base)
     return _index_db().execute(
-        "SELECT path, lat, lon, date, mtime, rating, redo, lens FROM photos "
+        "SELECT path, lat, lon, date, mtime, rating, redo, lens, colors FROM photos "
         "WHERE path >= ? AND path < ? AND lat IS NOT NULL AND lon IS NOT NULL",
         (lo, hi)).fetchall()
 
@@ -2213,18 +2307,18 @@ def _index_dates(folder, children=False):
         lo, hi = _index_range(folder)
         # children: solo las fotos de la carpeta, no las de todo el subarbol
         # (en la raiz de la biblioteca serian todas las filas del indice)
-        sql = ("SELECT path, mtime, size, date, blur, rating, redo, lens FROM photos "
+        sql = ("SELECT path, mtime, size, date, blur, rating, redo, lens, colors FROM photos "
                "WHERE path >= ? AND path < ?")
         args = (lo, hi)
         if children:
             sql += " AND instr(substr(path, ?), '/') = 0"
             args = (lo, hi, len(lo) + 1)
-        for path, mtime, size, date, blur, rating, redo, lens in _index_db().execute(sql, args).fetchall():
+        for path, mtime, size, date, blur, rating, redo, lens, colors in _index_db().execute(sql, args).fetchall():
             if date and not _clean_date(date):
                 sucias.append(path)
                 continue
             out[path] = (mtime, size, date or "", blur, _clamp_rating(rating) or 0,
-                         1 if redo else 0, lens or "")
+                         1 if redo else 0, lens or "", colors or "")
     except Exception:
         pass
     for path in sucias:
@@ -2239,12 +2333,13 @@ BLUR_BATCH = 32
 _blur_pend = []
 _blur_pend_lock = threading.Lock()
 
-def _index_set_blur(path, blur):
-    """Apunta la miniatura diminuta de una foto que no la traia incrustada."""
+def _index_set_blur(path, blur, colors=""):
+    """Apunta la miniatura diminuta de una foto que no la traia incrustada, y
+    sus colores si el indice aun no los tenia."""
     if not blur:
         return
     with _blur_pend_lock:
-        _blur_pend.append((blur, str(path)))
+        _blur_pend.append((blur, colors or "", str(path)))
         lleno = len(_blur_pend) >= BLUR_BATCH
     if lleno:
         _blur_flush()
@@ -2258,7 +2353,9 @@ def _blur_flush():
     try:
         conn = _index_db()
         with _index_write:
-            conn.executemany("UPDATE photos SET blur = ? WHERE path = ?", lote)
+            conn.executemany(
+                "UPDATE photos SET blur = ?, colors = CASE WHEN colors IS NULL "
+                "OR colors = '' THEN ? ELSE colors END WHERE path = ?", lote)
             conn.commit()
     except Exception:
         pass
@@ -2267,7 +2364,7 @@ def _index_without_gps(base):
     """Fotos que el indice sabe que NO tienen coordenadas."""
     lo, hi = _index_range(base)
     return _index_db().execute(
-        "SELECT path, mtime, date, rating, redo, lens FROM photos "
+        "SELECT path, mtime, date, rating, redo, lens, colors FROM photos "
         "WHERE path >= ? AND path < ? AND lat IS NULL", (lo, hi)).fetchall()
 
 # ~1,1 km: el nombre que devuelve Nominatim a este nivel de zoom es el del
@@ -2434,8 +2531,8 @@ def _index_copy(old, new):
         with _index_write:
             conn.execute(
                 "INSERT OR REPLACE INTO photos "
-                "(path, mtime, size, lat, lon, date, blur, rating, redo, lens) "
-                "SELECT ?, ?, ?, lat, lon, date, blur, rating, redo, lens FROM photos WHERE path = ?",
+                "(path, mtime, size, lat, lon, date, blur, rating, redo, lens, colors) "
+                "SELECT ?, ?, ?, lat, lon, date, blur, rating, redo, lens, colors FROM photos WHERE path = ?",
                 (str(new), int(st.st_mtime), st.st_size, str(old)))
             conn.commit()
     except Exception:
@@ -3135,6 +3232,8 @@ def _browse_item(name, rel_path, mtime, size, fila):
         "redo": fila[5] if al_dia else 0,
         # El objetivo, para filtrar por el sin preguntar foto a foto
         "lens": fila[6] if al_dia else "",
+        # Los colores dominantes ("b42w20..."), para el filtro por color
+        "colors": fila[7] if al_dia else "",
     }
 
 def _scan_dir(path):
@@ -3347,7 +3446,7 @@ def _make_thumb(abs_path, cache_file, fmt):
     # Ya esta descomprimida y pequena: sacar aqui la version diminuta es casi
     # gratis, y asi tambien la tienen las fotos sin miniatura EXIF incrustada
     # (escaneos, PNG, las que salen de editar).
-    _index_set_blur(abs_path, _lqip(img))
+    _index_set_blur(abs_path, _lqip(img), _colors(img))
     buf = io.BytesIO()
     if fmt == "WEBP":
         img.save(buf, format="WEBP", quality=82, method=4)
@@ -4364,7 +4463,7 @@ def gps_map():
     # repaso en segundo plano: la interfaz va completando el mapa sola
     _index_request(root)
     photos = []
-    for path, lat, lon, date, mtime, rating, redo, lens in _index_photos(base):
+    for path, lat, lon, date, mtime, rating, redo, lens, colors in _index_photos(base):
         try:
             relative = Path(path).relative_to(root)
         except Exception:
@@ -4384,6 +4483,7 @@ def gps_map():
             "rating": _clamp_rating(rating) or 0,
             "redo": 1 if redo else 0,
             "lens": lens or "",
+            "colors": colors or "",
         })
     return jsonify({
         "photos": photos,
@@ -4451,7 +4551,7 @@ def missing_gps():
     rootp = str(root).rstrip("/") + "/"
     vistos = {}            # carpeta -> nombres que hay (un listado por carpeta,
                            # no un stat por foto: en el NAS cada uno es un viaje)
-    for path, mtime, date, rating, redo, lens in _index_without_gps(base):
+    for path, mtime, date, rating, redo, lens, colors in _index_without_gps(base):
         if not path.startswith(rootp):
             continue
         carpeta, _, name = path.rpartition("/")
@@ -4474,6 +4574,7 @@ def missing_gps():
             "rating": _clamp_rating(rating) or 0,
             "redo": 1 if redo else 0,
             "lens": lens or "",
+            "colors": colors or "",
         })
     found.sort(key=lambda f: f["mtime"], reverse=True)
     return jsonify({"files": found, "count": len(found), "index": _index_status_dict()})

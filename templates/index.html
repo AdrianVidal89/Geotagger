@@ -364,6 +364,31 @@ header .spacer{flex:1}
 .loc-opt .loc-n{margin-left:auto;padding-left:8px;font-size:.75rem;color:var(--text2);flex-shrink:0}
 .loc-empty{padding:16px 14px;font-size:.8rem;color:var(--text2);text-align:center}
 
+/* filtro por color: círculos */
+.fb-dots{display:flex;align-items:center}
+.fb-dots i{width:14px;height:14px;border-radius:50%;margin-left:-4px;border:1.5px solid var(--bg);box-sizing:border-box;box-shadow:0 0 0 1px rgba(128,128,128,.45)}
+.fb-dots i:first-child{margin-left:0}
+.col-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px 6px;padding:8px 12px 6px}
+.col-opt{
+  display:flex;flex-direction:column;align-items:center;gap:4px;
+  background:none;border:none;cursor:pointer;padding:2px;font-family:inherit;
+  font-size:.68rem;color:var(--text2);
+}
+.col-opt i{
+  width:34px;height:34px;border-radius:50%;box-sizing:border-box;
+  border:1px solid rgba(128,128,128,.35);position:relative;transition:transform .12s;
+}
+.col-opt.on i{box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--primary);transform:scale(1.04)}
+.col-opt.on i::after{
+  content:"";position:absolute;left:50%;top:46%;width:7px;height:13px;
+  border:solid var(--ck,#fff);border-width:0 2.5px 2.5px 0;
+  transform:translate(-50%,-50%) rotate(45deg);
+}
+.col-opt.on{color:var(--text);font-weight:600}
+.col-opt.none{opacity:.35}
+.col-opt .loc-n{font-size:.62rem;color:var(--text2);font-weight:400;line-height:1}
+.col-hint{padding:4px 14px 12px;font-size:.72rem;color:var(--text2);line-height:1.35}
+
 /* ── UPLOAD TOAST (mobile + desktop) ─────────────── */
 .upload-toast{
   position:fixed;bottom:-120px;left:50%;transform:translateX(-50%);
@@ -1562,6 +1587,13 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
           <svg class="caret" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
         </button>
       </div>
+      <div class="fb-field fb-loc" id="filter-color-field" title="Colores dominantes de la foto">
+        <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0 0 18c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm3-4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm3 4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z" fill="currentColor"/></svg>
+        <button type="button" class="fb-loc-btn" id="filter-color-btn">
+          <span class="fb-loc-txt placeholder" id="filter-color-label">Color</span>
+          <svg class="caret" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
+        </button>
+      </div>
       <div class="fb-field">
         <label>Desde</label><input type="date" id="filter-from">
       </div>
@@ -1699,6 +1731,16 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
   </div>
   <input type="text" class="loc-search" id="lens-search" placeholder="Buscar objetivo..." autocomplete="off">
   <div class="loc-list" id="lens-list"></div>
+</div>
+
+<!-- COLOR MENU (posicionado por JS) -->
+<div class="loc-menu" id="filter-color-menu">
+  <div class="loc-menu-head">
+    <span>Colores dominantes</span>
+    <button type="button" id="color-clear-sel">Limpiar</button>
+  </div>
+  <div class="col-grid" id="color-grid"></div>
+  <div class="col-hint" id="color-hint"></div>
 </div>
 
 <!-- UPLOAD PROGRESS TOAST -->
@@ -3247,6 +3289,7 @@ function renderLocMenu(filterText) {
 // horizontal de la barra de filtros en movil.
 function openLocMenu() {
   closeLensMenu();
+  closeColorMenu();
   const field = document.getElementById("filter-loc-field");
   const menu = document.getElementById("filter-loc-menu");
   const r = field.getBoundingClientRect();
@@ -3334,6 +3377,7 @@ function renderLensMenu(filterText) {
 
 function openLensMenu() {
   closeLocMenu();
+  closeColorMenu();
   const field = document.getElementById("filter-lens-field");
   const menu = document.getElementById("filter-lens-menu");
   const r = field.getBoundingClientRect();
@@ -3366,7 +3410,108 @@ document.addEventListener("click", (e) => {
   if (menu.classList.contains("on") && !menu.contains(e.target) && !field.contains(e.target)) closeLensMenu();
 });
 
+// ── Filtro por color ──────────────────────────────────────────────────────────
+// El índice saca de la miniatura de cada foto qué parte ocupa cada uno de doce
+// colores con nombre y la manda en el listado como "b42w20s12" (letra y %).
+// Con varios círculos marcados salen las fotos que tienen TODOS esos colores.
+const COLORS = [
+  ["r", "Rojo", "#d93025"], ["o", "Naranja", "#f28b16"], ["y", "Amarillo", "#f6d32d"],
+  ["g", "Verde", "#34a853"], ["c", "Turquesa", "#1fb5ad"], ["b", "Azul", "#3b78e7"],
+  ["p", "Morado", "#8e44ad"], ["k", "Rosa", "#f48fb1"], ["n", "Marrón", "#8d6e63"],
+  ["w", "Blanco", "#ffffff"], ["s", "Gris", "#9aa0a6"], ["x", "Negro", "#202124"],
+];
+const COLOR_MIN = 10;          // % de la foto para que un color cuente como dominante
+const LIGHT_COLORS = "ywk";    // la marca de seleccionado va en oscuro sobre estos
+let selectedColors = new Set();
+const _colorCache = new Map();
+
+function fileColors(f) {
+  const s = f.colors || "";
+  let m = _colorCache.get(s);
+  if (!m) {
+    m = {};
+    for (const [, c, p] of s.matchAll(/([a-z])(\d+)/g)) m[c] = +p;
+    _colorCache.set(s, m);
+  }
+  return m;
+}
+function hasColors(f) {
+  const m = fileColors(f);
+  for (const c of selectedColors) if ((m[c] || 0) < COLOR_MIN) return false;
+  return true;
+}
+
+function updateColorLabel() {
+  const el = document.getElementById("filter-color-label");
+  if (!selectedColors.size) { el.textContent = "Color"; el.classList.add("placeholder"); return; }
+  el.classList.remove("placeholder");
+  el.innerHTML = '<span class="fb-dots">' + COLORS.filter(([c]) => selectedColors.has(c))
+    .map(([, name, hex]) => '<i title="' + name + '" style="background:' + hex + '"></i>').join("") + '</span>';
+}
+
+function renderColorMenu() {
+  // Cuántas fotos de las que se ven tienen cada color (junto con los ya marcados)
+  const base = allFiles.filter(hasColors);
+  const sinDatos = allFiles.filter(f => !f.colors).length;
+  document.getElementById("color-grid").innerHTML = COLORS.map(([c, name, hex]) => {
+    const on = selectedColors.has(c);
+    const n = on ? base.length : base.filter(f => (fileColors(f)[c] || 0) >= COLOR_MIN).length;
+    return '<button type="button" class="col-opt' + (on ? " on" : "") + (n || on ? "" : " none") +
+      '" data-c="' + c + '" title="' + name + '"><i style="background:' + hex +
+      (LIGHT_COLORS.includes(c) ? ';--ck:#202124' : '') + '"></i>' + name +
+      '<span class="loc-n">' + n + '</span></button>';
+  }).join("");
+  document.getElementById("color-hint").textContent =
+    (selectedColors.size > 1 ? "Fotos con todos los colores marcados. " : "") +
+    (sinDatos ? sinDatos + (sinDatos === 1 ? " foto aún no tiene" : " fotos aún no tienen") +
+      " colores: el índice los irá sacando." : "");
+  document.querySelectorAll("#color-grid .col-opt").forEach(b => b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const c = b.dataset.c;
+    if (selectedColors.has(c)) selectedColors.delete(c); else selectedColors.add(c);
+    updateColorLabel();
+    renderColorMenu();
+    applyFilters();
+  }));
+}
+
+function openColorMenu() {
+  closeLocMenu();
+  closeLensMenu();
+  const field = document.getElementById("filter-color-field");
+  const menu = document.getElementById("filter-color-menu");
+  const r = field.getBoundingClientRect();
+  menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 298)) + "px";
+  menu.style.top = (r.bottom + 6) + "px";
+  renderColorMenu();
+  menu.classList.add("on");
+  field.classList.add("open");
+}
+function closeColorMenu() {
+  document.getElementById("filter-color-menu").classList.remove("on");
+  document.getElementById("filter-color-field").classList.remove("open");
+}
+document.getElementById("filter-color-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (document.getElementById("filter-color-menu").classList.contains("on")) closeColorMenu();
+  else openColorMenu();
+});
+document.getElementById("color-clear-sel").addEventListener("click", () => {
+  selectedColors.clear();
+  updateColorLabel();
+  renderColorMenu();
+  applyFilters();
+});
+document.addEventListener("click", (e) => {
+  const menu = document.getElementById("filter-color-menu");
+  const field = document.getElementById("filter-color-field");
+  if (menu.classList.contains("on") && !menu.contains(e.target) && !field.contains(e.target)) closeColorMenu();
+});
+
 function resetFilters() {
+  selectedColors.clear();
+  updateColorLabel();
+  closeColorMenu();
   selectedLocations.clear();
   updateLocLabel();
   closeLocMenu();
@@ -3380,7 +3525,7 @@ function resetFilters() {
 }
 
 function refreshFilterChip() {
-  const active = selectedLocations.size > 0 || selectedLenses.size > 0 || (fbFrom && fbFrom.value) ||
+  const active = selectedLocations.size > 0 || selectedLenses.size > 0 || selectedColors.size > 0 || (fbFrom && fbFrom.value) ||
                  (fbTo && fbTo.value) || (fbSort && fbSort.value !== "new");
   const chip = document.getElementById("chip-filter");
   chip.classList.toggle("on", !!active);
@@ -3435,6 +3580,7 @@ function applyFilters() {
     list = list.filter(f => selectedLocations.has(fileLocation(f)));
   }
   if (selectedLenses.size > 0) list = list.filter(f => selectedLenses.has(fileLens(f)));
+  if (selectedColors.size > 0) list = list.filter(hasColors);
   const fromP = fbFrom && fbFrom.value ? fbFrom.value.split("-").map(Number) : null;
   const toP   = fbTo && fbTo.value ? fbTo.value.split("-").map(Number) : null;
   const from = fromP ? new Date(fromP[0], fromP[1] - 1, fromP[2], 0, 0, 0).getTime() : null;
@@ -3480,7 +3626,7 @@ document.getElementById("filter-clear").addEventListener("click", () => {
 document.getElementById("chip-filter").addEventListener("click", () => {
   const bar = document.getElementById("filter-bar");
   bar.classList.toggle("on");
-  if (!bar.classList.contains("on")) { closeLocMenu(); closeLensMenu(); }
+  if (!bar.classList.contains("on")) { closeLocMenu(); closeLensMenu(); closeColorMenu(); }
 });
 
 // ── ESTRELLAS ─────────────────────────────────────────────────────────────────
@@ -5089,7 +5235,7 @@ let mapAlbum = null;
 
 function mapPhotoToFile(ph) {
   return {name: ph.name, path: ph.path, ext: ph.ext || "", mtime: ph.mtime || 0,
-          rating: ph.rating || 0, redo: ph.redo || 0, lens: ph.lens || "",
+          rating: ph.rating || 0, redo: ph.redo || 0, lens: ph.lens || "", colors: ph.colors || "",
           date: (ph.date || "").replace(/^(\d{4}):(\d{2}):(\d{2})/, "$1-$2-$3")};
 }
 
