@@ -2743,6 +2743,9 @@ new MutationObserver(() => { if (tl.on && !(vg.grid && vg.grid.isConnected)) tlO
 // "Incluir subcarpetas" viaja en la URL (#/2026?sub): atras/adelante y
 // recargar la pagina lo respetan
 let subMode = false;
+// Listado con subcarpetas: si se corto en el tope, si viene acotado a un
+// periodo pedido al servidor, y las fechas de TODO el arbol segun el indice
+let listTruncated = false, listRanged = false, listMax = 0, treeBounds = null;
 function hashForPath(path, sub) {
   if (sub === undefined) sub = subMode;
   return (path ? "#/" + encodeURIComponent(path) : "#/") + (sub ? "?sub" : "");
@@ -2817,8 +2820,10 @@ async function navigate(path, opts) {
     // que vaya dejando hechas las miniaturas que falten mientras se mira la
     // primera pantalla. Sin esto, cada foto grande cuesta su descompresión la
     // primera vez que aparece.
-    const res = await fetch("/api/browse?prefetch=1&path=" + encodeURIComponent(path) + (subMode ? "&recursive=1" : ""));
+    const res = await fetch("/api/browse?prefetch=1&path=" + encodeURIComponent(path) +
+                            (subMode ? "&recursive=1" + (keep ? rangeQuery() : "") : ""));
     const data = await res.json();
+    takeListInfo(data);
     renderBreadcrumb(path);
     if (subMode) markSubCrumb(data.files.length, data.truncated);
     renderSidebar(data.dirs, path);
@@ -2854,6 +2859,44 @@ function renderBreadcrumb(path) {
   bc.querySelectorAll(".bc-item:not(.cur)").forEach(el => {
     el.addEventListener("click", () => navigate(el.dataset.path));
   });
+}
+
+function takeListInfo(data) {
+  listTruncated = !!data.truncated;
+  listRanged = !!data.ranged;
+  listMax = data.max || 0;
+  treeBounds = data.date_min ? [data.date_min, data.date_max || data.date_min] : null;
+}
+
+// "&from=...&to=..." con las fechas del filtro (vacio si no hay)
+function rangeQuery() {
+  let q = "";
+  if (fbFrom && fbFrom.value) q += "&from=" + fbFrom.value;
+  if (fbTo && fbTo.value) q += "&to=" + fbTo.value;
+  return q;
+}
+
+// Con subcarpetas, si el listado se corto o ya venia acotado a un periodo, el
+// filtro de fechas no puede trabajar sobre lo cargado: se le pide al servidor
+// el periodo entero (recorre todo el arbol con el indice).
+let rangeSeq = 0;
+async function reloadRange() {
+  const seq = ++rangeSeq;
+  const c = document.getElementById("content");
+  c.innerHTML = '<div class="empty-state"><div class="spinner"></div><p style="margin-top:12px">Buscando fotos de esas fechas en todas las subcarpetas...</p></div>';
+  try {
+    const res = await fetch("/api/browse?prefetch=1&recursive=1&path=" + encodeURIComponent(currentPath) + rangeQuery());
+    const data = await res.json();
+    if (seq !== rangeSeq) return;          // ya se pidio otro periodo
+    takeListInfo(data);
+    renderBreadcrumb(currentPath);
+    markSubCrumb(data.files.length, data.truncated);
+    selectedFiles.clear();
+    allFiles = data.files;
+    applyFilters();
+  } catch (e) {
+    if (seq === rangeSeq) c.innerHTML = '<div class="empty-state"><p>Error cargando las fotos de esas fechas</p></div>';
+  }
 }
 
 // "· con subcarpetas · 1.234 fotos" al final de la ruta
@@ -3038,6 +3081,17 @@ function renderFiles(files) {
     const note = document.createElement("div");
     note.className = "index-note";
     note.innerHTML = '<div class="spinner"></div><span>' + indexNote + '</span>';
+    c.appendChild(note);
+  }
+  if (subMode && listTruncated) {
+    const note = document.createElement("div");
+    note.className = "index-note";
+    note.textContent = listRanged
+      ? "Hay más de " + listMax.toLocaleString("es-ES") + " fotos en esas fechas y solo se muestran " +
+        listMax.toLocaleString("es-ES") + ". Acorta el periodo para verlas todas."
+      : "Esta carpeta con sus subcarpetas tiene más de " + listMax.toLocaleString("es-ES") +
+        " fotos y solo se cargan " + listMax.toLocaleString("es-ES") +
+        ". Los filtros de color, estrellas, lugar u objetivo solo miran esas; para un periodo completo, usa las fechas del filtro.";
     c.appendChild(note);
   }
   c.appendChild(grid);
@@ -3550,6 +3604,11 @@ function updateDateBounds() {
   }
   dateLo = lo === Infinity ? "" : isoDay(lo);
   dateHi = hi === -Infinity ? "" : isoDay(hi);
+  // Listado incompleto (tope o periodo): lo cargado no es todo lo que hay
+  if (subMode && (listTruncated || listRanged) && treeBounds) {
+    if (!dateLo || treeBounds[0] < dateLo) dateLo = treeBounds[0];
+    if (!dateHi || treeBounds[1] > dateHi) dateHi = treeBounds[1];
+  }
   const hint = document.getElementById("filter-range");
   if (hint) hint.textContent = dateLo ? (dateLo === dateHi ? "Fotos del " + humanDay(dateLo) :
     "Fotos del " + humanDay(dateLo) + " al " + humanDay(dateHi)) : "";
@@ -3612,7 +3671,11 @@ function applyFilters() {
   updateSelUI();
 }
 
-[fbFrom, fbTo, fbSort].forEach(el => { if (el) el.addEventListener("change", () => { clampDates(); applyFilters(); }); });
+[fbFrom, fbTo, fbSort].forEach(el => { if (el) el.addEventListener("change", () => {
+  clampDates();
+  if (el !== fbSort && subMode && (listTruncated || listRanged)) reloadRange();
+  else applyFilters();
+}); });
 
 document.getElementById("filter-clear").addEventListener("click", () => {
   if (fbSort) fbSort.value = "new";
@@ -3620,7 +3683,8 @@ document.getElementById("filter-clear").addEventListener("click", () => {
   redoFilter = false;
   paintRatingFilter();
   resetFilters();
-  applyFilters();
+  if (subMode && listRanged) reloadRange();
+  else applyFilters();
 });
 
 document.getElementById("chip-filter").addEventListener("click", () => {

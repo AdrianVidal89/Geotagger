@@ -3259,6 +3259,39 @@ def _scan_dir(path):
                 continue
     return dirs, files
 
+# Dia de una foto ("AAAA-MM-DD") con el mismo criterio que la galeria
+# (fileTimeRaw en index.html): la fecha de los metadatos; si no, la del nombre
+# renombrado por EXIF; y si no, la del archivo.
+_NOMBRE_FECHA = re.compile(r"^(\d{4})-(\d{2})-(\d{2})_\d{2}-\d{2}-\d{2}_")
+
+def _photo_day(item):
+    d = item.get("date") or ""
+    if len(d) >= 10 and d[4] == "-" and d[7] == "-":
+        return d[:10]
+    m = _NOMBRE_FECHA.match(item.get("name") or "")
+    if m:
+        return m.group(1) + "-" + m.group(2) + "-" + m.group(3)
+    try:
+        return datetime.fromtimestamp(item.get("mtime") or 0).strftime("%Y-%m-%d")
+    except (OverflowError, OSError, ValueError):
+        return ""
+
+def _day_arg(name):
+    v = (request.args.get(name) or "").strip()
+    return v if re.fullmatch(r"\d{4}-\d{2}-\d{2}", v) else ""
+
+def _index_day_bounds(base):
+    """Primer y ultimo dia con foto de todo el arbol, segun el indice (para
+    los calendarios del filtro cuando el listado no trae todas las fotos)."""
+    try:
+        lo, hi = _index_range(base)
+        a, b = _index_db().execute(
+            "SELECT min(date), max(date) FROM photos WHERE path >= ? AND path < ? "
+            "AND date IS NOT NULL AND date != ''", (lo, hi)).fetchone()
+    except Exception:
+        return "", ""
+    return (_ui_date(a)[:10] if a else ""), (_ui_date(b)[:10] if b else "")
+
 @app.route("/api/browse")
 def browse():
     rel = request.args.get("path", "")
@@ -3287,12 +3320,26 @@ def browse():
     pre = canon + "/" if canon else ""
     absp = base.rstrip("/") + "/"
     dirs = [{"name": n, "path": pre + n} for n in sub_dirs]
-    files = [_browse_item(n, pre + n, mt, sz, fechas.get(absp + n)) for n, mt, sz, _ in own]
+    # Con subcarpetas el listado tiene tope (RECURSIVE_MAX). Si se piden fechas
+    # ("from"/"to", AAAA-MM-DD), se recorre TODO el arbol y solo entran las
+    # fotos de ese periodo: el tope se aplica a las que cumplen, no a las
+    # primeras que aparecen. Sin esto, en una carpeta de 50.000 fotos el filtro
+    # de un año antiguo solo veia las pocas que cabian en las 20.000 primeras.
+    d_from, d_to = (_day_arg("from"), _day_arg("to")) if recursive else ("", "")
+    ranged = bool(d_from or d_to)
+    def en_rango(f):
+        day = _photo_day(f)
+        return (not d_from or day >= d_from) and (not d_to or day <= d_to)
     editadas = _orig_paths()           # las que tienen original guardado
-    for f, (n, _, _, _) in zip(files, own):
+    files, exact = [], []              # exact: para mirar la cache
+    for n, mt, sz, m in own:
+        f = _browse_item(n, pre + n, mt, sz, fechas.get(absp + n))
+        if ranged and not en_rango(f):
+            continue
         if absp + n in editadas:
             f["orig"] = True
-    exact = [(absp + n, m) for n, _, _, m in own]      # para mirar la cache
+        files.append(f)
+        exact.append((absp + n, m))
     truncated = False
     if recursive:
         # Todas las fotos de las subcarpetas (la carpeta de cada una va en
@@ -3307,6 +3354,8 @@ def browse():
             folder = sub[:-1]
             for n, mt, sz, m in fotos:
                 f = _browse_item(n, pre + sub + n, mt, sz, fechas.get(absp + sub + n))
+                if ranged and not en_rango(f):
+                    continue
                 f["folder"] = folder
                 if absp + sub + n in editadas:
                     f["orig"] = True
@@ -3340,6 +3389,11 @@ def browse():
     if recursive:
         out["recursive"] = True
         out["truncated"] = truncated
+        out["ranged"] = ranged
+        out["max"] = RECURSIVE_MAX
+        # Fechas de todo el arbol: los calendarios no pueden salir de lo
+        # cargado, que con tope o con periodo no es todo
+        out["date_min"], out["date_max"] = _index_day_bounds(base)
     return jsonify(out)
 
 @app.route("/api/thumb")
