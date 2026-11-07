@@ -2507,7 +2507,7 @@ function _dequeueThumb(card) {
 // separadores con la altura de las filas que representan. Con todas las
 // tarjetas creadas, una carpeta de 4.000 fotos eran 50.000 elementos que el
 // navegador recolocaba en cada cuadro del scroll (y "Subcarpetas" llega a
-// 20.000 fotos). La rejilla es regular -tarjetas cuadradas en columnas que
+// 60.000 fotos). La rejilla es regular -tarjetas cuadradas en columnas que
 // pone el CSS-, asi que que fila cae en pantalla sale de una cuenta.
 // Las tarjetas guardan data-index (posicion en currentFiles) como siempre:
 // el codigo que busca una tarjeta concreta sigue funcionando para las que
@@ -2819,6 +2819,7 @@ async function navigate(path, opts) {
     // primera vez que aparece.
     const res = await fetch("/api/browse?prefetch=1&path=" + encodeURIComponent(path) + (subMode ? "&recursive=1" : ""));
     const data = await res.json();
+    browseFiles(data.files, data.base);
     renderBreadcrumb(path);
     if (subMode) markSubCrumb(data.files.length, data.truncated);
     renderSidebar(data.dirs, path);
@@ -2832,6 +2833,21 @@ async function navigate(path, opts) {
     c.innerHTML = '<div class="empty-state"><p>Error cargando carpeta</p></div>';
   }
   closeSidebar();
+}
+
+// El listado llega con lo justo de cada foto (ver _browse_item en app.py):
+// sin la ruta completa, que repite la carpeta, ni la extension, ni los campos
+// vacios. Aqui se rehacen las dos que el resto de la galeria da por hechas.
+function browseFiles(files, base) {
+  const pre = base || "";
+  for (const f of files) {
+    if (f.path === undefined) f.path = pre + (f.folder ? f.folder + "/" : "") + f.name;
+    if (f.ext === undefined) {
+      const i = f.name.lastIndexOf(".");
+      f.ext = i > 0 ? f.name.slice(i).toLowerCase() : "";
+    }
+  }
+  return files;
 }
 
 function renderBreadcrumb(path) {
@@ -3714,14 +3730,18 @@ async function applyRating(paths, stars) {
   }
 }
 
-// Las estrellas que comparte la selección (0 si no coinciden entre sí)
+// Las estrellas que comparte la selección (0 si no coinciden entre sí).
+// Se mira en cada toque a una foto: con 60.000 en la galería, recorrerlas
+// todas eran décimas de segundo en un móvil. Se para al ver las elegidas.
 function selectionRating() {
-  let val = null;
+  let val = null, quedan = selectedFiles.size;
+  if (!quedan) return 0;
   for (const f of currentFiles) {
     if (!selectedFiles.has(f.path)) continue;
     const r = f.rating || 0;
     if (val === null) val = r;
     else if (val !== r) return 0;
+    if (--quedan === 0) break;
   }
   return val || 0;
 }
@@ -3861,10 +3881,11 @@ async function applyRedo(paths, redo) {
 // ¿Están ya marcadas TODAS las seleccionadas? Entonces el botón desmarca.
 function selectionAllRedo() {
   let n = 0;
+  if (!selectedFiles.size) return false;
   for (const f of currentFiles) {
     if (!selectedFiles.has(f.path)) continue;
     if (!f.redo) return false;
-    n++;
+    if (++n === selectedFiles.size) break;
   }
   return n > 0;
 }
