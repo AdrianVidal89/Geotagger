@@ -26,6 +26,9 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
+# Las claves en el orden en que se escriben: ordenarlas no aporta nada y, en
+# un listado de 60.000 fotos, es trabajo en cada respuesta
+app.json.sort_keys = False
 
 # Raiz del NAS visible DENTRO del contenedor: todo lo que la app puede
 # recorrer cuelga de aqui. Se puede fijar con la variable de entorno NAS_ROOT;
@@ -568,11 +571,17 @@ def _run_exiftool_batch(args, paths):
                  sum(p.updated for p in partes),
                  "\n".join(p.stderr for p in partes if p.stderr))
 
+# Sube cada vez que se borra alguna miniatura de la cache: el listado lo usa
+# para saber si puede fiarse de que "no falta ninguna" (ver _thumbs_missing)
+_thumb_cache_gen = 0
+
 def _evict_thumb_cache(abs_path):
     """Borra las miniaturas y vistas previas guardadas de una foto.
     Antes comparaba md5(ruta) contra nombres que son md5(ruta+fecha+formato):
     no coincidian nunca, asi que no borraba nada y encima recorria toda la
     carpeta de cache en cada llamada."""
+    global _thumb_cache_gen
+    _thumb_cache_gen += 1
     try:
         key = _cache_key(abs_path)
         for f in _cache_dir_for(key).glob(key[:16] + "_*"):
@@ -1034,7 +1043,7 @@ _cache_sweep_lock = threading.Lock()
 
 def _cache_sweep():
     """Recorta la cache si se paso del tope. Solo mira tamanos y fechas."""
-    global _cache_sweep_at
+    global _cache_sweep_at, _thumb_cache_gen
     limite = _cache_limite_bytes()
     if limite <= 0:
         return
@@ -1062,6 +1071,7 @@ def _cache_sweep():
         if total <= limite:
             return
         objetivo = limite * 0.85
+        _thumb_cache_gen += 1            # el listado deja de fiarse (ver _thumbs_missing)
         ficheros.sort()                  # las mas antiguas primero
         for _, _, size, f in ficheros:
             if total <= objetivo:
@@ -3211,30 +3221,44 @@ def favorites():
     _save_settings({"favorites": favs})
     return jsonify({"favorites": favs})
 
-# Con "Incluir subcarpetas": tope de fotos por listado (una carpeta raiz con
-# decenas de miles de fotos haria un listado de varios MB y una rejilla lenta)
-RECURSIVE_MAX = 20000
+# Con "Incluir subcarpetas": tope de fotos por listado. Da para una biblioteca
+# de backup entera sin que se resienta la carga: la rejilla es virtual (solo
+# existen las tarjetas que se ven) y cada foto viaja en el listado con lo justo
+# (ver _browse_item). 60.000 fotos son ~0,5 MB en gzip. Se puede cambiar con
+# la variable de entorno RECURSIVE_MAX.
+try:
+    RECURSIVE_MAX = max(1000, int(os.environ.get("RECURSIVE_MAX", "60000")))
+except ValueError:
+    RECURSIVE_MAX = 60000
 
-def _browse_item(name, rel_path, mtime, size, fila):
-    """Una foto del listado, con lo que el indice sabe de ella si sigue al dia."""
-    al_dia = fila is not None and fila[0] == mtime and fila[1] == size
-    return {
-        "name": name,
-        "path": rel_path,
-        "ext": os.path.splitext(name)[1].lower(),
-        "mtime": mtime,
-        "date": _ui_date(fila[2]) if al_dia else "",
-        # 142 bytes que evitan un hueco gris (ver LA MINIATURA DIMINUTA)
-        "blur": (fila[3] or "") if al_dia else "",
-        # Las estrellas van en el listado para que el filtro sea instantaneo:
-        # preguntarlas foto a foto seria una peticion por tarjeta
-        "rating": fila[4] if al_dia else 0,
-        "redo": fila[5] if al_dia else 0,
-        # El objetivo, para filtrar por el sin preguntar foto a foto
-        "lens": fila[6] if al_dia else "",
-        # Los colores dominantes ("b42w20..."), para el filtro por color
-        "colors": fila[7] if al_dia else "",
-    }
+def _browse_item(name, mtime, size, fila):
+    """Una foto del listado, con lo que el indice sabe de ella si sigue al dia.
+    Solo van los campos con valor: en una biblioteca de 60.000 fotos, la ruta
+    completa (que repite la carpeta), la extension y los campos vacios eran dos
+    tercios del listado, y el movil tenia que leerlo entero antes de pintar
+    nada. La galeria rehace "path" y "ext" al recibirlo (ver browseFiles)."""
+    f = {"name": name, "mtime": mtime}
+    if fila is None or fila[0] != mtime or fila[1] != size:
+        return f                  # el indice no la conoce o no esta al dia
+    date, blur, rating, redo, lens, colors = fila[2:8]
+    if date:
+        f["date"] = _ui_date(date)
+    # 142 bytes que evitan un hueco gris (ver LA MINIATURA DIMINUTA)
+    if blur:
+        f["blur"] = blur
+    # Las estrellas van en el listado para que el filtro sea instantaneo:
+    # preguntarlas foto a foto seria una peticion por tarjeta
+    if rating:
+        f["rating"] = rating
+    if redo:
+        f["redo"] = redo
+    # El objetivo, para filtrar por el sin preguntar foto a foto
+    if lens:
+        f["lens"] = lens
+    # Los colores dominantes ("b42w20..."), para el filtro por color
+    if colors:
+        f["colors"] = colors
+    return f
 
 def _scan_dir(path):
     """(carpetas, fotos) de una carpeta con os.scandir: el tipo de cada entrada
@@ -3258,6 +3282,40 @@ def _scan_dir(path):
             except OSError:
                 continue
     return dirs, files
+
+# Lo que la galeria necesita saber de las miniaturas que faltan: con 60 o mas
+# ofrece prepararlas (THUMB_PREP_MIN en index.html). Pasado este numero, da
+# igual cuantas sean.
+THUMBS_MISSING_TOPE = 200
+
+# Carpetas en las que la ultima vez no faltaba ninguna miniatura, con la
+# "huella" de su listado. En una biblioteca ya preparada, mirarlas una a una
+# era lo mas lento de abrirla (60.000 nombres de cache y 60.000 stat); si el
+# listado es el mismo y no se ha borrado nada de la cache, siguen sin faltar.
+_thumbs_ok = {}
+_THUMBS_OK_MAX = 64
+
+def _thumbs_missing(base, recursive, exact):
+    gen = _thumb_cache_gen
+    key = (base, recursive)
+    huella = (len(exact), hash(tuple(exact)), gen)
+    if _thumbs_ok.get(key) == huella:
+        return 0
+    falta = 0
+    for p, m in exact:
+        if not os.path.exists(_thumb_cache_name(p, m, "WEBP")):
+            falta += 1
+            if falta >= THUMBS_MISSING_TOPE:
+                break
+    if falta:
+        _thumbs_ok.pop(key, None)
+    else:
+        # Solo se apunta el "no falta ninguna": que se hagan miniaturas no lo
+        # estropea, y si se borra alguna sube la generacion
+        if len(_thumbs_ok) >= _THUMBS_OK_MAX:
+            _thumbs_ok.clear()
+        _thumbs_ok[key] = huella
+    return falta
 
 @app.route("/api/browse")
 def browse():
@@ -3287,7 +3345,7 @@ def browse():
     pre = canon + "/" if canon else ""
     absp = base.rstrip("/") + "/"
     dirs = [{"name": n, "path": pre + n} for n in sub_dirs]
-    files = [_browse_item(n, pre + n, mt, sz, fechas.get(absp + n)) for n, mt, sz, _ in own]
+    files = [_browse_item(n, mt, sz, fechas.get(absp + n)) for n, mt, sz, _ in own]
     editadas = _orig_paths()           # las que tienen original guardado
     for f, (n, _, _, _) in zip(files, own):
         if absp + n in editadas:
@@ -3306,15 +3364,15 @@ def browse():
                 continue
             folder = sub[:-1]
             for n, mt, sz, m in fotos:
-                f = _browse_item(n, pre + sub + n, mt, sz, fechas.get(absp + sub + n))
+                if len(files) >= RECURSIVE_MAX:
+                    truncated = True       # quedan fotos que no caben
+                    break
+                f = _browse_item(n, mt, sz, fechas.get(absp + sub + n))
                 f["folder"] = folder
                 if absp + sub + n in editadas:
                     f["orig"] = True
                 files.append(f)
                 exact.append((absp + sub + n, m))
-                if len(files) >= RECURSIVE_MAX:
-                    truncated = True
-                    break
             hijos.sort(reverse=True)
             pend.extend(sub + h + "/" for h in hijos)
     # Las fotos mas recientes primero (por fecha de modificacion del archivo).
@@ -3325,18 +3383,23 @@ def browse():
     out_extra = {}
     if request.args.get("prefetch") == "1":
         # (con subcarpetas, el nombre va con su ruta relativa a esta carpeta)
-        _prefetch_request(abs_path, [(f["folder"] + "/" if f.get("folder") else "") + f["name"] for f in files])
+        # (solo las que se van a pre-generar: no hace falta la lista entera)
+        _prefetch_request(abs_path, [(f["folder"] + "/" if f.get("folder") else "") + f["name"]
+                                     for f in files[:PREFETCH_MAX]])
         # Cuantas miniaturas faltan: si son muchas, la galeria ofrece
         # prepararlas de una vez (con barra de progreso) en vez de ir a
         # tirones al bajar. Solo mira si existe el fichero: sin abrir nada.
-        out_extra["thumbs_missing"] = sum(1 for p, m in exact
-                                          if not os.path.exists(_thumb_cache_name(p, m, "WEBP")))
+        # Y deja de contar en cuanto sabe la respuesta: a la galeria solo le
+        # importa si pasan de THUMBS_MISSING_TOPE (con 60.000 fotos sin
+        # preparar, contarlas todas eran 0,2 s mas de espera para nada).
+        out_extra["thumbs_missing"] = _thumbs_missing(base, recursive, exact)
     # Las diminutas solo de lo que se va a llegar a ver de una sentada: en una
     # carpeta de 3.000 fotos serian 0,6 MB de listado, y para cuando se baja
     # tanto las miniaturas de verdad ya estan hechas.
     for f in files[LQIP_LISTADO_MAX:]:
-        f["blur"] = ""
-    out = {"dirs": dirs, "files": files, "current": rel, **out_extra}
+        f.pop("blur", None)
+    # base: lo que va delante de la ruta de cada foto (la galeria la rehace)
+    out = {"dirs": dirs, "files": files, "current": rel, "base": pre, **out_extra}
     if recursive:
         out["recursive"] = True
         out["truncated"] = truncated
