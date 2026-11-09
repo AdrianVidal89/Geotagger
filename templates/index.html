@@ -2392,25 +2392,115 @@ function _pumpBatches() {
 async function _fetchBatch(cards) {
   batchActive++;
   try {
+    // Primero el propio dispositivo: lo que ya se vio otro dia sale de aqui
+    // sin tocar la red ni el NAS (ver ThumbDB)
+    const keys = cards.map(c => c.dataset.src);
+    const local = await ThumbDB.getMany(keys);
+    const faltan = [];
+    cards.forEach((card, i) => {
+      const hit = local[i];
+      if (hit) _showBlob(card, new Blob([hit.b], { type: hit.m }));
+      else faltan.push(card);
+    });
+    if (!faltan.length) return;
     const res = await fetch("/api/thumbs/batch", { method: "POST", headers: { "Content-Type": "application/json" },
-                                                  body: JSON.stringify({ paths: cards.map(c => c.dataset.path) }) });
+                                                  body: JSON.stringify({ paths: faltan.map(c => c.dataset.path) }) });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const buf = await res.arrayBuffer(), dv = new DataView(buf);
+    const guardar = [];
     let o = 0;
-    for (const card of cards) {
+    for (const card of faltan) {
       const kind = dv.getUint8(o), len = dv.getUint32(o + 1);
       o += 5;
-      if (kind && len) _showBlob(card, new Blob([new Uint8Array(buf, o, len)], { type: kind === 1 ? "image/webp" : "image/jpeg" }));
-      else _single(card);
+      if (kind && len) {
+        const m = kind === 1 ? "image/webp" : "image/jpeg";
+        const bytes = buf.slice(o, o + len);
+        _showBlob(card, new Blob([bytes], { type: m }));
+        guardar.push([card.dataset.src, { b: bytes, m: m, t: Date.now() }]);
+      } else _single(card);
       o += len;
     }
+    ThumbDB.putMany(guardar);
   } catch (e) {
-    cards.forEach(_single);          // sin lote: como antes, una a una
+    cards.filter(c => !c.querySelector("img.ready") && !(c.querySelector("img") || {}).src).forEach(_single);
   } finally {
     batchActive--;
     _pumpBatches();
   }
 }
+
+// ── Miniaturas en el propio dispositivo (IndexedDB) ──────────────────────────
+// Como hace Google Fotos: lo ya visto se guarda en el navegador y la proxima
+// vez la galeria se llena sin pedir nada al NAS. Antes cada visita volvia a
+// bajar todas las miniaturas (el lote va con no-store). La clave es la URL de
+// la miniatura, que lleva la version de la foto: si cambia, es otra clave.
+// IndexedDB y no Cache Storage porque este funciona sin HTTPS (la app se abre
+// por la IP del NAS). Se guardan bytes, no Blob: Safari daba guerra con Blobs.
+// Si algo falla (modo privado, sin espacio), simplemente no hay cache local.
+const ThumbDB = (() => {
+  const MAX = 40000;           // ~600 MB; al pasarse se tiran las mas antiguas
+  let dbp = null, puestas = 0;
+  function db() {
+    if (!dbp) dbp = new Promise(res => {
+      try {
+        const r = indexedDB.open("geotagger-thumbs", 1);
+        r.onupgradeneeded = () => r.result.createObjectStore("t").createIndex("t", "t");
+        r.onsuccess = () => res(r.result);
+        r.onerror = r.onblocked = () => res(null);
+      } catch (e) { res(null); }
+    });
+    return dbp;
+  }
+  async function getMany(keys) {
+    const d = await db();
+    if (!d) return keys.map(() => null);
+    return new Promise(res => {
+      const out = new Array(keys.length).fill(null);
+      try {
+        const st = d.transaction("t", "readonly").objectStore("t");
+        let n = keys.length;
+        keys.forEach((k, i) => {
+          const r = st.get(k);
+          r.onsuccess = () => { out[i] = r.result || null; if (--n === 0) res(out); };
+          r.onerror = () => { if (--n === 0) res(out); };
+        });
+        if (!keys.length) res(out);
+      } catch (e) { res(out); }
+    });
+  }
+  async function putMany(entries) {
+    if (!entries.length) return;
+    const d = await db();
+    if (!d) return;
+    try {
+      const tx = d.transaction("t", "readwrite"), st = tx.objectStore("t");
+      for (const [k, v] of entries) st.put(v, k);
+      puestas += entries.length;
+      if (puestas >= 1000) { puestas = 0; tx.oncomplete = prune; }
+    } catch (e) { /* sin espacio: no pasa nada */ }
+  }
+  async function prune() {
+    const d = await db();
+    try {
+      const st = d.transaction("t", "readwrite").objectStore("t");
+      const c = st.count();
+      c.onsuccess = () => {
+        let sobran = c.result - MAX;
+        if (sobran <= 0) return;
+        sobran += MAX / 10;            // de una vez, para no podar a cada rato
+        st.index("t").openKeyCursor().onsuccess = ev => {
+          const cur = ev.target.result;
+          if (!cur || sobran-- <= 0) return;
+          st.delete(cur.primaryKey);
+          cur.continue();
+        };
+      };
+    } catch (e) { /* nada */ }
+  }
+  // Que el navegador no la tire por su cuenta si se queda corto de espacio
+  try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
+  return { getMany, putMany };
+})();
 
 function _single(card) {
   if (!card.isConnected) return;
@@ -2812,13 +2902,9 @@ async function navigate(path, opts) {
   if (!keep) {
     c.innerHTML = '<div class="empty-state"><div class="spinner"></div><p style="margin-top:12px">Cargando...</p></div>';
   }
-  try {
-    // prefetch=1: avisa al servidor de que estas fotos se van a ENSEÑAR, para
-    // que vaya dejando hechas las miniaturas que falten mientras se mira la
-    // primera pantalla. Sin esto, cada foto grande cuesta su descompresión la
-    // primera vez que aparece.
-    const res = await fetch("/api/browse?prefetch=1&path=" + encodeURIComponent(path) + (subMode ? "&recursive=1" : ""));
-    const data = await res.json();
+  const seq = ++navSeq;
+  const key = path + (subMode ? "\u0001sub" : "");
+  const pintar = (data) => {
     browseFiles(data.files, data.base);
     renderBreadcrumb(path);
     if (subMode) markSubCrumb(data.files.length, data.truncated);
@@ -2826,14 +2912,115 @@ async function navigate(path, opts) {
     if (typeof renderFavorites === "function") renderFavorites();
     allFiles = data.files;
     applyFilters();
+  };
+  // Lo ultimo que se vio de esta carpeta, al instante (ver ListCache); el
+  // servidor confirma justo despues si sigue igual
+  let previo = null;
+  if (!keep) {
+    previo = ListCache.mem(key) || await ListCache.disk(key);
+    if (seq !== navSeq) return;
+    if (previo) { pintar(previo.data); closeSidebar(); }
+  }
+  try {
+    // prefetch=1: avisa al servidor de que estas fotos se van a ENSEÑAR, para
+    // que vaya dejando hechas las miniaturas que falten mientras se mira la
+    // primera pantalla. Sin esto, cada foto grande cuesta su descompresión la
+    // primera vez que aparece.
+    const res = await fetch("/api/browse?prefetch=1&path=" + encodeURIComponent(path) + (subMode ? "&recursive=1" : ""),
+                            { cache: "no-store", headers: previo ? { "If-None-Match": previo.etag } : {} });
+    if (seq !== navSeq) return;
+    if (res.status !== 304) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const text = await res.text();
+      if (seq !== navSeq) return;
+      const data = JSON.parse(text);
+      ListCache.put(key, res.headers.get("ETag"), text, data);
+      // Ha cambiado algo desde la ultima vez: se repinta sin perder el sitio
+      if (previo) captureGalleryAnchor();
+      pintar(data);
+    }
     // Al cambiar de carpeta con la ventana de progreso abierta, a segundo plano
     if (tpFg && !keep) tpSetFg(false);
-    maybePrepareThumbs(path, subMode, data.thumbs_missing);
+    maybePrepareThumbs(path, subMode, parseInt(res.headers.get("X-Thumbs-Missing") || "0", 10));
   } catch(e) {
-    c.innerHTML = '<div class="empty-state"><p>Error cargando carpeta</p></div>';
+    if (!previo) c.innerHTML = '<div class="empty-state"><p>Error cargando carpeta</p></div>';
   }
   closeSidebar();
 }
+
+// ── Listados guardados ───────────────────────────────────────────────────────
+// Abrir una carpeta ya vista no espera a nadie: se pinta lo que se vio la
+// ultima vez (en memoria si es de esta sesion, del propio dispositivo si no) y
+// a la vez se pregunta al servidor con la huella (ETag) de esa version. Si
+// nada ha cambiado contesta "304" sin cuerpo; si algo cambio, llega el listado
+// nuevo y la rejilla se repinta en el mismo sitio.
+let navSeq = 0;
+const ListCache = (() => {
+  const MEM = 4, DISCO = 12;
+  const mem = new Map();          // clave -> {etag, data} (ya leido: sin JSON.parse)
+  let dbp = null;
+  function db() {
+    if (!dbp) dbp = new Promise(res => {
+      try {
+        const r = indexedDB.open("geotagger-listados", 1);
+        r.onupgradeneeded = () => r.result.createObjectStore("l").createIndex("t", "t");
+        r.onsuccess = () => res(r.result);
+        r.onerror = r.onblocked = () => res(null);
+      } catch (e) { res(null); }
+    });
+    return dbp;
+  }
+  function recordar(key, v) {
+    mem.delete(key); mem.set(key, v);
+    if (mem.size > MEM) mem.delete(mem.keys().next().value);
+  }
+  return {
+    mem(key) {
+      const v = mem.get(key);
+      if (v) recordar(key, v);
+      return v || null;
+    },
+    async disk(key) {
+      const d = await db();
+      if (!d) return null;
+      const v = await new Promise(res => {
+        try {
+          const r = d.transaction("l").objectStore("l").get(key);
+          r.onsuccess = () => res(r.result || null);
+          r.onerror = () => res(null);
+        } catch (e) { res(null); }
+      });
+      if (!v || !v.etag) return null;
+      try {
+        const out = { etag: v.etag, data: JSON.parse(v.text) };
+        recordar(key, out);
+        return out;
+      } catch (e) { return null; }
+    },
+    async put(key, etag, text, data) {
+      if (!etag) return;
+      recordar(key, { etag, data });
+      const d = await db();
+      if (!d) return;
+      try {
+        const st = d.transaction("l", "readwrite").objectStore("l");
+        st.put({ etag, text, t: Date.now() }, key);
+        // Solo las ultimas DISCO carpetas (por el indice: sin leer los listados)
+        const n = st.count();
+        n.onsuccess = () => {
+          let sobran = n.result - DISCO;
+          if (sobran <= 0) return;
+          st.index("t").openKeyCursor().onsuccess = ev => {
+            const cur = ev.target.result;
+            if (!cur || sobran-- <= 0) return;
+            st.delete(cur.primaryKey);
+            cur.continue();
+          };
+        };
+      } catch (e) { /* sin espacio: no pasa nada */ }
+    },
+  };
+})();
 
 // El listado llega con lo justo de cada foto (ver _browse_item en app.py):
 // sin la ruta completa, que repite la carpeta, ni la extension, ni los campos
@@ -6816,6 +7003,26 @@ function refreshEditedPhoto(editedPath, hasOrig) {
   }
   if (viewerEl.classList.contains("on")) showViewerPhoto();
 }
+
+// Guardado de fondo en el NAS (editor LightCraft): el editor ya se cerro y la
+// edicion se revela alli; aqui solo se avisa de como va
+let lcSaving = 0;
+window.lcSaveProgress = function (state, f, err) {
+  const toast = document.getElementById("upload-toast");
+  if (state === "start") {
+    lcSaving++;
+    clearTimeout(uploadToastTimer);
+    toast.className = "upload-toast";
+    document.getElementById("upload-bar").style.display = "none";
+    document.getElementById("upload-toast-row").innerHTML =
+      '<div class="spinner"></div><span>Guardando la edición' + (lcSaving > 1 ? "es (" + lcSaving + ")" : "") + '...</span>';
+    requestAnimationFrame(() => toast.classList.add("up"));
+    return;
+  }
+  lcSaving = Math.max(0, lcSaving - 1);
+  if (state === "done") finishUploadToast("ok", ICON_CHECK, "Edición guardada");
+  else finishUploadToast("err", ICON_WARN, "No se pudo guardar " + (f ? f.name : "la edición") + ": " + (err || "error"));
+};
 
 // Despues de guardar una edicion (editor clasico o LightCraft)
 function lcAfterSave(editedPath, data) {

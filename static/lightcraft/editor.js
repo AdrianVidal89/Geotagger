@@ -1546,7 +1546,7 @@
     busy("Abriendo con LightCraft...");
     try {
       const r = await call({ type: "open", url: bust("/api/preview?path=" + encodeURIComponent(f.path), f.path, f.mtime),
-                             source: srcUrl(f) });
+                             source: srcUrl(f), proxy: proxyUrl(f) });
       if (file !== f) return;
       W = r.w; H = r.h;
       specs = {};
@@ -1595,6 +1595,8 @@
           body: JSON.stringify({ path: f.path, rotate: String(o.rotate), flip_h: o.flip_h, flip_v: o.flip_v })
         });
         data = await res.json();
+      } else if (await saveOnNas(f)) {
+        return;                       // sigue de fondo; el editor ya se cerro
       } else {
         const r = await exportPhoto(f);
         if (!r) { busy(null); saving = false; refreshChrome(); return; }
@@ -1647,7 +1649,8 @@
     try { worker.terminate(); } catch (e) { /* ya estaba parado */ }
     worker = null;
     startWorker();
-    await call({ type: "open", url: bust("/api/preview?path=" + encodeURIComponent(f.path), f.path, f.mtime), source: srcUrl(f) });
+    await call({ type: "open", url: bust("/api/preview?path=" + encodeURIComponent(f.path), f.path, f.mtime),
+                 source: srcUrl(f), proxy: proxyUrl(f) });
   }
   // El original para editar: lo que el motor decodifica (JPEG, PNG, WebP, TIFF y
   // la vista previa de los RAW). HEIC no: va por la vista previa del servidor.
@@ -1655,6 +1658,57 @@
   function srcUrl(f) {
     const ext = (f.ext || (f.name.match(/\.[^.]+$/) || [""])[0]).toLowerCase();
     return NATIVE.includes(ext) ? bust("/api/edit_source?path=" + encodeURIComponent(f.path), f.path) : null;
+  }
+  // La copia de trabajo de 2048 px que prepara el NAS (JPEG y RAW): abrir el
+  // editor ya no es bajar el original entero (ver /api/edit_proxy)
+  const PROXY = [".jpg", ".jpeg", ".cr3", ".cr2", ".nef", ".arw", ".raf", ".dng", ".jpr"];
+  function proxyUrl(f) {
+    const ext = (f.ext || (f.name.match(/\.[^.]+$/) || [""])[0]).toLowerCase();
+    return PROXY.includes(ext) ? bust("/api/edit_proxy?path=" + encodeURIComponent(f.path), f.path, f.mtime) : null;
+  }
+
+  // Guardar revelando en el NAS (ver /api/edit_develop): el movil solo manda
+  // los ajustes, el editor se cierra al momento y la galeria se actualiza al
+  // terminar. Devuelve false si el NAS no puede (sin el programa o sin
+  // memoria): entonces se revela aqui, como antes.
+  async function saveOnNas(f) {
+    busy("Guardando...");
+    let job;
+    try {
+      const mt = await call({ type: "mattes", st });
+      const res = await fetch("/api/edit_develop", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: f.path, st, params: snap(), mattes: mt.mattes || [] })
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.status !== 202 || !d.job) {
+        if (d.fallback || res.status === 501 || res.status === 503) return false;
+        throw new Error(d.error || "HTTP " + res.status);
+      }
+      job = d.job;
+    } catch (e) {
+      if (/HTTP 4|no existe/.test(e.message)) throw e;
+      return false;                 // sin NAS por lo que sea: se revela aqui
+    }
+    busy(null);
+    saving = false;
+    close(true);
+    if (window.lcSaveProgress) window.lcSaveProgress("start", f);
+    // Se pregunta cada poco; el revelado de una foto grande son segundos
+    for (let espera = 600; ; espera = Math.min(2000, espera * 1.4)) {
+      await new Promise(r => setTimeout(r, espera));
+      let d;
+      try { d = await (await fetch("/api/edit_develop/status?job=" + job)).json(); }
+      catch (e) { continue; }       // sin red un momento: se vuelve a preguntar
+      if (d.state === "running") continue;
+      if (d.state === "done") {
+        if (window.lcSaveProgress) window.lcSaveProgress("done", f);
+        if (window.lcAfterSave) window.lcAfterSave(f.path, d.result || {});
+      } else {
+        if (window.lcSaveProgress) window.lcSaveProgress("error", f, d.error);
+      }
+      return true;
+    }
   }
 
   // ── Tactil: iPhone / iPad ─────────────────────────────────────────────────

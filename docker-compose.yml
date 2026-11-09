@@ -21,10 +21,13 @@ services:
       # Cuenta desde la que se envian los reportes por email (opcional).
       # SMTP_USER: tu@gmail.com
       # SMTP_PASS: contrasena-de-aplicacion
-      # Tope de la cache de miniaturas y vistas previas, en MB (opcional).
+      # Tope de la cache de vistas previas y copias del editor, en MB (opcional).
       # Son ficheros regenerables: al pasarse se tiran los menos usados. Por
       # defecto 1024; con 0 se desactiva el tope y crece sin limite.
       # THUMB_CACHE_MAX_MB: 1024
+      # Tope aparte para las miniaturas de la galeria, en MB (opcional). Por
+      # defecto 8192 (unas 500.000 fotos); con 0, sin tope.
+      # THUMBS_MAX_MB: 8192
       # Tope de fotos con "Subcarpetas" (opcional). Por defecto 60000.
       # RECURSIVE_MAX: 60000
       # Donde se guardan los originales de las fotos editadas, para poder

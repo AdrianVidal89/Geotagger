@@ -1,3 +1,21 @@
+# ── Revelado en el NAS ───────────────────────────────────────────────────────
+# El motor del editor (el mismo que corre en el navegador como WebAssembly),
+# compilado para el procesador del NAS: guardar una edicion se revela aqui y
+# no en el movil (ver /api/edit_develop en app.py). Se compila una vez; Docker
+# reutiliza esta capa mientras no cambie lightcraft-bridge/. Si la compilacion
+# fallara, la imagen se crea igual y el editor revela en el navegador como antes.
+FROM rust:1-slim-bookworm AS lightcraft
+WORKDIR /src
+COPY lightcraft-bridge/ ./
+# LTO "thin": misma velocidad medida que "fat" y bastante menos memoria y
+# tiempo al compilar en la CPU del NAS
+RUN mkdir -p /out \
+ && (CARGO_PROFILE_RELEASE_LTO=thin CARGO_PROFILE_RELEASE_CODEGEN_UNITS=8 \
+     cargo build --release --locked --features cli --bin lc-export \
+     && cp target/release/lc-export /out/) \
+ || echo "AVISO: lc-export no se pudo compilar; el editor revelara en el navegador" \
+ ; rm -rf target
+
 FROM python:3.11-slim
 
 # ExifTool es imprescindible: es lo UNICO que escribe metadatos (GPS y fechas).
@@ -16,6 +34,8 @@ COPY app.py ./
 COPY templates/ ./templates/
 # Editor LightCraft: motor ya compilado a WebAssembly (no hace falta Rust aqui)
 COPY static/ ./static/
+# ...y su version para el NAS, si se pudo compilar (carpeta vacia si no)
+COPY --from=lightcraft /out/ /usr/local/bin/
 
 # Ajustes (carpeta de trabajo, email) y cache de miniaturas. Montar aqui un
 # volumen del NAS para que sobrevivan a recrear el contenedor.
