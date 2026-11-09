@@ -8,6 +8,7 @@ import json
 import ctypes
 import base64
 import hashlib
+import uuid
 import tempfile
 import shutil
 import sqlite3
@@ -235,13 +236,15 @@ def sanitize_path(path):
     clean_name = re.sub(r'[:\*\?"<>\|]', '-', p.name)
     if clean_name != p.name:
         new_path = _unique_target(p.parent, clean_name)
+        m0 = _mtime(p)
         p.rename(new_path)
-        _evict_thumb_cache(p)
+        _cache_carry(p, m0, new_path)
         _index_move(p, new_path)
         return new_path
     return p
 
 def _trigger_reindex(path):
+    _listado_dirty(path)
     p = Path(path)
     tmp = p.parent / ("." + p.name + ".reindex_tmp")
     try:
@@ -275,12 +278,13 @@ def _write_gps_exiftool(path, lat, lon, alt=None):
         cmd.append("-GPSAltitude=" + str(abs(alt)))
         cmd.append("-GPSAltitudeRef=" + ("0" if alt >= 0 else "1"))
     cmd.append(str(path))
+    m0 = _mtime(path)
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise Exception(result.stderr.strip())
     _trigger_reindex(path)
-    # Invalidate thumbnail cache for this file
-    _evict_thumb_cache(path)
+    # Solo metadatos: las miniaturas siguen valiendo (ver _cache_carry)
+    _cache_carry(path, m0, path)
     _index_set_gps(path, lat, lon)
 
 def _cache_key(abs_path):
@@ -298,11 +302,12 @@ def _chunks(items, n):
     for i in range(0, len(items), n):
         yield items[i:i + n]
 
-def _after_write(path):
-    """Lo que toca hacer tras modificar una foto: reindexar en el NAS, tirar sus
-    miniaturas y marcarla para releer en el indice."""
+def _after_write(path, old_mtime=None):
+    """Lo que toca hacer tras escribir METADATOS de una foto (GPS, fecha):
+    reindexar en el NAS y llevar sus miniaturas a la clave nueva (la fecha del
+    archivo cambia, el aspecto no). Sin la fecha de antes, se tiran."""
     _trigger_reindex(path)
-    _evict_thumb_cache(path)
+    _cache_carry(path, old_mtime, path)
 
 def _exiftool_updated(stdout):
     """Cuantos archivos dice ExifTool haber actualizado. Ojo con el limite de
@@ -570,6 +575,45 @@ def _run_exiftool_batch(args, paths):
     return _Lote(max(p.returncode for p in partes),
                  sum(p.updated for p in partes),
                  "\n".join(p.stderr for p in partes if p.stderr))
+
+# Todo lo que se guarda en la cache por foto (miniatura, vista previa, fuente y
+# copia de trabajo del editor), en sus dos formatos
+CACHE_FMTS = ("WEBP", "JPEG", "PREVIEW-WEBP", "PREVIEW-JPEG", "EDITSRC-JPEG", "EDITPROXY-JPEG")
+
+def _mtime(path):
+    try:
+        return os.path.getmtime(str(path))
+    except OSError:
+        return None
+
+def _mtimes(paths):
+    return {str(p): _mtime(p) for p in paths}
+
+def _cache_carry(old_path, old_mtime, new_path, copy=False):
+    """La foto ha cambiado de nombre, de carpeta o de metadatos (GPS, fecha),
+    pero NO de aspecto: sus miniaturas siguen valiendo y se mueven a la clave
+    nueva en vez de tirarlas. Antes se tiraban, y geolocalizar o mover 500
+    fotos obligaba a decodificar otra vez las 500 (la galeria las volvia a
+    "generar" aunque ya se hubiera hecho el barrido)."""
+    if old_mtime is None:
+        _evict_thumb_cache(old_path)
+        return
+    new_mtime = _mtime(new_path)
+    if new_mtime is None:
+        return
+    for fmt in CACHE_FMTS:
+        a = _thumb_cache_name(str(old_path), old_mtime, fmt)
+        b = _thumb_cache_name(str(new_path), new_mtime, fmt)
+        if a == b or not os.path.exists(a):
+            continue
+        try:
+            os.makedirs(os.path.dirname(b), exist_ok=True)
+            if copy:
+                shutil.copyfile(a, b)
+            else:
+                os.replace(a, b)
+        except OSError:
+            pass
 
 # Sube cada vez que se borra alguna miniatura de la cache: el listado lo usa
 # para saber si puede fiarse de que "no falta ninguna" (ver _thumbs_missing)
@@ -1027,12 +1071,24 @@ def thumbs_background():
 # ficheros regenerables, no se pierde nada.
 # =============================================================================
 
-def _cache_limite_bytes():
+def _env_mb(name, default):
     try:
-        mb = int(os.environ.get("THUMB_CACHE_MAX_MB", "1024"))
+        mb = int(os.environ.get(name, str(default)))
     except ValueError:
-        mb = 1024
+        mb = default
     return max(0, mb) * 1024 * 1024      # 0 = sin tope
+
+def _cache_limite_bytes():
+    """Tope de lo GRANDE: vistas previas y copias del editor."""
+    return _env_mb("THUMB_CACHE_MAX_MB", 1024)
+
+def _thumbs_limite_bytes():
+    """Tope aparte para las miniaturas de la galeria. Antes compartian el de
+    arriba: una biblioteca de 60.000 fotos son ~1 GB de miniaturas, asi que al
+    terminar el barrido inicial el repaso tiraba las mas antiguas -las de las
+    fotos mas recientes, las primeras que se preparan- y la galeria las volvia
+    a generar. 8 GB dan para unas 500.000 fotos."""
+    return _env_mb("THUMBS_MAX_MB", 8192)
 
 THUMB_SMALL = 48 * 1024     # por debajo, es una miniatura de la galeria
 CACHE_SWEEP_GAP = 1800      # segundos entre repasos, como poco
@@ -1045,7 +1101,8 @@ def _cache_sweep():
     """Recorta la cache si se paso del tope. Solo mira tamanos y fechas."""
     global _cache_sweep_at, _thumb_cache_gen
     limite = _cache_limite_bytes()
-    if limite <= 0:
+    limite_mini = _thumbs_limite_bytes()
+    if limite <= 0 and limite_mini <= 0:
         return
     if time.time() - _cache_sweep_at < CACHE_SWEEP_GAP:
         return
@@ -1053,7 +1110,10 @@ def _cache_sweep():
         return
     try:
         _cache_sweep_at = time.time()
-        ficheros, total = [], 0
+        # Dos montones con su propio tope: lo grande (vistas previas, editor)
+        # y las miniaturas. Asi ver muchas fotos en grande nunca se lleva por
+        # delante las miniaturas, que son las que hacen rapida la galeria.
+        grandes, minis, total, total_mini = [], [], 0, 0
         for dirpath, _, names in os.walk(THUMB_CACHE_DIR):
             for n in names:
                 f = os.path.join(dirpath, n)
@@ -1061,27 +1121,35 @@ def _cache_sweep():
                     st = os.stat(f)
                 except OSError:
                     continue
-                total += st.st_size
                 # atime donde el sistema lo actualiza, mtime donde no: para una
                 # cache las dos fechas sirven para saber que sobra antes.
-                # Primero se van las vistas previas (las grandes); las
-                # miniaturas (~8 KB) solo si no queda otra: rehacerlas es lo que
-                # hace lenta una carpeta, y se prometio que es "solo una vez".
-                ficheros.append((st.st_size <= THUMB_SMALL, max(st.st_atime, st.st_mtime), st.st_size, f))
-        if total <= limite:
-            return
-        objetivo = limite * 0.85
-        _thumb_cache_gen += 1            # el listado deja de fiarse (ver _thumbs_missing)
-        ficheros.sort()                  # las mas antiguas primero
-        for _, _, size, f in ficheros:
-            if total <= objetivo:
-                break
-            try:
-                os.unlink(f)
-                total -= size
-            except OSError:
-                pass
-        print("Cache de miniaturas recortada a %.0f MB" % (total / 1024 / 1024))
+                item = (max(st.st_atime, st.st_mtime), st.st_size, f)
+                if st.st_size <= THUMB_SMALL:
+                    minis.append(item)
+                    total_mini += st.st_size
+                else:
+                    grandes.append(item)
+                    total += st.st_size
+
+        def recortar(lista, total, tope, que):
+            if tope <= 0 or total <= tope:
+                return
+            objetivo = tope * 0.85
+            lista.sort()                 # las menos usadas primero
+            for _, size, f in lista:
+                if total <= objetivo:
+                    break
+                try:
+                    os.unlink(f)
+                    total -= size
+                except OSError:
+                    pass
+            print("Cache de %s recortada a %.0f MB" % (que, total / 1024 / 1024))
+
+        recortar(grandes, total, limite, "vistas previas")
+        if limite_mini > 0 and total_mini > limite_mini:
+            _thumb_cache_gen += 1        # el listado deja de fiarse (ver _thumbs_missing)
+            recortar(minis, total_mini, limite_mini, "miniaturas")
     except Exception as e:
         print("Cache sweep error:", str(e))
     finally:
@@ -1235,6 +1303,7 @@ def _write_date_exiftool(path, exif_date=None, shift=None, sync_file=True):
     NO recomprime ni re-codifica la imagen.
     """
     path = sanitize_path(path)
+    m0 = _mtime(path)
     if not shift:
         datos = _read_photo_dates_batch([path]).get(os.path.realpath(str(path)))
         if _tiene_fechas_aparte(datos):
@@ -1251,7 +1320,7 @@ def _write_date_exiftool(path, exif_date=None, shift=None, sync_file=True):
         raise Exception(result.stderr.strip().splitlines()[0] if result.stderr.strip()
                         else "no se pudo escribir la fecha")
     _trigger_reindex(path)
-    _evict_thumb_cache(path)
+    _cache_carry(path, m0, path)        # solo metadatos: siguen valiendo
     _index_stale(path)
     return path
 
@@ -3260,7 +3329,78 @@ def _browse_item(name, mtime, size, fila):
         f["colors"] = colors
     return f
 
+# =============================================================================
+# LISTADOS EN MEMORIA
+# Leer una carpeta de fotos es un stat() por archivo: con "Subcarpetas" en una
+# biblioteca de 60.000 fotos, 60.000 stat en los discos del NAS cada vez que se
+# abria. Ahora cada carpeta se lee UNA vez y se guarda con la fecha de
+# modificacion de la propia carpeta, que cambia cuando se crea, borra o
+# renombra algo dentro (y toda escritura de la app pasa por un renombrado:
+# ExifTool escribe aparte y sustituye, _trigger_reindex renombra). Volver a
+# abrirla cuesta un stat por CARPETA, no por foto. Por si algun programa
+# reescribe una foto en el sitio sin tocar la carpeta, una entrada con mas de
+# LISTADO_TTL segundos se sirve igual pero se relee de fondo.
+# =============================================================================
+LISTADO_TTL = 600
+LISTADO_MAX_CARPETAS = 20000
+_listados = {}                 # carpeta -> (mtime_ns de la carpeta, leida a las, carpetas, fotos)
+_listados_lock = threading.Lock()
+_listados_pend = set()          # carpetas a releer de fondo
+_listados_hilo = [None]
+
+def _listado_dirty(path):
+    """Olvida el listado guardado de la carpeta de `path` (y el suyo propio)."""
+    p = str(path)
+    with _listados_lock:
+        _listados.pop(p, None)
+        _listados.pop(os.path.dirname(p), None)
+
+def _listados_refresco():
+    while True:
+        with _listados_lock:
+            if not _listados_pend:
+                _listados_hilo[0] = None
+                return
+            carpeta = _listados_pend.pop()
+        try:
+            st = os.stat(carpeta)
+            dirs, files = _scan_dir_disco(carpeta)
+            with _listados_lock:
+                _listados[carpeta] = (st.st_mtime_ns, time.time(), tuple(dirs), tuple(files))
+        except OSError:
+            with _listados_lock:
+                _listados.pop(carpeta, None)
+
 def _scan_dir(path):
+    """Como _scan_dir_disco, pero desde memoria mientras la carpeta no cambie."""
+    _, dirs, files = _scan_dir_m(path)
+    return dirs, files
+
+def _scan_dir_m(path):
+    """(mtime_ns de la carpeta, carpetas, fotos): la fecha sirve de huella."""
+    path = str(path)
+    st = os.stat(path)               # FileNotFoundError, etc. como antes
+    ahora = time.time()
+    with _listados_lock:
+        e = _listados.get(path)
+        if e and e[0] == st.st_mtime_ns:
+            if ahora - e[1] > LISTADO_TTL and path not in _listados_pend:
+                _listados_pend.add(path)
+                if _listados_hilo[0] is None:
+                    _listados_hilo[0] = threading.Thread(target=_listados_refresco, daemon=True)
+                    _listados_hilo[0].start()
+            return st.st_mtime_ns, list(e[2]), e[3]
+    dirs, files = _scan_dir_disco(path)
+    # Una carpeta que acaba de cambiar puede seguir cambiando en el mismo
+    # instante (sistemas de archivos con fechas gruesas): esa no se guarda
+    if ahora - st.st_mtime_ns / 1e9 > 2:
+        with _listados_lock:
+            if len(_listados) >= LISTADO_MAX_CARPETAS:
+                _listados.clear()
+            _listados[path] = (st.st_mtime_ns, ahora, tuple(dirs), tuple(files))
+    return st.st_mtime_ns, dirs, files
+
+def _scan_dir_disco(path):
     """(carpetas, fotos) de una carpeta con os.scandir: el tipo de cada entrada
     viene del propio listado, sin un stat por nombre ni objetos Path (en el
     NAS, con miles de fotos por carpeta, era lo que mas tiempo se llevaba).
@@ -3295,14 +3435,12 @@ THUMBS_MISSING_TOPE = 200
 _thumbs_ok = {}
 _THUMBS_OK_MAX = 64
 
-def _thumbs_missing(base, recursive, exact):
-    gen = _thumb_cache_gen
-    key = (base, recursive)
-    huella = (len(exact), hash(tuple(exact)), gen)
+def _thumbs_missing(key, firma, exact_fn):
+    huella = (firma, _thumb_cache_gen)
     if _thumbs_ok.get(key) == huella:
         return 0
     falta = 0
-    for p, m in exact:
+    for p, m in exact_fn():
         if not os.path.exists(_thumb_cache_name(p, m, "WEBP")):
             falta += 1
             if falta >= THUMBS_MISSING_TOPE:
@@ -3317,6 +3455,42 @@ def _thumbs_missing(base, recursive, exact):
         _thumbs_ok[key] = huella
     return falta
 
+# =============================================================================
+# LISTADO YA HECHO
+# Con las carpetas en memoria (ver LISTADOS EN MEMORIA), lo que quedaba al abrir
+# una biblioteca grande era montar la respuesta: cruzar 60.000 fotos con el
+# indice, ordenarlas, pasarlas a JSON y comprimirlas. Si nada ha cambiado desde
+# la ultima vez, la respuesta es la misma: se guarda ya comprimida con una
+# huella hecha de la fecha de cada carpeta y de los contadores de cambios de
+# las dos bases (indice y originales; SQLite los da gratis). Con la huella
+# como ETag, el navegador pregunta "sigue igual?" y la respuesta es un 304 de
+# unos pocos bytes.
+# =============================================================================
+_respuestas = {}
+_RESPUESTAS_MAX = 24
+_respuestas_lock = threading.Lock()
+
+def _cambios_bases():
+    try:
+        a = _index_db().total_changes
+    except Exception:
+        a = -1
+    try:
+        with _orig_lock:
+            b = _orig_db()[0].total_changes
+    except Exception:
+        b = -1
+    return a, b
+
+def _browse_error(e):
+    if isinstance(e, FileNotFoundError):
+        return jsonify({"error": "Ruta no existe"}), 404
+    if isinstance(e, NotADirectoryError):
+        return jsonify({"error": "no es una carpeta"}), 400
+    if isinstance(e, PermissionError):
+        return jsonify({"error": "sin permisos para leer esta carpeta"}), 403
+    return jsonify({"error": str(e)}), 500
+
 @app.route("/api/browse")
 def browse():
     rel = request.args.get("path", "")
@@ -3324,33 +3498,18 @@ def browse():
     if abs_path is None:
         return jsonify({"error": "Ruta no existe"}), 404
     base = str(abs_path)
-    try:
-        sub_dirs, own = _scan_dir(base)
-    except FileNotFoundError:
-        return jsonify({"error": "Ruta no existe"}), 404
-    except NotADirectoryError:
-        return jsonify({"error": "no es una carpeta"}), 400
-    except PermissionError:
-        return jsonify({"error": "sin permisos para leer esta carpeta"}), 403
-    except OSError as e:
-        return jsonify({"error": str(e)}), 500
-    sub_dirs.sort()
     recursive = request.args.get("recursive") == "1"
-    # La fecha que importa al filtrar y ordenar es la de la FOTO, no la del
-    # archivo: una foto de 2005 copiada al NAS tiene fecha de archivo de hoy.
-    # El indice ya la sabe, asi que no cuesta nada acompanarla.
-    _blur_flush()          # que lo recien generado viaje ya en este listado
-    fechas = _index_dates(base, children=not recursive)
-    canon = "" if rel in ("", ".", "/") else str(Path(rel))   # forma canonica
-    pre = canon + "/" if canon else ""
+    try:
+        m0, sub_dirs, own = _scan_dir_m(base)
+    except OSError as e:
+        return _browse_error(e)
+    sub_dirs.sort()
     absp = base.rstrip("/") + "/"
-    dirs = [{"name": n, "path": pre + n} for n in sub_dirs]
-    files = [_browse_item(n, mt, sz, fechas.get(absp + n)) for n, mt, sz, _ in own]
-    editadas = _orig_paths()           # las que tienen original guardado
-    for f, (n, _, _, _) in zip(files, own):
-        if absp + n in editadas:
-            f["orig"] = True
-    exact = [(absp + n, m) for n, _, _, m in own]      # para mirar la cache
+    # 1) Recorrer las carpetas (desde memoria) juntando sus fotos tal cual y la
+    #    huella. Sin crear nada por foto todavia.
+    trozos = [("", own)]                   # (subcarpeta con "/", fotos)
+    huella = [m0]
+    n_fotos = len(own)
     truncated = False
     if recursive:
         # Todas las fotos de las subcarpetas (la carpeta de cada una va en
@@ -3359,51 +3518,105 @@ def browse():
         while pend and not truncated:
             sub = pend.pop()
             try:
-                hijos, fotos = _scan_dir(absp + sub)
+                m, hijos, fotos = _scan_dir_m(absp + sub)
             except OSError:
                 continue
-            folder = sub[:-1]
-            for n, mt, sz, m in fotos:
-                if len(files) >= RECURSIVE_MAX:
-                    truncated = True       # quedan fotos que no caben
-                    break
-                f = _browse_item(n, mt, sz, fechas.get(absp + sub + n))
-                f["folder"] = folder
-                if absp + sub + n in editadas:
-                    f["orig"] = True
-                files.append(f)
-                exact.append((absp + sub + n, m))
+            huella.append(m)
+            if n_fotos + len(fotos) > RECURSIVE_MAX:
+                fotos = fotos[:RECURSIVE_MAX - n_fotos]
+                truncated = True           # quedan fotos que no caben
+            n_fotos += len(fotos)
+            trozos.append((sub, fotos))
             hijos.sort(reverse=True)
             pend.extend(sub + h + "/" for h in hijos)
-    # Las fotos mas recientes primero (por fecha de modificacion del archivo).
-    files.sort(key=lambda f: f["mtime"], reverse=True)
+    _blur_flush()          # que lo recien generado viaje ya en este listado
+    firma = hashlib.sha1(repr((base, rel, recursive, RECURSIVE_MAX, LQIP_LISTADO_MAX,
+                               _cambios_bases(), huella)).encode()).hexdigest()[:24]
+    clave = (base, rel, recursive)
+
+    def exactas():
+        return [(absp + sub + n, m) for sub, fotos in trozos for n, _, _, m in fotos]
+
+    with _respuestas_lock:
+        hecha = _respuestas.get(clave)
+    if not hecha or hecha["firma"] != firma:
+        hecha = _browse_build(rel, absp, sub_dirs, trozos, recursive, truncated)
+        hecha["firma"] = firma
+        with _respuestas_lock:
+            if len(_respuestas) >= _RESPUESTAS_MAX:
+                _respuestas.clear()
+            _respuestas[clave] = hecha
+
+    extra = {}
     # La galeria avisa de que va a ENSENAR estas fotos, asi que sus miniaturas
     # se van haciendo de fondo en este mismo orden. El selector de carpeta de
     # destino usa la misma ruta y no lo pide: alli solo se ven carpetas.
-    out_extra = {}
     if request.args.get("prefetch") == "1":
-        # (con subcarpetas, el nombre va con su ruta relativa a esta carpeta)
-        # (solo las que se van a pre-generar: no hace falta la lista entera)
-        _prefetch_request(abs_path, [(f["folder"] + "/" if f.get("folder") else "") + f["name"]
-                                     for f in files[:PREFETCH_MAX]])
+        _prefetch_request(abs_path, hecha["primeras"])
         # Cuantas miniaturas faltan: si son muchas, la galeria ofrece
-        # prepararlas de una vez (con barra de progreso) en vez de ir a
-        # tirones al bajar. Solo mira si existe el fichero: sin abrir nada.
-        # Y deja de contar en cuanto sabe la respuesta: a la galeria solo le
-        # importa si pasan de THUMBS_MISSING_TOPE (con 60.000 fotos sin
-        # preparar, contarlas todas eran 0,2 s mas de espera para nada).
-        out_extra["thumbs_missing"] = _thumbs_missing(base, recursive, exact)
+        # prepararlas de una vez (con barra de progreso). Va en una cabecera
+        # y no en el JSON para que el JSON se pueda guardar hecho.
+        extra["X-Thumbs-Missing"] = str(_thumbs_missing(clave, firma, exactas))
+
+    # El ETag sale del CONTENIDO: si el indice ha cambiado en cosas que no se
+    # ven aqui (otra carpeta, un repaso que deja todo igual), sigue siendo 304
+    # y la galeria no se repinta para nada
+    etag = hecha["etag"]
+    if request.headers.get("If-None-Match") == etag:
+        resp = app.response_class(status=304)
+    elif "gzip" in request.headers.get("Accept-Encoding", ""):
+        resp = app.response_class(hecha["gz"], mimetype="application/json")
+        resp.headers["Content-Encoding"] = "gzip"
+        resp.headers["Vary"] = "Accept-Encoding"
+    else:
+        import zlib
+        resp = app.response_class(zlib.decompress(hecha["gz"], 31), mimetype="application/json")
+    resp.headers["ETag"] = etag
+    # Que el navegador lo guarde pero pregunte siempre (un 304 son bytes)
+    resp.headers["Cache-Control"] = "no-cache"
+    resp.headers.update(extra)
+    return resp
+
+def _browse_build(rel, absp, sub_dirs, trozos, recursive, truncated):
+    """Monta el JSON del listado (ver LISTADO YA HECHO)."""
+    # La fecha que importa al filtrar y ordenar es la de la FOTO, no la del
+    # archivo: una foto de 2005 copiada al NAS tiene fecha de archivo de hoy.
+    # El indice ya la sabe, asi que no cuesta nada acompanarla.
+    fechas = _index_dates(absp.rstrip("/") or "/", children=not recursive)
+    canon = "" if rel in ("", ".", "/") else str(Path(rel))   # forma canonica
+    pre = canon + "/" if canon else ""
+    dirs = [{"name": n, "path": pre + n} for n in sub_dirs]
+    editadas = _orig_paths()           # las que tienen original guardado
+    files = []
+    for sub, fotos in trozos:
+        folder = sub[:-1]
+        for n, mt, sz, _ in fotos:
+            ruta = absp + sub + n
+            f = _browse_item(n, mt, sz, fechas.get(ruta))
+            if folder:
+                f["folder"] = folder
+            if ruta in editadas:
+                f["orig"] = True
+            files.append(f)
+    # Las fotos mas recientes primero (por fecha de modificacion del archivo).
+    files.sort(key=lambda f: f["mtime"], reverse=True)
     # Las diminutas solo de lo que se va a llegar a ver de una sentada: en una
     # carpeta de 3.000 fotos serian 0,6 MB de listado, y para cuando se baja
     # tanto las miniaturas de verdad ya estan hechas.
     for f in files[LQIP_LISTADO_MAX:]:
         f.pop("blur", None)
     # base: lo que va delante de la ruta de cada foto (la galeria la rehace)
-    out = {"dirs": dirs, "files": files, "current": rel, "base": pre, **out_extra}
+    out = {"dirs": dirs, "files": files, "current": rel, "base": pre}
     if recursive:
         out["recursive"] = True
         out["truncated"] = truncated
-    return jsonify(out)
+    body = json.dumps(out, ensure_ascii=False, separators=(",", ":")).encode()
+    # (con subcarpetas, el nombre va con su ruta relativa a esta carpeta)
+    # (solo las que se van a pre-generar: no hace falta la lista entera)
+    primeras = [(f["folder"] + "/" if f.get("folder") else "") + f["name"]
+                for f in files[:PREFETCH_MAX]]
+    return {"gz": _gzip(body, 1), "primeras": primeras,
+            "etag": '"' + hashlib.sha1(body).hexdigest()[:24] + '"'}
 
 @app.route("/api/thumb")
 def thumb():
@@ -3801,6 +4014,7 @@ def write_gps():
     if alt is not None:
         args += ["-GPSAltitude=" + str(abs(alt)), "-GPSAltitudeRef=" + ("0" if alt >= 0 else "1")]
 
+    antes = _mtimes(targets)        # para llevar sus miniaturas (ver _cache_carry)
     for chunk in _chunks(targets, EXIFTOOL_CHUNK):
         try:
             result = _run_exiftool_batch(args, chunk)
@@ -3820,7 +4034,7 @@ def write_gps():
                     errors.append({"file": path.name, "error": str(e)})
             continue
         for path in chunk:
-            _after_write(path)
+            _after_write(path, antes.get(str(path)))
             _index_set_gps(path, lat, lon)
             ok.append(path.name)
     return jsonify({"ok": ok, "errors": errors})
@@ -4061,7 +4275,7 @@ def write_date():
     args = _date_write_args(exif_date, shift, sync_file)
 
     def _done(path, fecha):
-        _after_write(path)
+        _after_write(path, antes.get(str(path)))
         if fecha:
             _index_set_date(path, fecha)
         else:
@@ -4072,6 +4286,7 @@ def write_date():
     # deja intactas las fotos sin fecha previa y ExifTool no dice cuales fueron,
     # y al poner una fecha concreta hay que saber cuales guardan ademas la fecha
     # en XMP o IPTC para no dejar ahi la antigua.
+    antes = _mtimes(targets)        # para llevar sus miniaturas (ver _cache_carry)
     before = _read_photo_dates_batch(targets)
     if shift:
         con_fecha = []
@@ -4367,6 +4582,64 @@ def edit_source():
     resp.headers.update(headers)
     return resp
 
+# Copia de trabajo del editor. Abrir el editor era bajar el original entero
+# (20-40 MB) y decodificarlo en el movil solo para trabajar a 2048 px: segundos
+# de espera y cientos de MB. Ahora el NAS da una copia de 2048 px en JPEG de
+# calidad 95 sin submuestreo de color (4:4:4) y con el perfil de color de la
+# foto: ~1-3 MB. Se decodifica con la escala del propio JPEG (draft: lee 1/2,
+# 1/4... sin descomprimir la foto entera), se guarda en la cache y el original
+# solo hace falta al guardar. Misma orientacion que /api/edit_source (va en
+# X-Orientation), asi que el motor la trata igual.
+EDIT_PROXY_SIDE = 2048
+
+def _edit_proxy_bytes(src, side):
+    with Image.open(str(src)) as im:
+        icc = im.info.get("icc_profile")
+        w, h = im.size
+        lado = max(w, h)
+        if lado > side:
+            im.draft("RGB", (-(-w * side // lado), -(-h * side // lado)))
+        img = im if im.mode in ("RGB", "L") else im.convert("RGB")
+        if max(img.size) > side:
+            img = img.resize((max(1, round(w * side / lado)), max(1, round(h * side / lado))), Image.LANCZOS)
+        else:
+            img.load()
+        buf = io.BytesIO()
+        extra = {"icc_profile": icc} if icc else {}
+        img.save(buf, format="JPEG", quality=95, subsampling=0, **extra)
+    return buf.getvalue()
+
+@app.route("/api/edit_proxy")
+def edit_proxy():
+    abs_path = _resolve_path(request.args.get("path", ""))
+    if abs_path is None or not abs_path.is_file():
+        return jsonify({"error": "la foto no existe"}), 404
+    ext = abs_path.suffix.lower()
+    if ext not in (".jpg", ".jpeg") and ext not in RAW_EXTS:
+        return jsonify({"error": "sin copia de trabajo para este formato"}), 404
+    cache_file = _thumb_cache_path(abs_path, "EDITPROXY-JPEG")
+    if not cache_file.exists():
+        try:
+            with _render_once(str(cache_file)):
+                if not cache_file.exists():
+                    if ext in RAW_EXTS:
+                        src, _, _ = _lc_input(abs_path)     # la vista previa grande del RAW
+                    else:
+                        src = abs_path
+                    with _user_decode():
+                        data = _edit_proxy_bytes(src, EDIT_PROXY_SIDE)
+                    _cache_store(cache_file, data)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    if request.headers.get("If-None-Match") == cache_file.stem:
+        resp = app.response_class(status=304)
+    else:
+        resp = send_file(str(cache_file), mimetype="image/jpeg")
+    resp.headers["ETag"] = cache_file.stem
+    resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["X-Orientation"] = str(_read_orientation(abs_path) or 1)
+    return resp
+
 def _save_edit_jpeg_bytes(data, abs_path, dest, kind="editar", params=None):
     """Escribe un JPEG ya codificado como edicion de abs_path, con los
     metadatos del original (EXIF incrustado sin recomprimir; XMP/IPTC con
@@ -4418,25 +4691,170 @@ def edit_upload():
         params = json.loads(request.form.get("params") or "null")
     except ValueError:
         params = None
-    dest, derived = _edit_destination(abs_path)
     try:
-        if data[:3] == b"\xff\xd8\xff" and dest.suffix.lower() in (".jpg", ".jpeg"):
-            _save_edit_jpeg_bytes(data, abs_path, dest, "editar", params)
-        elif data[:8] == b"\x89PNG\r\n\x1a\n":
-            with _user_decode():
-                img = Image.open(io.BytesIO(data))
-                img.load()
-                # El motor siempre devuelve RGBA: un alfa opaco no se guarda
-                if img.mode == "RGBA" and img.getchannel("A").getextrema() == (255, 255):
-                    img = img.convert("RGB")
-                dest, derived = _save_edit(img, abs_path, "editar", params)
-        else:
-            return jsonify({"error": "formato de edicion inesperado"}), 400
+        return jsonify(_store_edit_result(data, abs_path, params))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+def _store_edit_result(data, abs_path, params):
+    """Guarda el resultado del motor (JPEG o PNG) como edicion de abs_path,
+    venga del navegador o del revelado en el NAS."""
+    dest, derived = _edit_destination(abs_path)
+    if data[:3] == b"\xff\xd8\xff" and dest.suffix.lower() in (".jpg", ".jpeg"):
+        _save_edit_jpeg_bytes(data, abs_path, dest, "editar", params)
+    elif data[:8] == b"\x89PNG\r\n\x1a\n":
+        with _user_decode():
+            img = Image.open(io.BytesIO(data))
+            img.load()
+            # El motor siempre devuelve RGBA: un alfa opaco no se guarda
+            if img.mode == "RGBA" and img.getchannel("A").getextrema() == (255, 255):
+                img = img.convert("RGB")
+            dest, derived = _save_edit(img, abs_path, "editar", params)
+    else:
+        raise ValueError("formato de edicion inesperado")
     root = _work_root()
-    return jsonify({"ok": True, "lossless": False, "derived": derived,
-                    "name": dest.name, "path": str(dest.relative_to(root))})
+    return {"ok": True, "lossless": False, "derived": derived,
+            "name": dest.name, "path": str(dest.relative_to(root))}
+
+# ── Revelado en el NAS ───────────────────────────────────────────────────────
+# Guardar una edicion es revelar la foto ENTERA en coma flotante: 24 Mpx piden
+# ~1,5 GB. En un movil eso tumbaba el editor (Safari mata la pestana) y la
+# salida era guardar mas pequena. Ahora el NAS lo hace con el MISMO motor,
+# compilado para el (lc-export, ver lightcraft-bridge/src/bin/lc_export.rs;
+# misma salida que el navegador: medido, 0,002 niveles de diferencia media).
+# El movil solo manda los ajustes y las mascaras de la IA, cierra el editor y
+# sigue: el revelado va de fondo y la galeria se actualiza al terminar.
+# Si el NAS no tiene el programa o le falta memoria, contesta "fallback" y el
+# navegador lo hace como antes.
+LC_EXPORT_BIN = os.environ.get("LC_EXPORT_BIN") or shutil.which("lc-export")
+LC_BYTES_PER_PX = 72          # medido: 24 Mpx -> 1,5 GB de pico
+LC_DEV_TIMEOUT = 600
+_lc_dev_lock = threading.Lock()           # de una en una: cada una pide mucha memoria
+_lc_jobs = {}
+_lc_jobs_lock = threading.Lock()
+
+def _mem_libre():
+    """Memoria que puede usar el contenedor (la del sistema y, si hay, su tope)."""
+    libre = None
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    libre = int(line.split()[1]) * 1024
+                    break
+    except OSError:
+        pass
+    try:
+        with open("/sys/fs/cgroup/memory.max") as f:
+            tope = f.read().strip()
+        if tope != "max":
+            with open("/sys/fs/cgroup/memory.current") as f:
+                usado = int(f.read().strip())
+            resto = int(tope) - usado
+            libre = resto if libre is None else min(libre, resto)
+    except (OSError, ValueError):
+        pass
+    return libre
+
+def _lc_input(abs_path):
+    """(fichero que lee el motor, orientacion, temporal a borrar o None)."""
+    ext = abs_path.suffix.lower()
+    if ext in LC_NATIVE_EXTS:
+        return str(abs_path), _read_orientation(abs_path) or 1, None
+    if ext in RAW_EXTS:
+        cache_file = _thumb_cache_path(abs_path, "EDITSRC-JPEG")
+        if not cache_file.exists():
+            data = _extract_raw_preview(abs_path)
+            if not data:
+                raise ValueError("no se pudo leer la vista previa del RAW")
+            _cache_store(cache_file, data)
+        return str(cache_file), _read_orientation(abs_path) or 1, None
+    # HEIC y compania: a PNG ya orientado, como /api/edit_source
+    with _user_decode():
+        img = _open_for_edit(abs_path)
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGB")
+        tmp = os.path.join(TMP_DIR, "lc_%s.png" % uuid.uuid4().hex)
+        img.save(tmp, format="PNG", compress_level=1)
+    return tmp, 1, tmp
+
+def _lc_develop(job, abs_path, st, mattes, params=None):
+    work = os.path.join(TMP_DIR, "lc_" + job)
+    os.makedirs(work, exist_ok=True)
+    temporal = None
+    try:
+        with _lc_dev_lock:
+            src, orient, temporal = _lc_input(abs_path)
+            dest, _ = _edit_destination(abs_path)
+            png = dest.suffix.lower() not in (".jpg", ".jpeg")
+            with open(os.path.join(work, "st.json"), "w") as f:
+                json.dump(st, f)
+            cmd = [LC_EXPORT_BIN, src, os.path.join(work, "out"), str(orient), "95",
+                   "1" if png else "0", os.path.join(work, "st.json")]
+            for i, m in enumerate(mattes):
+                raw = os.path.join(work, "m%d.raw" % i)
+                with open(raw, "wb") as f:
+                    f.write(base64.b64decode(m["data"]))
+                cmd += [str(m["kind"]), str(int(m["w"])), str(int(m["h"])), raw]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=LC_DEV_TIMEOUT)
+            if r.returncode != 0:
+                raise RuntimeError((r.stderr or "").strip() or "el revelado fallo (codigo %d)" % r.returncode)
+            with open(os.path.join(work, "out"), "rb") as f:
+                data = f.read()
+        res = _store_edit_result(data, abs_path, params if params is not None else st)
+        with _lc_jobs_lock:
+            _lc_jobs[job].update(state="done", result=res, at=time.time())
+    except Exception as e:
+        with _lc_jobs_lock:
+            _lc_jobs[job].update(state="error", error=str(e), at=time.time())
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+        if temporal:
+            _discard(Path(temporal))
+
+@app.route("/api/edit_develop", methods=["POST"])
+def edit_develop():
+    """Revela y guarda una edicion en el NAS (ver arriba). Contesta enseguida
+    con un id; el resultado se pregunta en /api/edit_develop/status."""
+    if not LC_EXPORT_BIN:
+        return jsonify({"fallback": True, "error": "sin revelado en el NAS"}), 501
+    data = request.get_json(silent=True) or {}
+    abs_path = _resolve_path(data.get("path", ""))
+    if abs_path is None or not abs_path.is_file():
+        return jsonify({"error": "la foto no existe"}), 404
+    st = data.get("st")
+    mattes = data.get("mattes") or []
+    if not isinstance(st, dict) or not isinstance(mattes, list):
+        return jsonify({"error": "ajustes no validos"}), 400
+    # Memoria: los pixeles de la foto por lo que pide cada uno
+    try:
+        with Image.open(str(abs_path)) as im:
+            w, h = im.size
+    except Exception:
+        w, h = 6000, 4000              # RAW y raros: se supone una foto grande
+    libre = _mem_libre()
+    if libre is not None and w * h * LC_BYTES_PER_PX > libre * 0.9:
+        return jsonify({"fallback": True, "error": "el NAS no tiene memoria libre para revelarla"}), 503
+    job = uuid.uuid4().hex[:16]
+    with _lc_jobs_lock:
+        # Los terminados hace mas de una hora sobran
+        for k in [k for k, v in _lc_jobs.items() if v.get("at") and time.time() - v["at"] > 3600]:
+            _lc_jobs.pop(k, None)
+        _lc_jobs[job] = {"state": "running", "path": data.get("path", "")}
+    threading.Thread(target=_lc_develop, args=(job, abs_path, st, mattes, data.get("params")),
+                     daemon=True).start()
+    return jsonify({"job": job, "state": "running"}), 202
+
+@app.route("/api/edit_develop/status")
+def edit_develop_status():
+    with _lc_jobs_lock:
+        j = dict(_lc_jobs.get(request.args.get("job", ""), {}))
+    if not j:
+        return jsonify({"error": "trabajo desconocido"}), 404
+    j.pop("at", None)
+    return jsonify(j)
 
 def _index_status_dict():
     return {
@@ -4495,12 +4913,14 @@ def transfer_files():
             continue
         try:
             target = _unique_target(dest, src.name)
+            m0 = _mtime(src)
             if mode == "copy":
                 shutil.copy2(str(src), str(target))
+                _cache_carry(src, m0, target, copy=True)
                 _index_copy(src, target)
             else:
                 shutil.move(str(src), str(target))
-                _evict_thumb_cache(src)
+                _cache_carry(src, m0, target)     # misma foto: sus miniaturas la siguen
                 _index_move(src, target)
             _trigger_reindex(target)
             ok.append({"file": rel, "name": src.name, "new": target.name})
@@ -4722,9 +5142,9 @@ def rename_files():
             if candidate == path:
                 ok.append({"old": path.name, "new": candidate.name})
                 continue
+            m0 = _mtime(path)
             path.rename(candidate)
-            # Invalidate old thumbnail cache
-            _evict_thumb_cache(path)
+            _cache_carry(path, m0, candidate)     # misma foto: sus miniaturas la siguen
             _index_move(path, candidate)
             ok.append({"old": path.name, "new": candidate.name})
         except Exception as e:

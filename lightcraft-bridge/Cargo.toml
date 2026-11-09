@@ -14,6 +14,16 @@ publish = false
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# Revelado a resolucion completa en el NAS (ver src/bin/lc_export.rs). Solo se
+# compila con --features cli, asi que la version WebAssembly no cambia.
+[[bin]]
+name = "lc-export"
+path = "src/bin/lc_export.rs"
+required-features = ["cli"]
+
+[features]
+cli = []
+
 [dependencies]
 # Version fijada: el motor cambia deprisa y el editor se ajusta a esta API.
 lightcraft-pipeline = { git = "https://github.com/storytold/lightcraft", rev = "0ba118de92a81f7463ca0e6d79e1323137b1adae" }

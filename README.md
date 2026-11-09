@@ -381,11 +381,28 @@ casi 1 MB), y hasta ahora nada las borraba nunca: solo se tiraban las de una
 foto cuando esa foto cambiaba. Una biblioteca grande vista foto a foto podia
 dejar varios GB en el volumen del NAS creciendo para siempre.
 
-Ahora hay un tope (`THUMB_CACHE_MAX_MB`, por defecto 1024; con 0 se desactiva).
-Al pasarse se tiran las menos usadas hasta bajar al 85%. Son ficheros
-regenerables: no se pierde nada, la siguiente vez se vuelven a hacer. El
-repaso va en segundo plano, como mucho cada media hora, y recorrer 2.000
-ficheros de cache cuesta 0,01 s.
+Ahora hay dos topes, cada uno para lo suyo:
+
+- `THUMB_CACHE_MAX_MB` (por defecto 1024): lo grande, vistas previas y copias
+  del editor.
+- `THUMBS_MAX_MB` (por defecto 8192, unas 500.000 fotos): las miniaturas de
+  la galeria.
+
+Al pasarse de un tope se tiran las menos usadas de ese monton hasta bajar al
+85%. Son ficheros regenerables: no se pierde nada, la siguiente vez se
+vuelven a hacer. El repaso va en segundo plano, como mucho cada media hora.
+
+**Por que dos topes.** Antes compartian uno de 1 GB, y una biblioteca de
+60.000 fotos son ~1 GB solo de miniaturas: al terminar el barrido inicial el
+repaso tiraba las mas antiguas (las de las fotos mas recientes, las primeras
+que se preparan) y la galeria las volvia a "generar" aunque ya estuvieran
+hechas.
+
+**Lo que ya no tira miniaturas.** Poner GPS, cambiar la fecha, renombrar,
+mover o copiar no cambia el aspecto de la foto, asi que sus miniaturas,
+vista previa y copia del editor se llevan a la clave nueva (ruta + fecha del
+archivo) en vez de borrarse. Antes, geolocalizar 500 fotos obligaba a
+decodificar otra vez las 500. Solo se tiran al editar pixeles o girar.
 
 ### La miniatura diminuta (el truco de Google Photos)
 
@@ -459,6 +476,35 @@ y el pico de memoria sigue siendo 8 veces menor.
 - **Bajar `optimize` al guardar en JPEG.** Parecia costar 2,5 s, pero esa
   medida estaba hecha sobre ruido sintetico. En una foto de verdad son 0,17 s y
   ahorran un 16% de tamano: compensa, se queda como estaba.
+
+### Abrir al instante (tercera pasada)
+
+Medido con 60.000 fotos en un movil simulado (CPU 4 veces mas lenta), hasta
+ver la rejilla:
+
+| | Antes | Ahora |
+|---|---|---|
+| Volver a una carpeta ya vista | 1,1-5 s | 0,2 s |
+| Abrir la app otro dia | 1-3,5 s | 0,6 s |
+| Miniaturas pedidas al NAS al volver | todas | ninguna |
+| Servidor, listado ya hecho | 300-500 ms | 20 ms (o un 304) |
+
+- **Carpetas en memoria** (servidor): cada carpeta se lee una vez y se guarda
+  con su fecha de modificacion, que cambia cuando se crea, borra o renombra
+  algo dentro (toda escritura de la app pasa por un renombrado). Reabrir son
+  un `stat` por carpeta, no por foto. Las que llevan mas de 10 minutos se
+  releen de fondo por si otro programa reescribio una foto en el sitio.
+- **Listado ya hecho** (servidor): la respuesta se guarda comprimida con una
+  huella (fechas de las carpetas + contadores de cambios de las bases SQLite).
+  El ETag sale del contenido: si nada visible ha cambiado, es un 304.
+- **Listados en el dispositivo** (navegador): lo ultimo que se vio de cada
+  carpeta se pinta al momento (memoria en la sesion, IndexedDB entre
+  sesiones) y a la vez se pregunta al servidor; si algo cambio, se repinta en
+  el mismo sitio.
+- **Miniaturas en el dispositivo** (navegador): las que llegan se guardan en
+  IndexedDB (hasta 40.000) y la siguiente vez salen de ahi sin tocar la red.
+  IndexedDB y no Cache Storage porque este exige HTTPS y la app se abre por
+  la IP del NAS.
 
 ### Listados, red y procesos (segunda pasada)
 
@@ -814,14 +860,24 @@ revelado en coma flotante de 32 bits, compilado a WebAssembly
 (`static/lightcraft/`, fuente del puente en `lightcraft-bridge/`). **Corre en
 el navegador**, en un Worker:
 
-- Mientras se edita trabaja sobre la vista previa de 2048 px (la misma que
-  usa el visor, ya en cache).
-- Al guardar, el navegador descarga el original (`/api/edit_source`), lo
-  revela a resolucion completa y sube el JPEG terminado a calidad 95
-  (`/api/edit_upload`). El servidor lo escribe tal cual, le pone los metadatos
-  del original (GPS, fechas, estrellas...) y la orientacion a 1. El NAS no
-  decodifica ni procesa nada. Una foto de 24 Mpx tarda unos 15 s en un
-  portatil.
+- Mientras se edita trabaja sobre una **copia de trabajo de 2048 px** que
+  prepara el NAS (`/api/edit_proxy`: JPEG calidad 95 sin submuestreo de
+  color, con el perfil de color; se decodifica con la escala del propio JPEG
+  y queda en cache). Antes el movil bajaba el original entero (20-40 MB) y lo
+  descomprimia solo para trabajar a 2048 px. Medido con 24 Mpx: 2,7 MB en vez
+  de 18 MB, y el motor la abre en 0,16 s en vez de 0,77 s.
+- **Al guardar, revela el NAS** (`/api/edit_develop`), con el mismo motor
+  compilado para su procesador (`lc-export`, ver
+  `lightcraft-bridge/src/bin/lc_export.rs`; misma salida que el navegador:
+  0,002 niveles de diferencia media). El movil solo manda los ajustes y las
+  mascaras de la IA, el editor se cierra al momento y un aviso dice
+  "Guardando la edicion..." hasta que la galeria se actualiza. Revelar 24 Mpx
+  en coma flotante pide ~1,5 GB: en el movil eso tumbaba el editor. El NAS lo
+  hace de una en una y solo si tiene memoria libre.
+- Si el NAS no tiene `lc-export` o le falta memoria, se hace como antes: el
+  navegador descarga el original, lo revela y sube el JPEG terminado
+  (`/api/edit_upload`). Las dos vias le ponen los metadatos del original
+  (GPS, fechas, estrellas...) y la orientacion a 1.
 - Originales PNG/WebP/TIFF/HEIC: el resultado llega en PNG sin perdida y se
   guarda en su formato. RAW: se revela su vista previa incrustada y se crea un
   `_edit.jpg` al lado, como antes.
@@ -831,8 +887,10 @@ el navegador**, en un Worker:
 
 Para actualizar el motor: cambiar `rev` en `lightcraft-bridge/Cargo.toml` y
 ejecutar `lightcraft-bridge/build.sh` (necesita Rust con el target
-`wasm32-unknown-unknown` y `wasm-bindgen-cli` 0.2.129). El contenedor no
-necesita Rust: usa los ficheros ya compilados.
+`wasm32-unknown-unknown` y `wasm-bindgen-cli` 0.2.129). El `Dockerfile`
+compila ademas `lc-export` para el NAS en una etapa aparte (unos minutos la
+primera vez; Docker la reutiliza mientras no cambie `lightcraft-bridge/`). Si
+esa compilacion fallara, la imagen se crea igual y se revela en el navegador.
 
 ### Fidelidad: dos fallos que lo hacian menos fino que LightCraft
 

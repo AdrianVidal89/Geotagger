@@ -133,7 +133,22 @@ self.onmessage = async (ev) => {
       if (ed) { ed.free(); ed = null; }
       mattes = {};
       srcBytes = null; srcUrl = null;
-      if (m.source) {
+      let abierta = false;
+      if (m.proxy) {
+        // La copia de trabajo del NAS (2048 px, JPEG 95 4:4:4): la misma foto
+        // que daria decodificar el original aqui, sin bajar 20-40 MB ni
+        // descomprimirlos en el movil. El original solo se pide al guardar.
+        try {
+          const { bytes, headers } = await fetchBytes(m.proxy);
+          srcOrient = parseInt(headers.get("X-Orientation") || "1", 10) || 1;
+          ed = new Editor(bytes, srcOrient, 2048);
+          srcUrl = m.proxy;
+          abierta = true;
+        } catch (e) { /* sin copia de trabajo: el original, como antes */ }
+      }
+      if (abierta) {
+        // ya esta
+      } else if (m.source) {
         // El ORIGINAL (o la vista previa grande de un RAW), decodificado aqui con
         // los codecs de LightCraft a 2048 px: sin pasar por el WebP comprimido
         // del visor, que con sombras o curvas fuertes dejaba bandas y halos
@@ -148,6 +163,16 @@ self.onmessage = async (ev) => {
       }
       self.postMessage({ type: "opened", seq: m.seq, w: ed.width(), h: ed.height(),
                          controls: JSON.parse(controls_json()), profiles: JSON.parse(profiles_json()) });
+    } else if (m.type === "mattes") {
+      // Las mascaras de la IA que pide el estado, para revelar en el NAS
+      await ensureMattes(neededMattes(m.st));
+      const out = [];
+      for (const [kind, mt] of Object.entries(mattes)) {
+        let bin = "";
+        for (let i = 0; i < mt.data.length; i += 0x8000) bin += String.fromCharCode.apply(null, mt.data.subarray(i, i + 0x8000));
+        out.push({ kind, w: mt.w, h: mt.h, data: btoa(bin) });
+      }
+      self.postMessage({ type: "mattes", seq: m.seq, mattes: out });
     } else if (m.type === "ai") {
       // Calcular ya (el editor ensena "Detectando..." mientras tanto)
       await ensureMattes(m.kinds);
@@ -187,6 +212,8 @@ self.onmessage = async (ev) => {
       // maxSide: en un movil sin memoria para la foto entera, revelarla mas pequena
       await ensureMattes(neededMattes(m.st));
       const full = new Editor(bytes, orient, m.maxSide || 0);
+      // Ya decodificada: los bytes del original sobran (menos memoria en el pico)
+      bytes = null; srcBytes = null; srcUrl = null;
       try {
         for (const [k, mt] of Object.entries(mattes)) full.set_matte(k, mt.w, mt.h, mt.data);
         apply(full, m.st);
