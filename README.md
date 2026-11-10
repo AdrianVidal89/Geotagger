@@ -477,6 +477,72 @@ y el pico de memoria sigue siendo 8 veces menor.
   medida estaba hecha sobre ruido sintetico. En una foto de verdad son 0,17 s y
   ahorran un 16% de tamano: compensa, se queda como estaba.
 
+### Como Fotos del iPhone (cuarta pasada)
+
+Medido con 60.000 fotos (*Subcarpetas* en la raiz) en un movil simulado con la
+CPU 4 veces mas lenta:
+
+| | Antes | Ahora |
+|---|---|---|
+| Bajar deprisa (una fila por cuadro): cuadro tipico | 50 ms (20 fps) | 16,7 ms (60 fps) |
+| Bajar deprisa por una zona no vista: huecos sin miniatura | 92 % | 0-4 % |
+| Bajar despacio: cuadros de mas de 33 ms (de 240) | 50 | 0 |
+| Tras un tiron largo, hasta ver las miniaturas | 690 ms | 130-190 ms |
+| Abrir la app por primera vez (hasta la rejilla) | 2,0 s | 0,9-1,1 s |
+| Recargar la app (hasta la rejilla) | 0,95 s | 0,55-0,85 s |
+| Seleccionar las 60.000 | segundos | 31 ms |
+
+**Rejilla**
+
+- **Tarjetas colocadas a mano.** Antes las colocaba el navegador (CSS grid
+  entre dos separadores) y en cada fila nueva se quitaban y volvian a poner
+  TODAS las tarjetas vivas. Ahora cada una va en posicion absoluta dentro de
+  una rejilla con la altura total ya puesta: al bajar una fila se quitan las de
+  una fila y se anaden las de otra, y el resto ni se entera.
+- **Miniaturas por posicion, no por tarjeta.** Se traen las de pantalla y las
+  de varias pantallas por delante EN EL SENTIDO del scroll, antes de que
+  existan sus tarjetas: cuando el hueco entra en pantalla, la miniatura ya
+  esta en memoria. Un lote cuyas fotos han quedado lejos se cancela.
+- **`data:` en vez de `blob:`.** Dar cada miniatura a su imagen como blob
+  costaba tres viajes a otro proceso del navegador; era lo que mas tiempo se
+  llevaba del hilo principal al bajar (de 22 a 38 fps solo con este cambio).
+- **Un solo juego de manejadores** en la galeria en vez de siete por tarjeta,
+  tarjetas clonadas de un molde, y el nombre del archivo fuera del arbol de
+  pintado hasta que se pasa el raton.
+- **Color de la foto en vez de hueco gris.** Las tarjetas sin version diminuta
+  (a partir de la 1.500) nacen del color dominante que el indice ya conoce.
+- **Tamano de las miniaturas**: pellizcar con dos dedos (o Ctrl + rueda)
+  cambia el numero de columnas, como en Fotos. Se recuerda en el dispositivo.
+- En movil la rejilla va de borde a borde y la linea de tiempo se dibuja
+  encima, sin quitarle ancho.
+- La ventana "Preparando miniaturas" ya no tapa la galeria: queda la pastilla
+  con el porcentaje (pulsandola sale el detalle).
+
+**Visor**
+
+- **Se abre al instante**: se pinta la miniatura, que ya esta en memoria, y
+  sale de su tarjeta hasta ocupar la pantalla; la vista previa la sustituye en
+  el mismo sitio cuando llega. Antes: fondo negro y circulo de espera.
+- **El dedo arrastra la foto**: hay tres laminas (la abierta y sus dos
+  vecinas, ya cargadas) y al soltar encaja en la siguiente. Antes el gesto
+  solo se miraba al soltar.
+- **Arrastrar hacia abajo** encoge la foto y la devuelve a su tarjeta.
+- Un toque esconde o ensena los mandos. En movil, estrellas y acciones bajan
+  a una barra inferior y arriba quedan cerrar, nombre y fecha (que ahora sale
+  del listado, sin preguntar al servidor por cada foto).
+
+**Arranque**
+
+- El listado guardado en el dispositivo y la confirmacion del NAS se piden en
+  la primera linea de la pagina, mientras el navegador lee el resto.
+- La pagina se sirve ya montada y comprimida (antes se rehacia en cada
+  visita), y los estilos del editor ya no frenan el primer pintado.
+- La fecha de cada foto se calcula sin expresion regular y con un `Date` por
+  hora distinta, no por foto.
+
+No se ha tocado el tamano de las miniaturas (300 px): cambiarlo obligaria a
+rehacer toda la cache del NAS.
+
 ### Abrir al instante (tercera pasada)
 
 Medido con 60.000 fotos en un movil simulado (CPU 4 veces mas lenta), hasta
