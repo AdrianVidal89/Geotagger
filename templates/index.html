@@ -974,7 +974,7 @@ header .spacer{flex:1}
   /* Los gestos (pellizco, arrastre) los lleva el visor, no el navegador */
   touch-action:none;
 }
-.vw-track{position:absolute;inset:0;will-change:transform}
+.vw-track{position:absolute;inset:0}
 .vw-slide{position:absolute;inset:0}
 /* La imagen ocupa la lamina entera y la foto se encaja dentro (contain): asi
    la miniatura, la vista previa y el original caen en el mismo sitio y
@@ -1570,9 +1570,7 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
   html[data-theme="tron"] header::after{animation:none;display:none}
 }
 </style>
-<!-- Los estilos del editor no hacen falta para pintar la galeria: se cargan
-     sin bloquear (media="print" hasta que llegan) -->
-<link rel="stylesheet" href="/static/lightcraft/editor.css" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/static/lightcraft/editor.css">
 </head>
 <body>
 
@@ -2678,9 +2676,9 @@ function _single(card) {
 // Miniaturas ya cargadas, por URL (que lleva la version de la foto): la
 // rejilla virtual destruye las tarjetas que se alejan y, al volver, las
 // recrea al instante desde aqui sin pedir nada. Las del lote van enteras
-// (~11 KB cada una, unos 35 MB con todas); las sueltas, su URL (la cache HTTP
+// (~11 KB cada una, unos 16 MB con todas); las sueltas, su URL (la cache HTTP
 // las tiene).
-const THUMB_MEM_MAX = 3000;
+const THUMB_MEM_MAX = 1500;
 const thumbMem = new Map();
 function thumbMemPut(key, url) {
   thumbMem.delete(key);
@@ -5359,6 +5357,7 @@ function viewerKeys(e) {
 // remata el anterior de golpe, asi que se pasa tan rapido como repita la tecla
 function viewerNav(dir) {
   if (viewerIndex < 0) return;
+  vwUnslim();
   if (vwAnim) { vwSlideEnd(); vwTrack.getBoundingClientRect(); }
   const ni = viewerIndex + dir;
   if (ni < 0 || ni >= currentFiles.length) return;
@@ -5414,6 +5413,23 @@ function updateViewerSelBtn() {
   document.getElementById("vw-select").classList.toggle("sel-on", !!f && selectedFiles.has(f.path));
 }
 
+// Con el editor abierto el visor queda debajo, sin verse: suelta las dos
+// laminas vecinas (y sus capas) para dejarle esa memoria al motor del editor,
+// que en un iPhone va justo. Vuelven solas al primer gesto en el visor.
+let vwLean = false;
+function vwSlim() {
+  if (viewerIndex < 0) return;
+  if (vwAnim) vwSlideEnd();
+  resetViewerZoom();
+  for (const sl of vwSlides) if (sl !== vwCur) vwLoad(sl, null);
+  vwLean = true;
+}
+function vwUnslim() {
+  if (!vwLean) return;
+  vwLean = false;
+  if (viewerIndex >= 0) vwSync();
+}
+
 // Coloca las tres laminas alrededor de viewerIndex y pinta los datos de la foto
 function showViewerPhoto() {
   if (!currentFiles[viewerIndex]) return;
@@ -5425,6 +5441,7 @@ function showViewerPhoto() {
 function vwSync() {
   const f = currentFiles[viewerIndex];
   if (!f) return;
+  vwLean = false;
   vwCur = vwSlides.find(sl => sl.slot === 0);
   vwImg = vwCur.img;
   vwHiRes = null;
@@ -5621,6 +5638,7 @@ function vwLoadFullRes() {
 
   vwStage.addEventListener("pointerdown", (e) => {
     if (viewerIndex < 0 || e.button > 0) return;
+    vwUnslim();
     if (vwAnim) vwSlideEnd();
     vwStopInertia();
     bgTap = false;
@@ -7678,6 +7696,7 @@ function lcFallback(f, err) {
 document.getElementById("vw-edit-btn").addEventListener("click", () => {
   const f = currentFiles[viewerIndex];
   if (!f) return;
+  vwSlim();
   if (window.LightCraftEditor && LightCraftEditor.supported()) LightCraftEditor.open(f);
   else openEditor(f);
 });
