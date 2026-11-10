@@ -713,6 +713,21 @@ def _user_decode():
             _user_decodes -= 1
             _user_last = time.time()
 
+@contextmanager
+def _user_busy():
+    """El usuario espera por algo pesado que NO es descomprimir con Pillow (el
+    revelado de una edicion): mientras dura, el trabajo de fondo se aparta
+    igual, pero sin gastar uno de los turnos de decodificacion."""
+    global _user_decodes, _user_last
+    with _user_guard:
+        _user_decodes += 1
+    try:
+        yield
+    finally:
+        with _user_guard:
+            _user_decodes -= 1
+            _user_last = time.time()
+
 def _usuario_quieto(margen):
     """Cierto si el usuario no tiene nada en marcha y lleva `margen` segundos
     sin pedir nada. No basta con mirar si hay algo AHORA MISMO: entre dos
@@ -4815,7 +4830,11 @@ def _lc_develop(job, abs_path, st, mattes, params=None):
     os.makedirs(work, exist_ok=True)
     temporal = None
     try:
-        with _lc_dev_lock:
+        # Guardar una edicion es lo que el usuario esta esperando: mientras se
+        # revela, la preparacion de miniaturas de fondo se aparta. Si no, sus
+        # cuatro hilos se quedaban con la CPU del NAS y con la memoria libre
+        # que el revelado comprueba antes de empezar.
+        with _lc_dev_lock, _user_busy():
             src, orient, temporal = _lc_input(abs_path)
             dest, _ = _edit_destination(abs_path)
             png = dest.suffix.lower() not in (".jpg", ".jpeg")
