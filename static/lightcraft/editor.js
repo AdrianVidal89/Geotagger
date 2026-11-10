@@ -164,8 +164,8 @@
     if (!rendering) pump();
   }
   async function pump() {
-    if (!wanted || !worker || !file) return;
-    const o = wanted;
+    if (!wanted || !file) return;
+    const o = wanted, f = file;
     wanted = null;
     rendering = true;
     const stage = el.querySelector(".lc-stage");
@@ -181,21 +181,58 @@
     }
     const t0 = performance.now();
     try {
+      if (!worker) await revive();
       const m = curMask();
-      const r = await call({ type: "render", st: st, maxW: Math.max(64, mw), maxH: Math.max(64, mh),
-                             draft: o.draft, applyCrop: tool !== "crop", before: before,
-                             overlay: tool === "mask" && overlayOn && m && m.components.length ? m.id : -1 });
+      // (las mascaras con IA calculan el sujeto o el cielo la primera vez: mas margen)
+      const ia = (st.masks || []).length > 0;
+      const r = await callT({ type: "render", st: st, maxW: Math.max(64, mw), maxH: Math.max(64, mh),
+                              draft: o.draft, applyCrop: tool !== "crop", before: before,
+                              overlay: tool === "mask" && overlayOn && m && m.components.length ? m.id : -1 },
+                            ia ? 120000 : o.draft ? 4000 : 25000);
+      if (file !== f) { rendering = false; if (wanted && file) pump(); return; }
       draw(r);
+      fails = 0;
       if (o.draft) {
         const ms = performance.now() - t0;
         draftSide = Math.round(Math.min(1400, Math.max(420, draftSide * Math.sqrt(DRAFT_MS / Math.max(5, ms)))));
       }
     } catch (e) {
-      showMsg("No se pudo revelar: " + e.message);
-      startWorker();
+      // El motor ha fallado o ha dejado de contestar (en un iPhone, por falta
+      // de memoria, el sistema puede pararlo sin avisar). Antes el editor se
+      // quedaba abierto pero sordo: los deslizadores se movian y la foto no
+      // cambiaba. Ahora se arranca un motor nuevo con la misma foto y se
+      // repite el revelado; solo si vuelve a fallar se avisa.
+      if (file === f && fails++ < 2) {
+        try {
+          await revive();
+          if (!wanted) wanted = o;
+        } catch (e2) {
+          showMsg("No se pudo revelar: " + (e2.message || e.message));
+        }
+      } else if (file === f) {
+        showMsg("No se pudo revelar: " + e.message);
+      }
     }
     rendering = false;
-    if (wanted) pump();
+    if (wanted && file) pump();
+  }
+
+  // Motor nuevo con la foto abierta (una sola vez aunque lo pidan dos a la vez)
+  let reviving = null, fails = 0;
+  function revive() {
+    if (!reviving) {
+      const f = file;
+      busy("Reiniciando el motor...");
+      reviving = restartWorker(f).finally(() => { reviving = null; if (!saving) busy(null); });
+    }
+    return reviving;
+  }
+  // Una llamada al motor con tope de espera: si no contesta, cuenta como fallo
+  function callT(msg, ms) {
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("el motor no responde")), ms);
+      call(msg).then((r) => { clearTimeout(t); resolve(r); }, (e) => { clearTimeout(t); reject(e); });
+    });
   }
 
   function draw(r) {

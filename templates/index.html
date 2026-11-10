@@ -5429,9 +5429,15 @@ function vwSlim() {
   if (viewerIndex < 0) return;
   if (vwAnim) vwSlideEnd();
   resetViewerZoom();
-  for (const sl of vwSlides) if (sl !== vwCur) vwLoad(sl, null);
+  for (const sl of vwSlides) vwLoad(sl, null);
+  // Y las miniaturas guardadas en memoria: se vuelven a traer al salir
+  thumbMem.clear();
   vwLean = true;
 }
+// Al cerrar el editor (guardando o no), el visor recupera sus fotos
+new MutationObserver(() => {
+  if (!document.body.classList.contains("lc-open")) vwUnslim();
+}).observe(document.body, { attributes: true, attributeFilter: ["class"] });
 function vwUnslim() {
   if (!vwLean) return;
   vwLean = false;
@@ -7704,8 +7710,7 @@ function lcFallback(f, err) {
 document.getElementById("vw-edit-btn").addEventListener("click", () => {
   const f = currentFiles[viewerIndex];
   if (!f) return;
-  vwSlim();
-  if (window.LightCraftEditor && LightCraftEditor.supported()) LightCraftEditor.open(f);
+  if (window.LightCraftEditor && LightCraftEditor.supported()) { vwSlim(); LightCraftEditor.open(f); }
   else openEditor(f);
 });
 
