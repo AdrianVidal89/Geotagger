@@ -918,6 +918,14 @@ header .spacer{flex:1}
   overscroll-behavior:contain;
 }
 .viewer.on,.viewer.closing{display:block}
+/* Con el editor LightCraft abierto, lo de debajo (visor, galeria, cabecera) ni
+   se pinta ni se compone. El editor repinta la foto en cada movimiento de un
+   deslizador, y en el iPhone el navegador volvia a pintar -y a descomprimir-
+   lo que quedaba tapado: las fotos grandes del visor y las miniaturas de la
+   rejilla. Eso le quitaba el procesador al motor y los ajustes llegaban
+   tarde o no llegaban. */
+body.lc-open>.viewer{display:none}
+body.lc-open>header,body.lc-open>.main,body.lc-open>.sel-bar,body.lc-open>.map-view{visibility:hidden}
 .viewer.closing{pointer-events:none}
 .vw-bg{position:absolute;inset:0;background:#000}
 .vw-top{
@@ -1923,9 +1931,9 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
     <!-- Tres laminas: la foto abierta y sus dos vecinas, para que al pasar el
          dedo la siguiente ya este ahi (ver "Visor" en el script) -->
     <div class="vw-track" id="vw-track">
-      <div class="vw-slide"><img alt="" draggable="false" decoding="async"></div>
-      <div class="vw-slide"><img alt="" draggable="false" decoding="async"></div>
-      <div class="vw-slide"><img alt="" draggable="false" decoding="async"></div>
+      <div class="vw-slide"><img alt="" draggable="false"></div>
+      <div class="vw-slide"><img alt="" draggable="false"></div>
+      <div class="vw-slide"><img alt="" draggable="false"></div>
     </div>
     <div class="spinner vw-spinner" id="vw-spinner" style="display:none"></div>
   </div>
