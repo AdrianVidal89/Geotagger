@@ -26,6 +26,38 @@ function loadTronFonts() {
   l.href = "https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700&family=Rajdhani:wght@500;600;700&display=swap";
   document.head.appendChild(l);
 }
+// ARRANQUE ADELANTADO. Lo que mas tarda al abrir la app no es pintar: es
+// esperar al listado guardado en el dispositivo y a que el NAS confirme que
+// sigue igual, y antes las dos cosas se pedian cuando el navegador ya habia
+// leido las 8.000 lineas de esta pagina. Se piden aqui, en la primera linea,
+// y van llegando mientras se lee el resto (ver ListCache y navigate).
+var gtBoot = (function () {
+  try {
+    var h = location.hash, sub = /\?sub$/.test(h), path = "";
+    h = h.replace(/\?sub$/, "");
+    if (h && h !== "#" && h !== "#/") path = decodeURIComponent(h.replace(/^#\//, ""));
+    var key = path + (sub ? "\u0001sub" : "");
+    var etag = localStorage.getItem("gt-etag") === key ? localStorage.getItem("gt-etag-v") : null;
+    var disk = new Promise(function (res) {
+      try {
+        var r = indexedDB.open("geotagger-listados", 1);
+        r.onupgradeneeded = function () { r.result.createObjectStore("l").createIndex("t", "t"); };
+        r.onsuccess = function () {
+          try {
+            var g = r.result.transaction("l").objectStore("l").get(key);
+            g.onsuccess = function () { res(g.result || null); };
+            g.onerror = function () { res(null); };
+          } catch (e) { res(null); }
+        };
+        r.onerror = r.onblocked = function () { res(null); };
+      } catch (e) { res(null); }
+    });
+    var url = "/api/browse?prefetch=1&path=" + encodeURIComponent(path) + (sub ? "&recursive=1" : "");
+    var net = fetch(url, { cache: "no-store", headers: etag ? { "If-None-Match": etag } : {} });
+    net.catch(function () {});
+    return { key: key, etag: etag, disk: disk, net: net };
+  } catch (e) { return null; }
+})();
 try {
   if (localStorage.getItem("gt-theme") === "tron") {
     document.documentElement.dataset.theme = "tron";
@@ -424,7 +456,7 @@ header .spacer{flex:1}
   background:conic-gradient(var(--primary) calc(var(--p,0)*1%),rgba(255,255,255,.2) 0)}
 
 /* grid area */
-.content{flex:1;overflow-y:auto;padding:12px;-webkit-overflow-scrolling:touch}
+.content{flex:1;overflow-y:auto;padding:12px;-webkit-overflow-scrolling:touch;position:relative}
 .empty-state{
   display:flex;flex-direction:column;align-items:center;justify-content:center;
   height:100%;color:var(--text2);gap:12px;text-align:center;padding:40px;
@@ -433,7 +465,6 @@ header .spacer{flex:1}
 .empty-state p{font-size:1rem}
 .empty-state small{font-size:.8rem;opacity:.7}
 
-.vg-pad{grid-column:1/-1}
 
 /* ── LINEA DE TIEMPO (scrubber) ──────────────────
    Sustituye a la barra de scroll en carpetas grandes ordenadas por fecha:
@@ -470,30 +501,45 @@ header .spacer{flex:1}
 .tl.on .tl-bubble{opacity:1}
 .tl.on .tl-lbl.near{opacity:0}
 @media(max-width:768px){
-  .content.has-tl{padding-right:24px}
-  .tl{width:24px}
-  .tl-thumb{right:2px}
-  .tl-m{right:10px}.tl-m.y{right:9px}
+  /* En movil va ENCIMA de la rejilla (no le quita ancho) y solo se deja coger
+     mientras esta a la vista, justo despues de mover el scroll */
+  .content.has-tl{padding-right:0}
+  .tl{width:30px;pointer-events:none}
+  .tl.on .tl-thumb{pointer-events:auto}
+  .tl-thumb{right:3px;opacity:0;width:24px}
+  .tl-thumb::before,.tl-thumb::after{left:8px}
+  .tl-m{display:none}
 }
+/* Rejilla virtual: la altura total la pone el script y cada tarjeta va en
+   posicion absoluta (ver "Rejilla virtual"). Nada de dentro mueve lo de fuera. */
 .files-grid{
-  display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
-  gap:4px;
+  position:relative;contain:layout style;
+  touch-action:pan-y;
 }
+/* Al cambiar el tamano de las miniaturas (pellizco / Ctrl+rueda) */
+/* (solo opacidad: escalar una rejilla de millones de px de alto la descoloca) */
+@keyframes vgzoom{from{opacity:.25}to{opacity:1}}
+.files-grid.zooming{animation:vgzoom .22s cubic-bezier(.2,.8,.2,1)}
+@media(prefers-reduced-motion:reduce){.files-grid.zooming{animation:none}}
 
 /* ── PHOTO CARD ──────────────────────────────── */
 .fc{
-  position:relative;cursor:pointer;border-radius:4px;overflow:hidden;
-  background:var(--surface);aspect-ratio:1;user-select:none;-webkit-user-select:none;
+  position:absolute;cursor:pointer;border-radius:4px;overflow:hidden;
+  background:var(--surface);user-select:none;-webkit-user-select:none;
   /* Sin callout de iOS ni menu contextual: el long-press es "seleccionar" */
   -webkit-touch-callout:none;touch-action:pan-y;
   /* Sin content-visibility:auto: el navegador lo implementa con un
      IntersectionObserver interno POR TARJETA, y con miles de tarjetas
      comprobarlas en cada cuadro costaba mas que pintarlas. contain:strict
-     sí: el tamano lo ponen la columna y el aspect-ratio, no el contenido,
-     asi que cargar una miniatura no obliga a recolocar la rejilla entera. */
+     sí: el tamano lo pone el script, no el contenido, asi que cargar una
+     miniatura no obliga a recolocar nada. */
   contain:strict;
 }
+/* Color dominante de la foto mientras no llega su miniatura (ver CARD_TONES) */
+.fc.t-r{background:#a8564e}.fc.t-o{background:#c08a4e}.fc.t-y{background:#c4b262}
+.fc.t-g{background:#6d9463}.fc.t-c{background:#5d9fa3}.fc.t-b{background:#5f82b0}
+.fc.t-p{background:#856fa8}.fc.t-k{background:#c18da4}.fc.t-n{background:#9c846c}
+.fc.t-w{background:#d6d6d2}.fc.t-s{background:#8c9095}.fc.t-x{background:#2c2e33}
 
 /* La foto de 16px que viaja dentro del listado: se pinta al instante, sin
    pedir nada al servidor, y debajo de la miniatura de verdad. Ampliada a
@@ -567,11 +613,23 @@ header .spacer{flex:1}
   position:absolute;bottom:0;left:0;right:0;
   background:linear-gradient(transparent,rgba(0,0,0,.6));
   color:#fff;font-size:.68rem;padding:20px 6px 6px;
-  opacity:0;transition:opacity .2s;
   word-break:break-all;line-height:1.3;
+  /* display:none y no opacidad: un texto invisible se media y se colocaba
+     igual en cada tarjeta que nacia al bajar */
+  display:none;
 }
-.fc:hover .fc-name{opacity:1}
-.fc.sel .fc-name{opacity:1}
+.fc-name small{opacity:.7}
+@keyframes fcname{from{opacity:0}to{opacity:1}}
+.fc:hover .fc-name,.fc.sel .fc-name{display:block;animation:fcname .2s}
+/* En pantallas tactiles no hay "pasar por encima": sin esto el ultimo toque
+   dejaba el nombre y el circulo pegados a la tarjeta */
+@media(hover:none){
+  .fc:hover .fc-name,.fc.sel .fc-name{display:none}
+  .fc:hover .fc-check{opacity:0}
+  .fc.sel .fc-check{opacity:1}
+  .fc:hover .fc-overlay{background:rgba(0,0,0,0)}
+  .fc.sel .fc-overlay{background:rgba(26,115,232,.12)}
+}
 
 /* ── RIGHT PANEL ─────────────────────────────── */
 .panel{
@@ -849,19 +907,31 @@ header .spacer{flex:1}
 .date-check input{width:18px;height:18px;accent-color:var(--primary);margin:0;flex-shrink:0}
 #date-box{margin-top:14px}
 
-/* ── PHOTO VIEWER (lightbox) ─────────────────── */
+/* ── PHOTO VIEWER (lightbox) ───────────────────
+   Como Fotos del iPhone: la foto sale de su miniatura (que ya esta en
+   memoria, asi que se ve al instante) y la vista grande la sustituye cuando
+   llega; el dedo arrastra la foto y la vecina viene detras; hacia abajo, se
+   encoge y vuelve a su sitio en la rejilla. */
 .viewer{
   display:none;position:fixed;inset:0;z-index:400;
-  background:rgba(0,0,0,.93);
   user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
+  overscroll-behavior:contain;
 }
-.viewer.on{display:block}
+.viewer.on,.viewer.closing{display:block}
+.viewer.closing{pointer-events:none}
+.vw-bg{position:absolute;inset:0;background:#000}
 .vw-top{
   position:absolute;top:0;left:0;right:0;z-index:410;
   display:flex;align-items:center;gap:8px;
   padding:10px 12px;
-  background:linear-gradient(rgba(0,0,0,.55),transparent);
+  background:linear-gradient(rgba(0,0,0,.6),transparent);
+  transition:opacity .2s;
 }
+/* Un toque en la foto esconde los mandos; arrastrar para cerrar, tambien */
+.viewer.nochrome .vw-top,.viewer.nochrome .vw-nav,.viewer.nochrome .vw-tools,
+.viewer.drag .vw-top,.viewer.drag .vw-nav,.viewer.drag .vw-tools,
+.viewer.closing .vw-top,.viewer.closing .vw-nav,.viewer.closing .vw-tools,
+.viewer.opening .vw-top,.viewer.opening .vw-nav,.viewer.opening .vw-tools{opacity:0;pointer-events:none}
 .vw-title{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;color:#fff}
 .vw-name{font-size:.85rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .vw-meta{font-size:.72rem;color:rgba(255,255,255,.65);display:flex;gap:8px;align-items:center}
@@ -873,41 +943,59 @@ header .spacer{flex:1}
   color:#fff;cursor:pointer;flex-shrink:0;transition:background .15s;
 }
 .vw-btn:hover{background:rgba(255,255,255,.25)}
+.vw-btn:active{transform:scale(.92)}
 .vw-btn svg{width:20px;height:20px;fill:currentColor}
 .vw-btn.sel-on{background:var(--primary)}
-/* Movil: las estrellas bajan a una segunda fila; asi caben el nombre y todos
-   los botones (cerrar, editar, mover, fecha, seleccionar, descargar) */
+/* Escritorio: estrellas y acciones son parte de la barra de arriba */
+.vw-tools,.vw-actions{display:contents}
+/* Movil: arriba solo cerrar y el nombre; estrellas y acciones, abajo */
 @media(max-width:560px){
-  .vw-top{flex-wrap:wrap;gap:6px;row-gap:2px;padding:8px 10px}
-  .vw-btn{width:36px;height:36px}
+  .vw-top{padding:8px 10px}
+  .vw-btn{width:42px;height:42px;background:transparent}
+  .vw-btn svg{width:23px;height:23px}
+  #vw-close{background:rgba(255,255,255,.12);width:36px;height:36px}
+  #vw-close svg{width:20px;height:20px}
   .vw-meta{white-space:nowrap;overflow:hidden}
   .vw-meta>span{flex:none}
-  .vw-ext{display:none}
-  .vw-stars{order:10;flex-basis:100%;margin:0;padding-left:42px;box-sizing:border-box}
+  .vw-tools{
+    display:flex;flex-direction:column;align-items:center;gap:2px;
+    position:fixed;left:0;right:0;bottom:0;z-index:410;
+    padding:22px 6px max(8px,env(safe-area-inset-bottom));
+    background:linear-gradient(transparent,rgba(0,0,0,.7));
+    transition:opacity .2s;
+  }
+  .vw-actions{display:flex;width:100%;justify-content:space-around;align-items:center}
+  .vw-stars{margin:0}
+  .vw-stars .star{padding:3px 5px}
+  .vw-stars .star svg{width:24px;height:24px}
 }
 .vw-stage{
-  position:absolute;inset:0;
-  display:flex;align-items:center;justify-content:center;overflow:hidden;
+  position:absolute;inset:0;overflow:hidden;
   /* Los gestos (pellizco, arrastre) los lleva el visor, no el navegador */
   touch-action:none;
 }
-.vw-stage img{
-  max-width:100%;max-height:100%;object-fit:contain;
-  opacity:0;transition:opacity .25s;
+.vw-track{position:absolute;inset:0;will-change:transform}
+.vw-slide{position:absolute;inset:0}
+/* La imagen ocupa la lamina entera y la foto se encaja dentro (contain): asi
+   la miniatura, la vista previa y el original caen en el mismo sitio y
+   cambiar una por otra no mueve nada */
+.vw-slide img{
+  position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
+  visibility:hidden;
   transform-origin:0 0;-webkit-user-drag:none;cursor:zoom-in;
   user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
 }
-.vw-stage img.ready{opacity:1}
-.vw-stage img.zoomed{cursor:grab}
+.vw-slide img.ready{visibility:visible}
+.vw-slide img.zoomed{cursor:grab}
 .vw-spinner{
-  position:absolute;width:34px;height:34px;
-  border-color:rgba(255,255,255,.25);border-top-color:#fff;
+  position:absolute;left:50%;top:50%;margin:-17px 0 0 -17px;width:34px;height:34px;
+  border-color:rgba(255,255,255,.25);border-top-color:#fff;pointer-events:none;
 }
 .vw-nav{
   position:absolute;top:50%;transform:translateY(-50%);z-index:405;
   background:rgba(255,255,255,.1);border:none;border-radius:50%;
   width:46px;height:46px;color:#fff;cursor:pointer;
-  display:flex;align-items:center;justify-content:center;transition:background .15s;
+  display:flex;align-items:center;justify-content:center;transition:background .15s,opacity .2s;
 }
 .vw-nav:hover{background:rgba(255,255,255,.22)}
 .vw-nav svg{width:26px;height:26px;fill:currentColor}
@@ -917,6 +1005,9 @@ header .spacer{flex:1}
 @media(max-width:768px){
   /* En movil se navega con swipe; las flechas estorban */
   .vw-nav{display:none}
+}
+@media(prefers-reduced-motion:reduce){
+  .vw-top,.vw-tools,.vw-nav{transition:none}
 }
 
 /* ── MAPA ────────────────────────────────────── */
@@ -1182,7 +1273,10 @@ header .spacer{flex:1}
   .sel-bar::-webkit-scrollbar{display:none}
   .sel-bar>*{flex-shrink:0}
   .sel-bar.up{bottom:12px}
-  .files-grid{grid-template-columns:repeat(3,1fr);gap:3px}
+  /* Como Fotos: la rejilla de borde a borde, sin esquinas redondeadas */
+  .content{padding:0}
+  .fc{border-radius:0}
+  .index-note{margin:8px}
   /* Evita amontonamiento: los controles superiores scrollean en horizontal */
   .top-controls{overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
   .top-controls::-webkit-scrollbar{display:none}
@@ -1203,9 +1297,6 @@ header .spacer{flex:1}
   .sbar-btn svg{width:16px;height:16px}
   .sel-bar{gap:5px;padding-right:6px}
   .sbar-close{padding:5px}
-}
-@media(max-width:480px){
-  .files-grid{grid-template-columns:repeat(3,1fr);gap:2px}
 }
 </style>
 <style>
@@ -1424,7 +1515,7 @@ html[data-theme="tron"] .root-list,
 html[data-theme="tron"] .del-file-list{background:#040a10}
 
 /* ── visor, editor y mapa ── */
-html[data-theme="tron"] .viewer{background:rgba(1,4,7,.96)}
+html[data-theme="tron"] .vw-bg{background:#010407}
 html[data-theme="tron"] .vw-btn,
 html[data-theme="tron"] .vw-nav,
 html[data-theme="tron"] .ed-icon-btn{background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.35);color:var(--primary)}
@@ -1479,7 +1570,9 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
   html[data-theme="tron"] header::after{animation:none;display:none}
 }
 </style>
-<link rel="stylesheet" href="/static/lightcraft/editor.css">
+<!-- Los estilos del editor no hacen falta para pintar la galeria: se cargan
+     sin bloquear (media="print" hasta que llegan) -->
+<link rel="stylesheet" href="/static/lightcraft/editor.css" media="print" onload="this.media='all'">
 </head>
 <body>
 
@@ -1827,9 +1920,16 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
 
 <!-- PHOTO VIEWER (lightbox) -->
 <div class="viewer" id="viewer">
+  <div class="vw-bg" id="vw-bg"></div>
   <div class="vw-stage" id="vw-stage">
+    <!-- Tres laminas: la foto abierta y sus dos vecinas, para que al pasar el
+         dedo la siguiente ya este ahi (ver "Visor" en el script) -->
+    <div class="vw-track" id="vw-track">
+      <div class="vw-slide"><img alt="" draggable="false" decoding="async"></div>
+      <div class="vw-slide"><img alt="" draggable="false" decoding="async"></div>
+      <div class="vw-slide"><img alt="" draggable="false" decoding="async"></div>
+    </div>
     <div class="spinner vw-spinner" id="vw-spinner" style="display:none"></div>
-    <img id="vw-img" alt="" draggable="false">
   </div>
   <div class="vw-top">
     <button class="vw-btn" id="vw-close" title="Cerrar (Esc)">
@@ -1839,7 +1939,11 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
       <span class="vw-name" id="vw-name"></span>
       <span class="vw-meta"><span id="vw-count"></span><span class="vw-ext" id="vw-ext"></span><span id="vw-date"></span></span>
     </div>
+    <!-- Estrellas y acciones: en escritorio siguen en la barra de arriba; en
+         movil bajan a una barra inferior, al alcance del pulgar -->
+    <div class="vw-tools">
     <div class="stars-row vw-stars" id="vw-stars" title="Clasificar (teclas 1-5, 0 para quitar)"></div>
+    <div class="vw-actions">
     <button class="vw-btn" id="vw-redo-btn" title="Marcar para reeditar desde el RAW (R)">
       <svg viewBox="0 0 24 24"><path d="M7 14c-1.66 0-3 1.34-3 3 0 1.31-1.16 2-2 2 .92 1.22 2.49 2 4 2 2.21 0 4-1.79 4-4 0-1.66-1.34-3-3-3zm13.71-9.37l-1.34-1.34a.9959.9959 0 0 0-1.41 0L9 12.25 11.75 15l8.96-8.96c.39-.39.39-1.02 0-1.41z"/></svg>
     </button>
@@ -1861,6 +1965,8 @@ html[data-theme="tron"] .theme-opt.on{box-shadow:var(--glow)}
     <button class="vw-btn" id="vw-download" title="Descargar original">
       <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
     </button>
+    </div>
+    </div>
   </div>
   <button class="vw-nav prev" id="vw-prev" title="Anterior (←)">
     <svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
@@ -2348,84 +2454,135 @@ let indexNote = "";        // aviso mientras el índice está trabajando
 let searchTimer = null;
 const RAW_EXTS = [".cr3",".cr2",".nef",".arw",".raf",".dng",".jpr"];
 
-// ── Thumbnail loading — concurrency-limited queue ─────────────────────────────
-// Browsers allow ~6 parallel connections per origin (HTTP/1.1).
-// Without a queue, 50 IO entries fire at once, causing browser-side queuing,
-// decode bursts on the main thread, and scroll jank.
-const MAX_PARALLEL = 6;
+// ── Miniaturas: se piden por POSICION, no por tarjeta ────────────────────────
+// Lo que hace que Fotos del iPhone o Google Fotos parezcan instantaneos es que
+// la miniatura ya esta en memoria cuando su hueco entra en pantalla. Antes se
+// pedia cuando la tarjeta ya existia (y la tarjeta se creaba una pantalla antes
+// de verse): bajando deprisa por una carpeta que no se habia recorrido, nueve
+// de cada diez huecos se veian vacios. Ahora, en cada cuadro, se mira que
+// fotos caen en pantalla y cuales vienen detras EN EL SENTIDO en que se mueve
+// el dedo (varias pantallas), y se traen esas, las visibles primero. Cuando su
+// tarjeta nace, la miniatura ya esta.
+//   - Van en LOTES (/api/thumbs/batch): una peticion por miniatura topaba con
+//     las 6 conexiones del navegador y con lo que cuesta cada peticion en la
+//     CPU del NAS. El lote solo trae las que ya estan hechas; las que falten se
+//     piden sueltas (solo las que tienen tarjeta) y el servidor las genera.
+//   - Un lote cuyas fotos han quedado todas lejos se CANCELA: tras un tiron
+//     largo, lo primero que se carga es donde uno se ha parado.
+const BATCH_MAX = 48, BATCH_PARALLEL = 3;
+const TH_AHEAD = 3, TH_BEHIND = 1;       // pantallas que se adelantan / se guardan detras
+const MAX_PARALLEL = 6;                  // miniaturas sueltas (se generan) a la vez
 let activeLoads = 0;
-// En la cola solo esperan tarjetas que estan en pantalla (o a punto): al bajar
-// rapido, las que ya se pasaron salen de ella. Antes se quedaban y habia que
-// esperar a todas las de por medio para ver las de donde uno se paraba.
-const loadQueue = []; // tarjetas esperando su lote
-const singleQueue = []; // tarjetas que el lote no traia: una a una (se generan)
+const singleQueue = [];                  // tarjetas esperando su miniatura suelta
+const thPending = new Set();             // claves en camino dentro de un lote
+const thNoBatch = new Set();             // el lote no la traia: hay que generarla
+const thBatches = new Set();
 
-// LOTES: las miniaturas que hay en pantalla se piden juntas en UNA peticion
-// (/api/thumbs/batch). Una por miniatura topaba con las 6 conexiones del
-// navegador y con lo que cuesta cada peticion en la CPU del NAS: una carpeta ya
-// preparada se llenaba pantalla a pantalla con retraso. El lote solo trae las
-// que ya estan hechas; las que falten se piden sueltas y el servidor las genera.
-const BATCH_MAX = 48, BATCH_PARALLEL = 2;
-let batchActive = 0, batchTimer = 0;
-
-function _drainQueue() {
-  while (activeLoads < MAX_PARALLEL && singleQueue.length > 0) {
-    _startLoad(singleQueue.shift(), null, true);
-  }
+function thumbsPump() {
+  if (!vg.grid || !vg.grid.isConnected) return;
+  const files = vg.files, n = files.length;
+  if (!n) return;
+  const screen = Math.max(vg.cols, Math.ceil(vg.viewH / vg.rowH) * vg.cols);
+  const va = vg.va, vb = vg.vb, fwd = vg.dir >= 0;
+  const lo = Math.max(0, va - screen * (fwd ? TH_BEHIND : TH_AHEAD));
+  const hi = Math.min(n, vb + screen * (fwd ? TH_AHEAD : TH_BEHIND));
+  // Lo que ya no interesa deja su sitio
+  for (const bt of thBatches) if (bt.max < lo || bt.min >= hi) bt.ctl.abort();
+  let libres = BATCH_PARALLEL;
+  for (const bt of thBatches) if (!bt.ctl.signal.aborted) libres--;
+  if (libres <= 0) return;
+  let items = [];
+  const mirar = (i) => {
+    const f = files[i], key = thumbUrl(f);
+    if (thumbMem.has(key) || thPending.has(key) || thNoBatch.has(key)) return true;
+    items.push({ i: i, key: key, path: f.path });
+    if (items.length < BATCH_MAX) return true;
+    _fetchBatch(items);
+    items = [];
+    return --libres > 0;
+  };
+  // Primero lo que se ve, luego lo que viene, al final lo que queda detras
+  (function () {
+    for (let i = va; i < vb; i++) if (!mirar(i)) return;
+    if (fwd) {
+      for (let i = vb; i < hi; i++) if (!mirar(i)) return;
+      for (let i = va - 1; i >= lo; i--) if (!mirar(i)) return;
+    } else {
+      for (let i = va - 1; i >= lo; i--) if (!mirar(i)) return;
+      for (let i = vb; i < hi; i++) if (!mirar(i)) return;
+    }
+  })();
+  if (items.length && libres > 0) _fetchBatch(items);
 }
 
-function _scheduleBatch() {
-  // Un instante de espera junta en el mismo lote todas las tarjetas que
-  // aparecen en el mismo cuadro
-  if (!batchTimer) batchTimer = setTimeout(_pumpBatches, 16);
+// La miniatura se le da a la imagen como data: y no como blob: — un blob hay
+// que registrarlo en otro proceso del navegador, darle una URL y volver a
+// pedirselo (tres viajes por miniatura); medido bajando deprisa, era lo que
+// mas tiempo se llevaba del hilo principal. Una data: se resuelve ahi mismo.
+function _b64(bytes) {
+  const u = new Uint8Array(bytes);
+  let s = "";
+  for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+  return btoa(s);
 }
 
-function _pumpBatches() {
-  batchTimer = 0;
-  while (batchActive < BATCH_PARALLEL && loadQueue.length > 0) {
-    const cards = loadQueue.splice(0, BATCH_MAX);
-    for (const c of cards) { delete c.dataset.queued; c.dataset.loaded = "1"; }
-    _fetchBatch(cards);
-  }
+function _thumbArrived(key, bytes, mime) {
+  const url = "data:" + mime + ";base64," + _b64(bytes);
+  thumbMemPut(key, url);
+  const card = vg.byKey.get(key);
+  if (card && !card.dataset.loaded) { card.dataset.loaded = "1"; _setThumb(card, url); }
 }
 
-async function _fetchBatch(cards) {
-  batchActive++;
+async function _fetchBatch(items) {
+  const bt = { ctl: new AbortController(), min: items[0].i, max: items[0].i };
+  for (const it of items) { thPending.add(it.key); if (it.i < bt.min) bt.min = it.i; if (it.i > bt.max) bt.max = it.i; }
+  thBatches.add(bt);
+  const sueltas = (lista) => {
+    for (const it of lista) {
+      thNoBatch.add(it.key);
+      const card = vg.byKey.get(it.key);
+      if (card && !card.dataset.loaded) _single(card);
+    }
+  };
+  let faltan = items;
   try {
     // Primero el propio dispositivo: lo que ya se vio otro dia sale de aqui
     // sin tocar la red ni el NAS (ver ThumbDB)
-    const keys = cards.map(c => c.dataset.src);
-    const local = await ThumbDB.getMany(keys);
-    const faltan = [];
-    cards.forEach((card, i) => {
-      const hit = local[i];
-      if (hit) _showBlob(card, new Blob([hit.b], { type: hit.m }));
-      else faltan.push(card);
+    const local = await ThumbDB.getMany(items.map(it => it.key));
+    faltan = [];
+    items.forEach((it, k) => {
+      const hit = local[k];
+      if (hit) _thumbArrived(it.key, hit.b, hit.m);
+      else faltan.push(it);
     });
-    if (!faltan.length) return;
+    if (!faltan.length || bt.ctl.signal.aborted) return;
     const res = await fetch("/api/thumbs/batch", { method: "POST", headers: { "Content-Type": "application/json" },
-                                                  body: JSON.stringify({ paths: faltan.map(c => c.dataset.path) }) });
+                                                  body: JSON.stringify({ paths: faltan.map(it => it.path) }), signal: bt.ctl.signal });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const buf = await res.arrayBuffer(), dv = new DataView(buf);
-    const guardar = [];
+    const guardar = [], sin = [];
     let o = 0;
-    for (const card of faltan) {
+    for (const it of faltan) {
       const kind = dv.getUint8(o), len = dv.getUint32(o + 1);
       o += 5;
       if (kind && len) {
         const m = kind === 1 ? "image/webp" : "image/jpeg";
         const bytes = buf.slice(o, o + len);
-        _showBlob(card, new Blob([bytes], { type: m }));
-        guardar.push([card.dataset.src, { b: bytes, m: m, t: Date.now() }]);
-      } else _single(card);
+        _thumbArrived(it.key, bytes, m);
+        guardar.push([it.key, { b: bytes, m: m, t: Date.now() }]);
+      } else sin.push(it);
       o += len;
     }
+    sueltas(sin);
     ThumbDB.putMany(guardar);
   } catch (e) {
-    cards.filter(c => !c.querySelector("img.ready") && !(c.querySelector("img") || {}).src).forEach(_single);
+    // Cancelado: ya se pediran si vuelven a hacer falta. Otro fallo: sueltas
+    if (!bt.ctl.signal.aborted) sueltas(faltan.filter(it => !thumbMem.has(it.key)));
   } finally {
-    batchActive--;
-    _pumpBatches();
+    for (const it of items) thPending.delete(it.key);
+    thBatches.delete(bt);
+    if (thNoBatch.size > 20000) thNoBatch.clear();
+    thumbsPump();
   }
 }
 
@@ -2502,68 +2659,70 @@ const ThumbDB = (() => {
   return { getMany, putMany };
 })();
 
+function _drainQueue() {
+  while (activeLoads < MAX_PARALLEL && singleQueue.length > 0) {
+    const card = singleQueue.shift();
+    delete card.dataset.queued;
+    // Las que ya se pasaron de largo no se generan ahora
+    if (card.isConnected && !card.dataset.loaded) _startLoad(card);
+  }
+}
+
 function _single(card) {
-  if (!card.isConnected) return;
-  if (activeLoads < MAX_PARALLEL) _startLoad(card, null, true);
-  else singleQueue.push(card);
+  if (!card.isConnected || card.dataset.queued || card.dataset.loaded) return;
+  card.dataset.queued = "1";
+  singleQueue.push(card);
+  _drainQueue();
 }
 
 // Miniaturas ya cargadas, por URL (que lleva la version de la foto): la
 // rejilla virtual destruye las tarjetas que se alejan y, al volver, las
-// recrea al instante desde aqui sin pedir nada. Las del lote son blobs en
-// memoria (~10 KB cada una); las sueltas, su URL (la cache HTTP las tiene).
-const THUMB_MEM_MAX = 1500;
+// recrea al instante desde aqui sin pedir nada. Las del lote van enteras
+// (~11 KB cada una, unos 35 MB con todas); las sueltas, su URL (la cache HTTP
+// las tiene).
+const THUMB_MEM_MAX = 3000;
 const thumbMem = new Map();
 function thumbMemPut(key, url) {
-  const old = thumbMem.get(key);
-  if (old && old !== url && old.startsWith("blob:")) URL.revokeObjectURL(old);
   thumbMem.delete(key);
   thumbMem.set(key, url);
-  if (thumbMem.size > THUMB_MEM_MAX) {
-    const [k, u] = thumbMem.entries().next().value;     // la mas antigua
-    thumbMem.delete(k);
-    if (u.startsWith("blob:")) URL.revokeObjectURL(u);
-  }
+  if (thumbMem.size > THUMB_MEM_MAX) thumbMem.delete(thumbMem.keys().next().value);   // la mas antigua
 }
 function _setThumb(card, url) {
-  const img = card.querySelector("img");
+  const img = card.firstElementChild;
   if (!img) return;
   img.onload = () => {
     img.onload = img.onerror = null;
-    img.decode ? img.decode().then(() => img.classList.add("ready")).catch(() => img.classList.add("ready"))
-               : img.classList.add("ready");
+    img.classList.add("ready");
   };
-  img.onerror = () => { img.onload = img.onerror = null; thumbMem.delete(card.dataset.src); _startLoad(card, null, true); };
+  img.onerror = () => {
+    img.onload = img.onerror = null;
+    thumbMem.delete(card.dataset.src);
+    delete card.dataset.loaded;
+    thNoBatch.add(card.dataset.src);
+    _single(card);
+  };
   img.src = url;
 }
 
-function _showBlob(card, blob) {
-  const url = URL.createObjectURL(blob);
-  thumbMemPut(card.dataset.src, url);
-  _setThumb(card, url);
-}
-
-function _startLoad(card, src, force) {
-  src = src || card.dataset.src;
-  if (card.dataset.loaded && !force) { _drainQueue(); return; }
+// Miniatura suelta por /api/thumb: el servidor la genera si no la tiene
+function _startLoad(card) {
+  const src = card.dataset.src;
   card.dataset.loaded = "1";
   activeLoads++;
-  const img = card.querySelector("img");
-  const blur = card.querySelector(".fc-blur");
+  const img = card.firstElementChild;
+  const done = () => { activeLoads--; _drainQueue(); };
 
   const probe = new Image();
   probe.decoding = "async"; // decode off main thread
   probe.onload = () => {
     thumbMemPut(src, src);
+    thNoBatch.delete(src);
+    img.onload = () => { img.onload = null; img.classList.add("ready"); };
     img.src = src;
-    // Use decode() so the browser paints the image in the next frame
-    // without blocking the main thread
-    img.decode ? img.decode().then(() => img.classList.add("ready")).catch(() => img.classList.add("ready"))
-               : img.classList.add("ready");
-    activeLoads--;
-    _drainQueue();
+    done();
   };
   probe.onerror = () => {
+    const blur = card.querySelector(".fc-blur");
     if (img) img.style.display = "none";
     if (blur) blur.style.display = "none";
     // El icono de "sin miniatura" solo en las que fallan (antes, en todas)
@@ -2571,116 +2730,192 @@ function _startLoad(card, src, force) {
     icon.className = "fc-icon show";
     icon.innerHTML = RAW_EXTS.includes(card.dataset.ext) ? makeRawIcon() : makeImgIcon();
     card.insertBefore(icon, card.querySelector(".fc-overlay"));
-    activeLoads--;
-    _drainQueue();
+    done();
   };
   probe.src = src;
 }
 
-function _enqueueThumb(card) {
-  if (card.dataset.queued || card.dataset.loaded || !card.dataset.src) return;
-  card.dataset.queued = "1";
-  loadQueue.push(card);
-  _scheduleBatch();
-}
-
-function _dequeueThumb(card) {
-  if (!card.dataset.queued) return;
-  delete card.dataset.queued;
-  const i = loadQueue.indexOf(card);
-  if (i >= 0) loadQueue.splice(i, 1);
-}
-
 // ── Rejilla virtual ──────────────────────────────────────────────────────────
-// En la pagina solo existen las tarjetas cercanas a la pantalla (unas pocas
-// filas por encima y por debajo); el resto de la carpeta lo ocupan dos
-// separadores con la altura de las filas que representan. Con todas las
-// tarjetas creadas, una carpeta de 4.000 fotos eran 50.000 elementos que el
-// navegador recolocaba en cada cuadro del scroll (y "Subcarpetas" llega a
-// 60.000 fotos). La rejilla es regular -tarjetas cuadradas en columnas que
-// pone el CSS-, asi que que fila cae en pantalla sale de una cuenta.
-// Las tarjetas guardan data-index (posicion en currentFiles) como siempre:
-// el codigo que busca una tarjeta concreta sigue funcionando para las que
-// estan creadas, y las demas nacen ya con su estado (seleccion, estrellas).
+// En la pagina solo existen las tarjetas cercanas a la pantalla. Cada una va
+// colocada A MANO (posicion absoluta dentro de una rejilla con la altura total
+// ya puesta): que fila cae en pantalla, y donde va cada tarjeta, sale de una
+// cuenta. Antes las colocaba el navegador (CSS grid entre dos separadores) y en
+// cada fila nueva se quitaban y volvian a poner TODAS: el navegador rehacia el
+// arbol de las ~60 tarjetas vivas en cada cuadro del scroll. Ahora al bajar una
+// fila se quitan las tarjetas de una fila y se anaden las de otra; las demas
+// ni se enteran (contain:strict), y el scroll lo lleva el compositor.
+// Las tarjetas guardan data-index (posicion en currentFiles) como siempre, y
+// vg.cards las da por indice sin buscar en la pagina.
 const VG_OVERSCAN = 1.0;      // pantallas de mas por encima y por debajo
-const vg = { grid: null, top: null, bot: null, files: [], cols: 1, rowH: 1, gap: 0, a: 0, b: 0, cards: new Map() };
+const contentEl = document.getElementById("content");
+const vg = { grid: null, files: [], cols: 3, gap: 4, cell: 160, colW: 164, rowH: 164, a: 0, b: 0, va: 0, vb: 0,
+             top: 0, viewH: 600, lastY: 0, dir: 1, cards: new Map(), byKey: new Map(), lateT: 0 };
 let vgRaf = 0;
 
-function vgMeasure() {
-  const cs = getComputedStyle(vg.grid);
-  const tracks = cs.gridTemplateColumns.split(" ").filter(Boolean);
-  vg.cols = Math.max(1, tracks.length);
-  vg.gap = parseFloat(cs.rowGap) || 0;
-  vg.rowH = (parseFloat(tracks[0]) || 160) + vg.gap;
-}
+// Tamano de las miniaturas ("zoom" de la rejilla, como el pellizco de Fotos):
+// en movil se elige el numero de columnas; en pantallas anchas, el ancho
+// minimo de la tarjeta. Se recuerda en el dispositivo.
+const VG_COLS_MOBILE = [2, 3, 4, 6], VG_MIN_DESKTOP = [300, 220, 160, 120];
+const vgMobile = window.matchMedia("(max-width:768px)");
+let vgZoom = { m: 1, d: 2 };
+try { vgZoom = Object.assign(vgZoom, JSON.parse(localStorage.getItem("gt-zoom") || "{}")); } catch (e) {}
 
-// Distancia del borde superior de la galeria al de la rejilla (con scroll)
-function vgGridTop(c) {
-  return vg.grid.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
+function vgMeasure() {
+  const c = contentEl;
+  const W = Math.max(1, vg.grid.clientWidth);
+  const mobile = vgMobile.matches;
+  vg.gap = mobile ? 2 : 4;
+  if (mobile) vg.cols = VG_COLS_MOBILE[vgZoom.m] || 3;
+  else vg.cols = Math.max(1, Math.floor((W + vg.gap) / ((VG_MIN_DESKTOP[vgZoom.d] || 160) + vg.gap)));
+  vg.colW = (W + vg.gap) / vg.cols;                 // paso entre columnas (con decimales)
+  vg.cell = vg.colW - vg.gap;
+  vg.rowH = Math.max(1, Math.round(vg.colW));       // filas a pixel entero
+  const rows = Math.ceil(vg.files.length / vg.cols);
+  vg.grid.style.height = Math.max(0, rows * vg.rowH - vg.gap) + "px";
+  vg.viewH = c.clientHeight;
+  // Distancia del borde superior de la galeria al de la rejilla (offsetTop y
+  // no getBoundingClientRect: no depende del scroll ni de animaciones)
+  vg.top = vg.grid.offsetTop;
 }
 
 function thumbsCheck() {
   if (!vgRaf) vgRaf = requestAnimationFrame(vgUpdate);
 }
 
+function vgPlace(card, i) {
+  const col = i % vg.cols, row = (i - col) / vg.cols;
+  const x = Math.round(col * vg.colW);
+  card.style.cssText = "left:" + x + "px;top:" + (row * vg.rowH) + "px;width:" +
+    (Math.round(col * vg.colW + vg.cell) - x) + "px;height:" + (vg.rowH - vg.gap) + "px";
+}
+
+function vgDrop(i, card) {
+  card.remove();
+  vg.cards.delete(i);
+  if (vg.byKey.get(card.dataset.src) === card) vg.byKey.delete(card.dataset.src);
+}
+
 function vgUpdate(force) {
   vgRaf = 0;
   if (!vg.grid || !vg.grid.isConnected) return;
-  const c = document.getElementById("content");
+  const st = contentEl.scrollTop, dy = st - vg.lastY;
+  if (dy) { vg.dir = dy > 0 ? 1 : -1; vg.lastY = st; }
   const n = vg.files.length, cols = vg.cols, rowH = vg.rowH;
   const rows = Math.ceil(n / cols);
-  const y = c.scrollTop - vgGridTop(c), over = c.clientHeight * VG_OVERSCAN;
+  const y = st - vg.top;
+  // De un salto de mas de una pantalla (tirador de la linea de tiempo, tiron
+  // fuerte) solo se crea lo que se ve: lo de alrededor se destruiria en el
+  // cuadro siguiente. Se completa en cuanto el scroll afloja.
+  const fast = Math.abs(dy) > vg.viewH;
+  const over = fast ? 0 : vg.viewH * VG_OVERSCAN;
   const r0 = Math.max(0, Math.floor((y - over) / rowH));
-  const r1 = Math.min(rows - 1, Math.floor((y + c.clientHeight + over) / rowH));
-  const a = r0 * cols, b = Math.min(n, (r1 + 1) * cols);
+  const r1 = Math.min(rows - 1, Math.floor((y + vg.viewH + over) / rowH));
+  const a = r0 * cols, b = Math.max(a, Math.min(n, (r1 + 1) * cols));
+  if (force === true) for (const [i, card] of vg.cards) vgDrop(i, card);
   if (force === true || a !== vg.a || b !== vg.b) {
-    const keep = new Map();
-    const list = [];
+    for (const [i, card] of vg.cards) if (i < a || i >= b) vgDrop(i, card);
+    let frag = null;
     for (let i = a; i < b; i++) {
-      let card = vg.cards.get(i);
-      if (!card) card = makeCard(vg.files[i], i);
-      keep.set(i, card);
-      list.push(card);
+      if (vg.cards.has(i)) continue;
+      const card = makeCard(vg.files[i], i);
+      vgPlace(card, i);
+      vg.cards.set(i, card);
+      vg.byKey.set(card.dataset.src, card);
+      (frag || (frag = document.createDocumentFragment())).appendChild(card);
     }
-    // Las que salen dejan su sitio en la cola de carga
-    for (const [i, card] of vg.cards) if (!keep.has(i)) _dequeueThumb(card);
-    vg.cards = keep;
+    if (frag) {
+      const nuevas = Array.from(frag.children);
+      vg.grid.appendChild(frag);
+      // Las que el servidor aun no tiene hechas se piden sueltas (las genera)
+      for (const card of nuevas) if (!card.dataset.loaded && thNoBatch.has(card.dataset.src)) _single(card);
+    }
     vg.a = a; vg.b = b;
-    const above = r0 * rowH - vg.gap, below = (rows - r1 - 1) * rowH - vg.gap;
-    vg.top.style.height = Math.max(0, above) + "px";
-    vg.top.style.display = above > 0 ? "" : "none";
-    vg.bot.style.height = Math.max(0, below) + "px";
-    vg.bot.style.display = below > 0 ? "" : "none";
-    vg.grid.replaceChildren(vg.top, ...list, vg.bot);
   }
-  for (let i = a; i < b; i++) _enqueueThumb(vg.cards.get(i));
+  // Lo que se ve de verdad (sin el margen), para pedir primero sus miniaturas
+  vg.va = Math.min(n, Math.max(0, Math.floor(y / rowH)) * cols);
+  vg.vb = Math.max(vg.va, Math.min(n, (Math.floor((y + vg.viewH) / rowH) + 1) * cols));
+  clearTimeout(vg.lateT);
+  if (fast) vg.lateT = setTimeout(vgUpdate, 90);
+  else thumbsPump();
+  if (tl.on) { tlUpdate(st); if (dy) tlPing(); }
+}
+
+// Rehace una tarjeta (la foto ha cambiado: editada, restaurada)
+function vgRefreshCard(i) {
+  const old = vg.cards.get(i);
+  if (!old || !vg.grid || !vg.grid.isConnected) return;
+  thumbMem.delete(old.dataset.src);
+  vgDrop(i, old);
+  const card = makeCard(vg.files[i], i);
+  vgPlace(card, i);
+  vg.cards.set(i, card);
+  vg.byKey.set(card.dataset.src, card);
+  vg.grid.appendChild(card);
+  thumbsPump();
 }
 
 // Deja la foto idx a `offset` px del borde de la galeria (o, con offset
 // null, la mete en pantalla moviendo lo minimo)
 function vgScrollTo(idx, offset) {
-  if (!vg.grid || idx < 0 || idx >= vg.files.length) return;
-  const c = document.getElementById("content");
-  const rowTop = vgGridTop(c) + Math.floor(idx / vg.cols) * vg.rowH;
+  if (!vg.grid || !vg.grid.isConnected || idx < 0 || idx >= vg.files.length) return;
+  const c = contentEl;
+  const rowTop = vg.top + Math.floor(idx / vg.cols) * vg.rowH;
   if (offset == null) {
     if (rowTop < c.scrollTop) c.scrollTop = rowTop;
     else if (rowTop + vg.rowH > c.scrollTop + c.clientHeight) c.scrollTop = rowTop + vg.rowH - c.clientHeight;
   } else {
     c.scrollTop = rowTop - offset;
   }
+  vg.lastY = c.scrollTop;         // un salto no es "ir deprisa"
   vgUpdate();
 }
 
-document.getElementById("content").addEventListener("scroll", thumbsCheck, { passive: true });
+// Primera foto visible (para dejarla en su sitio tras recolocar la rejilla)
+function vgFirstVisible() {
+  return Math.max(0, Math.floor(Math.max(0, contentEl.scrollTop - vg.top) / vg.rowH)) * vg.cols;
+}
+
+// Recoloca todo: cambio de ancho, de columnas o de zoom
+function vgRelayout(anchorIdx) {
+  if (!vg.grid || !vg.grid.isConnected) return;
+  const first = anchorIdx == null ? vgFirstVisible() : anchorIdx;
+  tlSetup();
+  vgUpdate(true);
+  vgScrollTo(first, 0);
+  tlBuild();
+}
+
+// Cambia el tamano de las miniaturas un paso (dir +1: mas pequenas)
+function vgZoomStep(dir, anchorIdx) {
+  const k = vgMobile.matches ? "m" : "d";
+  const max = (k === "m" ? VG_COLS_MOBILE : VG_MIN_DESKTOP).length - 1;
+  const v = Math.min(max, Math.max(0, vgZoom[k] + dir));
+  if (v === vgZoom[k]) return false;
+  vgZoom[k] = v;
+  try { localStorage.setItem("gt-zoom", JSON.stringify(vgZoom)); } catch (e) {}
+  if (vg.grid && vg.grid.isConnected) {
+    vg.grid.classList.remove("zooming");
+    void vg.grid.offsetWidth;                // reinicia la animacion
+    vg.grid.classList.add("zooming");
+  }
+  vgRelayout(anchorIdx);
+  return true;
+}
+
+contentEl.addEventListener("scroll", thumbsCheck, { passive: true });
+let vgResizeW = 0, vgResizeH = 0;
 window.addEventListener("resize", () => {
   if (!vg.grid || !vg.grid.isConnected) return;
+  // En el movil, la barra del navegador que entra y sale cambia solo el alto:
+  // no hay nada que recolocar
+  const w = contentEl.clientWidth, h = contentEl.clientHeight;
+  if (w === vgResizeW) {
+    if (h !== vgResizeH) { vgResizeH = h; vg.viewH = h; thumbsCheck(); if (tl.on) tlBuild(); }
+    return;
+  }
+  vgResizeW = w; vgResizeH = h;
   // Al cambiar el numero de columnas, la primera foto visible se queda arriba
-  const c = document.getElementById("content");
-  const first = Math.floor(Math.max(0, c.scrollTop - vgGridTop(c)) / vg.rowH) * vg.cols;
-  vgMeasure();
-  vgScrollTo(first, 0);
-  vgUpdate(true);
-  tlBuild();
+  vgRelayout();
 });
 
 // ── Linea de tiempo ──────────────────────────────────────────────────────────
@@ -2690,7 +2925,7 @@ window.addEventListener("resize", () => {
 // mueve el scroll en proporcion y la burbuja dice el dia de la fila de arriba.
 const TL_MONTHS = ["ene","feb","mar","abr","may","jun","jul","ago","sept","oct","nov","dic"];
 const TL_PAD = 22;            // margen arriba/abajo de la barra (medio tirador)
-const tl = { on: false, marks: [], drag: false, hideT: 0, el: null, thumb: null, bubble: null, box: null };
+const tl = { on: false, marks: [], drag: false, hideT: 0, el: null, thumb: null, bubble: null, box: null, max: 1, H: 0, txt: null };
 tl.el = document.getElementById("timeline");
 tl.thumb = document.getElementById("tl-thumb");
 tl.bubble = document.getElementById("tl-bubble");
@@ -2704,7 +2939,7 @@ function tlDateSorted() {
 // Decide si hay linea de tiempo antes de medir la rejilla (su hueco a la
 // derecha cambia el ancho y quiza las columnas)
 function tlSetup() {
-  const c = document.getElementById("content");
+  const c = contentEl;
   c.classList.remove("has-tl");
   vgMeasure();
   const rows = Math.ceil(vg.files.length / vg.cols);
@@ -2714,15 +2949,18 @@ function tlSetup() {
   tl.el.hidden = !tl.on;
 }
 
+// Recorrido total del scroll. Se mide al montar la barra y se guarda: leerlo
+// en cada cuadro del scroll obligaba al navegador a recalcular la pagina
 function tlMaxScroll(c) { return Math.max(1, c.scrollHeight - c.clientHeight); }
 
 function tlBuild() {
   if (!tl.on || !vg.grid || !vg.grid.isConnected) return tlOff();
-  const c = document.getElementById("content");
+  const c = contentEl;
   const n = vg.files.length, cols = vg.cols, rows = Math.ceil(n / cols);
-  const gridTop = vgGridTop(c), max = tlMaxScroll(c);
+  const gridTop = vg.top, max = tlMaxScroll(c);
   const H = tl.el.clientHeight - TL_PAD * 2;
   if (H <= 0) return;
+  tl.max = max; tl.H = H; tl.txt = null;
   // Cambios de año y de mes, fila a fila
   const cand = [];
   let py = null, pm = null;
@@ -2760,7 +2998,7 @@ function tlBuild() {
     lbl.addEventListener("pointerdown", e => e.stopPropagation());
     lbl.addEventListener("click", () => { vgScrollTo(k.r * cols, 0); tlPing(); });
     frag.appendChild(lbl);
-    tl.marks.push({ px: k.px, el: lbl });
+    tl.marks.push({ px: k.px, el: lbl, near: false });
   }
   tl.box.replaceChildren(frag);
   tlUpdate();
@@ -2768,42 +3006,54 @@ function tlBuild() {
 
 function tlOff() {
   tl.on = false;
+  tl.shown = false;
   tl.el.hidden = true;
   tl.el.classList.remove("on");
   document.getElementById("content").classList.remove("has-tl");
 }
 
-function tlUpdate() {
-  if (!tl.on) return;
-  const c = document.getElementById("content");
-  const H = tl.el.clientHeight - TL_PAD * 2;
-  const px = Math.min(1, c.scrollTop / tlMaxScroll(c)) * H;
+function tlUpdate(st) {
+  if (!tl.on || !tl.H) return;
+  if (st === undefined) st = contentEl.scrollTop;
+  const px = Math.min(1, st / tl.max) * tl.H;
   tl.thumb.style.transform = "translateY(" + (TL_PAD + px) + "px)";
-  // Fecha de la primera fila visible
-  const row = Math.floor(Math.max(0, c.scrollTop - vgGridTop(c) + 1) / vg.rowH);
+  // Fecha de la primera fila visible (solo se escribe cuando cambia de dia)
+  const row = Math.floor(Math.max(0, st - vg.top + 1) / vg.rowH);
   const f = vg.files[Math.min(vg.files.length - 1, row * vg.cols)];
   if (f) {
     const d = new Date(fileTime(f));
-    tl.bubble.textContent = d.getDate() + " " + TL_MONTHS[d.getMonth()] + " " + d.getFullYear();
+    const txt = d.getDate() + " " + TL_MONTHS[d.getMonth()] + " " + d.getFullYear();
+    if (txt !== tl.txt) { tl.txt = txt; tl.bubble.textContent = txt; }
   }
   // La etiqueta que queda debajo de la burbuja se oculta
-  for (const m of tl.marks) m.el.classList.toggle("near", Math.abs(m.px - px) < 18);
+  for (const m of tl.marks) {
+    const near = Math.abs(m.px - px) < 18;
+    if (near !== m.near) { m.near = near; m.el.classList.toggle("near", near); }
+  }
 }
 
 // Muestra etiquetas y burbuja un rato tras cada movimiento
 function tlPing() {
   if (!tl.on) return;
-  tl.el.classList.add("on");
-  clearTimeout(tl.hideT);
-  if (!tl.drag) tl.hideT = setTimeout(() => tl.el.classList.remove("on"), 1500);
+  if (!tl.shown) { tl.shown = true; tl.el.classList.add("on"); }
+  tl.pingAt = performance.now();
+  if (tl.drag || tl.hideT) return;
+  // Un solo temporizador que se va prorrogando, no uno nuevo por cuadro
+  const mirar = () => {
+    tl.hideT = 0;
+    if (tl.drag) return;
+    const falta = 1500 - (performance.now() - tl.pingAt);
+    if (falta > 20) tl.hideT = setTimeout(mirar, falta);
+    else { tl.shown = false; tl.el.classList.remove("on"); }
+  };
+  tl.hideT = setTimeout(mirar, 1500);
 }
 
 function tlDragTo(e) {
-  const c = document.getElementById("content");
   const r = tl.el.getBoundingClientRect();
   const H = r.height - TL_PAD * 2;
   const f = Math.min(1, Math.max(0, (e.clientY - r.top - TL_PAD) / H));
-  c.scrollTop = f * tlMaxScroll(c);
+  contentEl.scrollTop = f * tl.max;
   tlUpdate();
 }
 
@@ -2820,7 +3070,8 @@ for (const ev of ["pointerup", "pointercancel", "lostpointercapture"]) {
   tl.el.addEventListener(ev, () => { if (tl.drag) { tl.drag = false; tlPing(); } });
 }
 tl.el.addEventListener("pointerenter", e => { if (e.pointerType === "mouse") tlPing(); });
-document.getElementById("content").addEventListener("scroll", () => { if (tl.on) { tlUpdate(); tlPing(); } }, { passive: true });
+// (el tirador se mueve desde vgUpdate, una vez por cuadro, con el mismo
+// scrollTop que usa la rejilla)
 // Cualquier otra cosa que sustituya la rejilla (cargando, vacio, errores)
 // quita la linea de tiempo
 new MutationObserver(() => { if (tl.on && !(vg.grid && vg.grid.isConnected)) tlOff(); })
@@ -2926,9 +3177,20 @@ async function navigate(path, opts) {
     // que vaya dejando hechas las miniaturas que falten mientras se mira la
     // primera pantalla. Sin esto, cada foto grande cuesta su descompresión la
     // primera vez que aparece.
-    const res = await fetch("/api/browse?prefetch=1&path=" + encodeURIComponent(path) + (subMode ? "&recursive=1" : ""),
-                            { cache: "no-store", headers: previo ? { "If-None-Match": previo.etag } : {} });
+    const url = "/api/browse?prefetch=1&path=" + encodeURIComponent(path) + (subMode ? "&recursive=1" : "");
+    let res = null;
+    if (gtBoot && gtBoot.net) {
+      // La primera carpeta ya se pidio al empezar a cargar la pagina. Solo
+      // vale si se pidio con la misma huella que el listado que hay pintado
+      const boot = gtBoot;
+      gtBoot = null;
+      if (boot.key === key && !keep && (boot.etag || null) === (previo ? previo.etag : null)) {
+        try { res = await boot.net; } catch (e) { res = null; }
+      }
+    }
+    if (!res) res = await fetch(url, { cache: "no-store", headers: previo ? { "If-None-Match": previo.etag } : {} });
     if (seq !== navSeq) return;
+    if (previo) ListCache.ultima(key, previo.etag);
     if (res.status !== 304) {
       if (!res.ok) throw new Error("HTTP " + res.status);
       const text = await res.text();
@@ -2981,15 +3243,22 @@ const ListCache = (() => {
       return v || null;
     },
     async disk(key) {
-      const d = await db();
-      if (!d) return null;
-      const v = await new Promise(res => {
-        try {
-          const r = d.transaction("l").objectStore("l").get(key);
-          r.onsuccess = () => res(r.result || null);
-          r.onerror = () => res(null);
-        } catch (e) { res(null); }
-      });
+      let v;
+      if (gtBoot && gtBoot.key === key && gtBoot.disk) {
+        // Ya se pidio al empezar a cargar la pagina (ver ARRANQUE ADELANTADO)
+        v = await gtBoot.disk;
+        gtBoot.disk = null;
+      } else {
+        const d = await db();
+        if (!d) return null;
+        v = await new Promise(res => {
+          try {
+            const r = d.transaction("l").objectStore("l").get(key);
+            r.onsuccess = () => res(r.result || null);
+            r.onerror = () => res(null);
+          } catch (e) { res(null); }
+        });
+      }
       if (!v || !v.etag) return null;
       try {
         const out = { etag: v.etag, data: JSON.parse(v.text) };
@@ -2997,9 +3266,14 @@ const ListCache = (() => {
         return out;
       } catch (e) { return null; }
     },
+    // La huella de la ultima carpeta abierta, a mano para el arranque adelantado
+    ultima(key, etag) {
+      try { localStorage.setItem("gt-etag", key); localStorage.setItem("gt-etag-v", etag); } catch (e) {}
+    },
     async put(key, etag, text, data) {
       if (!etag) return;
       recordar(key, { etag, data });
+      this.ultima(key, etag);
       const d = await db();
       if (!d) return;
       try {
@@ -3110,34 +3384,53 @@ function makeImgIcon() {
     '</svg>';
 }
 
+// Fondo de la tarjeta mientras no llega su miniatura: el color que mas pesa
+// en la foto (el indice ya lo sabe, para el filtro por color). Las primeras
+// fotos del listado traen ademas su version de 16 px; el resto, que antes eran
+// huecos grises, al menos nacen del color de la foto.
+const CARD_TONES = "roygcbpknwsx";
+
+// La tarjeta se clona de un molde (mas barato que interpretar HTML por cada
+// una) y no lleva manejadores propios: los gestos se atienden en la galeria
+const cardTpl = document.createElement("template");
+cardTpl.innerHTML = '<div class="fc"><img alt="" decoding="async" draggable="false">' +
+  '<div class="fc-overlay"><div class="fc-check"></div></div><div class="fc-name"></div></div>';
+
 function makeCard(f, i) {
-  const card = document.createElement("div");
-  card.className = "fc" + (selectedFiles.has(f.path) ? " sel" : "");
+  const card = cardTpl.content.firstElementChild.cloneNode(true);
+  const key = thumbUrl(f);
+  let cls = "fc";
+  if (selectedFiles.has(f.path)) cls += " sel";
+  if (!f.blur && f.colors && CARD_TONES.includes(f.colors[0])) cls += " t-" + f.colors[0];
+  card.className = cls;
   card.dataset.index = i;
-  card.dataset.src = thumbUrl(f);
-  card.dataset.path = f.path;
+  card.dataset.src = key;
   card.dataset.ext = f.ext || "";
-  const folderHtml = f.folder && f.folder !== "." ? '<br><small style="opacity:.7">' + esc(f.folder) + '</small>' : '';
-  // Con la miniatura de 16px la tarjeta nace con la foto (borrosa) dentro; si
-  // aún no está indexada, se ve el fondo liso de la tarjeta.
-  const fondo = f.blur
-    ? '<div class="fc-blur" style="background-image:url(data:image/webp;base64,' + f.blur + ')"></div>'
-    : '';
-  card.innerHTML =
-    '<img alt="' + esc(f.name) + '" decoding="async">' +
-    fondo +
-    '<div class="fc-overlay"><div class="fc-check"></div></div>' +
-    '<div class="fc-name">' + esc(f.name) + folderHtml + '</div>' +
-    (f.rating ? '<div class="fc-stars">' + starText(f.rating) + '</div>' : '') +
-    (f.redo ? REDO_BADGE : '');
-  // Ya vista en esta sesion: se pinta sin pedirla
-  const mem = thumbMem.get(card.dataset.src);
+  const img = card.firstElementChild;
+  const mem = thumbMem.get(key);
+  // Con la miniatura de 16px la tarjeta nace con la foto (borrosa) dentro
+  // (si la de verdad ya esta en memoria, no hace falta)
+  if (f.blur && !mem) {
+    const b = document.createElement("div");
+    b.className = "fc-blur";
+    b.style.backgroundImage = "url(data:image/webp;base64," + f.blur + ")";
+    img.after(b);
+  }
+  const name = card.lastElementChild;
+  name.textContent = f.name;
+  if (f.folder && f.folder !== ".") {
+    const s = document.createElement("small");
+    s.textContent = f.folder;
+    name.append(document.createElement("br"), s);
+  }
+  if (f.rating) paintCardStars(card, f.rating);
+  if (f.redo) card.insertAdjacentHTML("beforeend", REDO_BADGE);
+  // Ya en memoria (vista antes, o traida por adelantado): se pinta sin pedirla
   if (mem) {
     card.dataset.loaded = "1";
-    thumbMemPut(card.dataset.src, mem);       // reciente: la ultima en salir
+    thumbMemPut(key, mem);       // reciente: la ultima en salir
     _setThumb(card, mem);
   }
-  attachCardInteractions(card);
   return card;
 }
 
@@ -3146,41 +3439,91 @@ function makeCard(f, i) {
 // Mantener pulsado (long-press, también con ratón) -> selecciona la foto.
 // Con una selección ya activa, el click corto sigue seleccionando (como en
 // Google Photos), y el circulito de check selecciona siempre.
+// Pellizcar con dos dedos (o Ctrl + rueda) cambia el tamaño de las miniaturas.
+// Todo se atiende en la galeria y no en cada tarjeta: antes cada tarjeta que
+// nacia al bajar registraba siete manejadores.
 const LONG_PRESS_MS = 450;
 const LONG_PRESS_TOL = 12;
 
-function attachCardInteractions(card) {
-  let timer = null, sx = 0, sy = 0, longPressed = false;
+(function cardInteractions() {
+  let timer = null, sx = 0, sy = 0, longPressed = false, noClickUntil = 0, zoomAt = 0;
+  const pts = new Map();
+  let pinch = null;
   const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  const cardOf = (e) => e.target && e.target.closest ? e.target.closest(".fc") : null;
+  const dist = () => { const [a, b] = [...pts.values()]; return Math.hypot(a[0] - b[0], a[1] - b[1]); };
+  const zoom = (dir) => {
+    if (Date.now() - zoomAt < 250) return false;
+    zoomAt = Date.now();
+    noClickUntil = zoomAt + 500;
+    return vgZoomStep(dir);
+  };
 
-  card.addEventListener("pointerdown", (e) => {
-    if (e.pointerType === "mouse" && e.button !== 0) return;
+  contentEl.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "touch") {
+      if (e.isPrimary) pts.clear();
+      pts.set(e.pointerId, [e.clientX, e.clientY]);
+      if (pts.size === 2) { cancel(); pinch = { d0: Math.max(20, dist()) }; return; }
+    }
+    const card = cardOf(e);
+    if (!card || (e.pointerType === "mouse" && e.button !== 0)) return;
     longPressed = false;
     sx = e.clientX; sy = e.clientY;
     cancel();
     timer = setTimeout(() => {
       timer = null;
+      if (!card.isConnected) return;
       longPressed = true;
       toggleFile(parseInt(card.dataset.index, 10));
       if (navigator.vibrate) navigator.vibrate(20);
     }, LONG_PRESS_MS);
   });
-  card.addEventListener("pointermove", (e) => {
+  contentEl.addEventListener("pointermove", (e) => {
+    if (pts.has(e.pointerId)) {
+      pts.set(e.pointerId, [e.clientX, e.clientY]);
+      if (pinch && pts.size === 2 && vg.grid && vg.grid.isConnected) {
+        const r = dist() / pinch.d0;
+        // Separar los dedos acerca (menos columnas); juntarlos, aleja
+        if (r > 1.3 || r < 0.77) { zoom(r > 1 ? -1 : 1); pinch.d0 = Math.max(20, dist()); }
+      }
+    }
     // Si el dedo/ratón se desplaza (scroll o arrastre), no es un long-press
     if (timer && (Math.abs(e.clientX - sx) > LONG_PRESS_TOL || Math.abs(e.clientY - sy) > LONG_PRESS_TOL)) cancel();
   });
-  ["pointerup", "pointercancel", "pointerleave"].forEach(ev => card.addEventListener(ev, cancel));
+  const end = (e) => {
+    cancel();
+    pts.delete(e.pointerId);
+    if (pts.size < 2) pinch = null;
+  };
+  contentEl.addEventListener("pointerup", end);
+  contentEl.addEventListener("pointercancel", end);
+  contentEl.addEventListener("pointerleave", cancel);
 
-  card.addEventListener("click", (e) => {
-    if (longPressed) { longPressed = false; e.preventDefault(); return; }
+  contentEl.addEventListener("click", (e) => {
+    const card = cardOf(e);
+    if (!card) return;
+    if (longPressed || Date.now() < noClickUntil) { longPressed = false; e.preventDefault(); return; }
     const idx = parseInt(card.dataset.index, 10);
     if (e.target.closest(".fc-check")) { toggleFile(idx); return; }
     if (selectedFiles.size > 0) { toggleFile(idx); return; }
     openViewer(idx);
   });
   // El long-press nativo abriría el menú contextual y rompería la selección
-  card.addEventListener("contextmenu", (e) => e.preventDefault());
-}
+  contentEl.addEventListener("contextmenu", (e) => { if (cardOf(e)) e.preventDefault(); });
+  // Safari (iOS): el pellizco llega como gesto propio
+  contentEl.addEventListener("gesturestart", (e) => { if (vg.grid && vg.grid.isConnected) e.preventDefault(); });
+  contentEl.addEventListener("gesturechange", (e) => {
+    if (!vg.grid || !vg.grid.isConnected) return;
+    e.preventDefault();
+    if (e.scale > 1.3) zoom(-1); else if (e.scale < 0.77) zoom(1);
+  });
+  // Escritorio: Ctrl + rueda (o pellizco del trackpad)
+  contentEl.addEventListener("wheel", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || !vg.grid || !vg.grid.isConnected) return;
+    e.preventDefault();
+    if (Math.abs(e.deltaY) > 2) zoom(e.deltaY > 0 ? 1 : -1);
+  }, { passive: false });
+})();
 
 // ── Mantener la posición de la galería ───────────────────────────────────────
 // Tras mover, editar o subir, la carpeta se vuelve a pedir y la rejilla se
@@ -3191,16 +3534,14 @@ function attachCardInteractions(card) {
 let galleryAnchor = null;
 
 function captureGalleryAnchor() {
-  const c = document.getElementById("content");
-  const cards = c.querySelectorAll(".fc");
-  if (!cards.length) { galleryAnchor = null; return; }
-  const top = c.getBoundingClientRect().top;
-  let idx = -1, offset = 0;
-  for (const card of cards) {
-    const r = card.getBoundingClientRect();
-    if (r.bottom > top + 1) { idx = parseInt(card.dataset.index, 10); offset = r.top - top; break; }
-  }
-  if (idx < 0 || !currentFiles[idx]) { galleryAnchor = null; return; }
+  const c = contentEl;
+  if (!vg.grid || !vg.grid.isConnected || vg.files !== currentFiles || !currentFiles.length) { galleryAnchor = null; return; }
+  // Primera fila que asoma (sale de una cuenta: la rejilla es regular)
+  const y = c.scrollTop - vg.top;
+  const row = Math.max(0, Math.floor((y + 1 - (vg.rowH - vg.gap)) / vg.rowH) + 1);
+  const idx = row * vg.cols;
+  if (!currentFiles[idx]) { galleryAnchor = null; return; }
+  const offset = vg.top + row * vg.rowH - c.scrollTop;
   // Candidatas en orden de preferencia: la visible, las siguientes y, si no
   // queda ninguna (se movió el final de la carpeta), las anteriores.
   const after = currentFiles.slice(idx).map(f => f.path);
@@ -3218,10 +3559,10 @@ function anchorTargetIndex(anchor, files) {
 
 function renderFiles(files) {
   currentFiles = files;
-  // Reset the load queue for the new folder
-  loadQueue.length = 0;
+  // Lo que estuviera en camino era de la rejilla anterior
   singleQueue.length = 0;
-  const c = document.getElementById("content");
+  for (const bt of thBatches) bt.ctl.abort();
+  const c = contentEl;
   const anchor = galleryAnchor;
   galleryAnchor = null;
   const anchorIdx = anchor ? anchorTargetIndex(anchor, files) : -1;
@@ -3247,25 +3588,26 @@ function renderFiles(files) {
   vg.grid = grid;
   vg.files = files;
   vg.cards = new Map();
+  vg.byKey = new Map();
   vg.a = vg.b = 0;
-  vg.top = document.createElement("div"); vg.top.className = "vg-pad";
-  vg.bot = document.createElement("div"); vg.bot.className = "vg-pad";
-  grid.append(vg.top, vg.bot);
-  vgMeasure();
-  // Los separadores dan a la rejilla su altura total desde el principio: se
-  // puede volver al mismo punto (o a la foto de antes) sin esperar a nada
+  // La rejilla tiene su altura total desde el principio (tlSetup la mide): se
+  // puede volver al mismo punto (o a la foto de antes) sin pintar nada antes
   c.scrollTop = 0;
+  vg.lastY = 0;
   tlSetup();
-  vgUpdate(true);
+  vgResizeW = c.clientWidth; vgResizeH = c.clientHeight;
   if (anchorIdx >= 0) vgScrollTo(anchorIdx, anchor.offset);
-  else if (anchor) { c.scrollTop = anchor.scrollTop; vgUpdate(); }
+  else {
+    if (anchor) { c.scrollTop = anchor.scrollTop; vg.lastY = c.scrollTop; }
+    vgUpdate(true);
+  }
   tlBuild();
 }
 
 // ── Selection ─────────────────────────────────────────────────────────────────
 function toggleFile(index) {
   const f = currentFiles[index];
-  const card = document.querySelector('.fc[data-index="' + index + '"]');
+  const card = vg.cards.get(index);
   if (selectedFiles.has(f.path)) {
     selectedFiles.delete(f.path);
     card && card.classList.remove("sel");
@@ -3337,11 +3679,8 @@ function handleSelectAll() {
     selectedFiles.clear();
     document.querySelectorAll(".fc.sel").forEach(c => c.classList.remove("sel"));
   } else {
-    currentFiles.forEach((f, i) => {
-      selectedFiles.add(f.path);
-      const card = document.querySelector('.fc[data-index="' + i + '"]');
-      card && card.classList.add("sel");
-    });
+    for (const f of currentFiles) selectedFiles.add(f.path);
+    for (const card of vg.cards.values()) card.classList.add("sel");
   }
   updateSelUI();
 }
@@ -3424,16 +3763,28 @@ function fileTime(f) {
   if (f._t === undefined) f._t = fileTimeRaw(f);
   return f._t;
 }
+const hourCache = new Map();
 function fileTimeRaw(f) {
   // 1) La fecha de los METADATOS, que es la fecha real de la foto y la que el
   //    usuario tiene en la cabeza. Antes se usaba la del archivo cuando la foto
   //    no estaba renombrada, y una foto de 2005 copiada al NAS tiene fecha de
   //    archivo de hoy: por eso "desde" parecia funcionar (todo es posterior) y
   //    "hasta" dejaba la galeria vacia.
-  const d = (f.date || "").match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
-  if (d) {
-    const t = new Date(+d[1], +d[2] - 1, +d[3], +d[4], +d[5], +d[6]).getTime();
-    if (!isNaN(t)) return t;
+  //    Viene siempre como "AAAA-MM-DD HH:MM:SS". Con 60.000 fotos, una
+  //    expresion regular y un Date por foto eran lo mas caro de abrir la
+  //    biblioteca: se trocea a mano y el Date se hace una vez por HORA distinta
+  //    (por hora y no por dia, para que el cambio de hora siga cuadrando).
+  const s = f.date;
+  if (s && s.length >= 19) {
+    const k = s.slice(0, 13);
+    let h = hourCache.get(k);
+    if (h === undefined) {
+      h = new Date(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10), +s.slice(11, 13)).getTime();
+      if (hourCache.size > 50000) hourCache.clear();
+      hourCache.set(k, h);
+    }
+    const t = h + (+s.slice(14, 16)) * 60000 + (+s.slice(17, 19)) * 1000;
+    if (t === t) return t;
   }
   // 2) La fecha del nombre, si se renombro por EXIF
   const m = (f.name || "").match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})_/);
@@ -3893,7 +4244,7 @@ function setLocalRating(paths, stars) {
   }));
   currentFiles.forEach((f, i) => {
     if (!set.has(f.path)) return;
-    const card = document.querySelector('.fc[data-index="' + i + '"]');
+    const card = vg.cards.get(i);
     if (card) paintCardStars(card, stars);
   });
 }
@@ -4041,7 +4392,7 @@ function setLocalRedo(paths, redo) {
   }));
   currentFiles.forEach((f, i) => {
     if (!set.has(f.path)) return;
-    const card = document.querySelector('.fc[data-index="' + i + '"]');
+    const card = vg.cards.get(i);
     if (card) paintCardRedo(card, redo);
   });
 }
@@ -4775,14 +5126,36 @@ document.getElementById("modal-date").addEventListener("click", e => {
 });
 
 
-// ── Photo viewer (lightbox) ───────────────────────────────────────────────────
-// Muestra la foto a tamaño grande vía /api/preview, que convierte cualquier
-// formato soportado (RAW, TIFF, HEIC, WebP...) a JPEG/WebP en el servidor.
+// ── Visor de fotos ────────────────────────────────────────────────────────────
+// La foto grande llega de /api/preview, que convierte cualquier formato
+// soportado (RAW, TIFF, HEIC, WebP...) a JPEG/WebP en el servidor. Pero el
+// visor no espera por ella, que es lo que lo hacia sentirse lento:
+//   - Al abrir se pinta la MINIATURA, que la rejilla ya tiene en memoria, y
+//     sale de su tarjeta hasta ocupar la pantalla. La vista previa la
+//     sustituye en cuanto llega, en el mismo sitio (misma proporcion).
+//   - Hay tres laminas: la foto abierta y sus dos vecinas ya cargadas. El dedo
+//     arrastra la tira y al soltar encaja en la siguiente, como en Fotos del
+//     iPhone; antes el gesto solo se miraba al soltar y la foto cambiaba de
+//     golpe tras un circulo de espera.
+//   - Arrastrar hacia abajo encoge la foto y la devuelve a su tarjeta.
 const viewerEl = document.getElementById("viewer");
-const vwImg = document.getElementById("vw-img");
+const vwStage = document.getElementById("vw-stage");
+const vwTrack = document.getElementById("vw-track");
+const vwBg = document.getElementById("vw-bg");
+const vwSpinner = document.getElementById("vw-spinner");
+const VW_GAP = 16;                // separacion entre laminas al pasar
+const VW_EASE = "cubic-bezier(.2,.8,.2,1)";
+const vwSlides = Array.from(vwTrack.children, (el, k) =>
+  ({ el, img: el.firstElementChild, slot: k - 1, file: null, url: "", token: 0 }));
+let vwCur = vwSlides[1];
+let vwImg = vwCur.img;            // la imagen de la lamina central (la que lleva el zoom)
 let viewerIndex = -1;
 let vwZoomed = false;
 let viewerDirty = false;   // la galeria quedo desfasada (fotos movidas desde el visor)
+let vwAnim = null, vwClosing = [], vwCloseT = 0, vwSpinT = 0, vwTrackX = 0;
+// Vistas previas ya bajadas en esta sesion: van directas, sin pasar por la miniatura
+const vwSeen = new Set();
+const vwReduced = window.matchMedia ? matchMedia("(prefers-reduced-motion: reduce)") : { matches: false };
 
 function previewUrl(f) { return bust("/api/preview?path=" + encodeURIComponent(f.path), f.path, f.mtime); }
 // t=: version del formato de miniatura. Sube cuando cambia COMO se hacen, para
@@ -4791,28 +5164,173 @@ function previewUrl(f) { return bust("/api/preview?path=" + encodeURIComponent(f
 const THUMB_VER = 2;
 function thumbUrl(f)   { return bust("/api/thumb?t=" + THUMB_VER + "&path=" + encodeURIComponent(f.path), f.path, f.mtime); }
 
+function vwPlace() {
+  for (const sl of vwSlides) {
+    sl.el.style.transform = sl.slot ? "translate3d(calc(" + sl.slot + " * (100% + " + VW_GAP + "px)),0,0)" : "";
+  }
+}
+function vwTrackSet(x) {
+  vwTrackX = x;
+  vwTrack.style.transform = x ? "translate3d(" + x + "px,0,0)" : "";
+}
+// El circulo de espera solo si de verdad no hay nada que ensenar
+function vwSpin(on) {
+  clearTimeout(vwSpinT);
+  vwSpinner.style.display = "none";
+  if (on) vwSpinT = setTimeout(() => {
+    if (viewerIndex >= 0 && !vwImg.classList.contains("ready")) vwSpinner.style.display = "block";
+  }, 350);
+}
+
+// Pone la foto f en una lamina: primero lo que haya a mano (la miniatura en
+// memoria, o la vista previa si ya se bajo antes) y encima la vista previa
+function vwLoad(sl, f) {
+  const img = sl.img;
+  if (!f) {
+    sl.token++; sl.file = null; sl.url = "";
+    img.onload = img.onerror = null;
+    img.classList.remove("ready");
+    img.removeAttribute("src");
+    return;
+  }
+  const pv = previewUrl(f);
+  if (sl.file === f && sl.url === pv) return;        // ya la tiene, o esta en ello
+  const tk = ++sl.token;
+  sl.file = f; sl.url = pv;
+  img.classList.remove("ready");
+  img.removeAttribute("src");
+  const th = thumbUrl(f);
+  const first = vwSeen.has(pv) ? pv : (thumbMem.get(th) || th);
+  let firstFailed = false;
+  img.onload = () => {
+    if (sl.token !== tk) return;
+    img.classList.add("ready");
+    if (sl === vwCur) vwSpin(false);
+  };
+  img.onerror = () => {
+    if (sl.token !== tk) return;
+    if (first === pv) { vwSeen.delete(pv); sl.url = ""; vwLoad(sl, f); return; }
+    firstFailed = true;
+  };
+  img.src = first;
+  if (first === pv) return;
+  const probe = new Image();
+  probe.decoding = "async";
+  probe.onload = () => {
+    // Ya decodificada cuando se cambia: el cambio no cuesta un cuadro en blanco
+    const put = () => {
+      if (sl.token !== tk) return;
+      if (vwSeen.size > 400) vwSeen.clear();
+      vwSeen.add(pv);
+      img.src = pv;
+    };
+    probe.decode ? probe.decode().then(put, put) : put();
+  };
+  probe.onerror = () => {
+    // Sin vista previa: se queda la miniatura, que es mejor que nada
+    if (sl.token === tk && sl === vwCur && firstFailed) vwSpin(false);
+  };
+  probe.src = pv;
+}
+
 function openViewer(i) {
   if (i < 0 || i >= currentFiles.length) return;
   viewerIndex = i;
   viewerEl.classList.add("on");
+  vwCleanup();                       // por si se estaba cerrando otra
+  viewerEl.classList.remove("nochrome");
   document.addEventListener("keydown", viewerKeys);
   // Entrada en el historial: el gesto "atrás" del móvil cierra el visor
   history.pushState({ view: "viewer", path: currentPath, sub: subMode }, "", hashForPath(currentPath));
   showViewerPhoto();
+  vwHeroIn(i);
+}
+
+// Tarjeta de la foto i en la rejilla, si esta creada y a la vista
+function vwCardRect(i) {
+  if (!vg.grid || !vg.grid.isConnected || vg.files !== currentFiles) return null;
+  const card = vg.cards.get(i);
+  if (!card) return null;
+  const r = card.getBoundingClientRect(), c = document.getElementById("content").getBoundingClientRect();
+  if (r.bottom <= c.top || r.top >= c.bottom || !r.width) return null;
+  return r;
+}
+
+// Como hay que transformar y recortar la imagen del visor para que coincida
+// con su tarjeta (cuadrada, con la foto recortada al centro)
+function vwHeroFrame(cr) {
+  const R = vwRect(), sr = vwStage.getBoundingClientRect();
+  const k = Math.max(cr.width / R.w, cr.height / R.h);
+  const left = cr.left - sr.left + (cr.width - k * R.w) / 2, top = cr.top - sr.top + (cr.height - k * R.h) / 2;
+  const cx = (R.w - cr.width / k) / 2, cy = (R.h - cr.height / k) / 2;
+  return {
+    transform: "translate(" + (left - k * R.x0) + "px," + (top - k * R.y0) + "px) scale(" + k + ")",
+    clipPath: "inset(" + (R.y0 + cy) + "px " + (R.W - R.x0 - R.w + cx) + "px " + (R.H - R.y0 - R.h + cy) + "px " + (R.x0 + cx) + "px)",
+  };
+}
+
+function vwHeroIn(i) {
+  if (vwReduced.matches || !vwImg.animate) return;
+  const cr = vwCardRect(i), img = vwImg, tk = vwCur.token, t0 = performance.now();
+  viewerEl.classList.add("opening");
+  vwBg.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: "ease-out" });
+  const go = () => {
+    viewerEl.classList.remove("opening");
+    if (!cr || vwCur.img !== img || vwCur.token !== tk || !img.naturalWidth || performance.now() - t0 > 160) return;
+    const k = vwHeroFrame(cr);
+    img.animate([{ transform: k.transform, clipPath: k.clipPath }, { transform: "none", clipPath: "inset(0px)" }],
+                { duration: 280, easing: VW_EASE });
+  };
+  if (img.complete && img.naturalWidth) go();
+  else {
+    img.addEventListener("load", go, { once: true });
+    setTimeout(() => viewerEl.classList.remove("opening"), 200);
+  }
 }
 
 // Cierre "real" del visor (solo DOM); lo invoca el manejador de popstate
 function hideViewer() {
+  const wasOn = viewerEl.classList.contains("on"), idx = viewerIndex;
+  if (!wasOn) return;
+  vwSlideEnd();
   // Si en el visor se avanzó a otras fotos, al salir la galería se coloca en
   // la última vista: así se selecciona sin tener que buscarla.
-  if (viewerEl.classList.contains("on") && viewerIndex >= 0) vgScrollTo(viewerIndex, null);
+  if (viewerIndex >= 0) vgScrollTo(viewerIndex, null);
+  const i = viewerIndex;
   viewerEl.classList.remove("on");
   viewerIndex = -1;
-  // Se movieron fotos desde el visor: ahora si se repinta la galeria
-  if (viewerDirty) { viewerDirty = false; refreshCurrentView(); }
-  vwImg.removeAttribute("src");
-  vwImg.classList.remove("ready");
   document.removeEventListener("keydown", viewerKeys);
+  vwSpin(false);
+  // Se movieron fotos desde el visor: ahora si se repinta la galeria
+  const dirty = viewerDirty;
+  if (dirty) { viewerDirty = false; refreshCurrentView(); }
+  if (dirty || vwReduced.matches || !vwImg.animate) { vwCleanup(); return; }
+  // La foto vuelve a su tarjeta (o, si no esta a la vista, se desvanece)
+  viewerEl.classList.add("closing");
+  const cr = vwImg.classList.contains("ready") && vwImg.naturalWidth ? vwCardRect(i) : null;
+  if (cr) {
+    const k = vwHeroFrame(cr);
+    vwClosing = [
+      vwImg.animate([{ clipPath: "inset(0px)" }, { transform: k.transform, clipPath: k.clipPath }],
+                    { duration: 240, easing: VW_EASE, fill: "forwards" }),
+      vwBg.animate([{ opacity: 0 }], { duration: 240, easing: "ease-out", fill: "forwards" }),
+    ];
+  } else {
+    vwClosing = [viewerEl.animate([{ opacity: 0 }], { duration: 150, easing: "ease-out", fill: "forwards" })];
+  }
+  vwCloseT = setTimeout(vwCleanup, cr ? 250 : 160);
+}
+
+function vwCleanup() {
+  clearTimeout(vwCloseT);
+  for (const a of vwClosing) a.cancel();
+  vwClosing = [];
+  viewerEl.classList.remove("closing", "drag", "opening");
+  vwBg.style.opacity = "";
+  vwBg.style.transition = "";
+  if (viewerEl.classList.contains("on")) return;       // se ha vuelto a abrir
+  resetViewerZoom();
+  for (const sl of vwSlides) vwLoad(sl, null);
 }
 
 // Cierre desde la interfaz (X, Esc, fondo, swipe): retrocede en el historial
@@ -4837,12 +5355,50 @@ function viewerKeys(e) {
   }
 }
 
+// Flechas y teclado: desliza a la vecina. Con la tecla mantenida, cada paso
+// remata el anterior de golpe, asi que se pasa tan rapido como repita la tecla
 function viewerNav(dir) {
+  if (viewerIndex < 0) return;
+  if (vwAnim) { vwSlideEnd(); vwTrack.getBoundingClientRect(); }
   const ni = viewerIndex + dir;
   if (ni < 0 || ni >= currentFiles.length) return;
-  viewerIndex = ni;
-  showViewerPhoto();
+  resetViewerZoom();
+  vwSlideTo(dir);
 }
+
+// Lleva la tira a la lamina vecina (dir -1/+1) o de vuelta al centro (0)
+function vwSlideTo(dir) {
+  const ni = viewerIndex + dir;
+  if (dir && (ni < 0 || ni >= currentFiles.length)) dir = 0;
+  const target = -dir * (vwStage.clientWidth + VW_GAP);
+  vwAnim = { dir: dir, t: 0 };
+  if (vwReduced.matches || Math.abs(target - vwTrackX) < 1) { vwSlideEnd(); return; }
+  vwTrack.style.transition = "transform .28s " + VW_EASE;
+  vwTrackSet(target);
+  vwAnim.t = setTimeout(vwSlideEnd, 340);          // por si no llega transitionend
+}
+
+// Remata el deslizamiento: la vecina pasa a ser la foto abierta y la lamina
+// que queda lejos se recicla para la siguiente
+function vwSlideEnd() {
+  if (!vwAnim) return;
+  const dir = vwAnim.dir;
+  clearTimeout(vwAnim.t);
+  vwAnim = null;
+  vwTrack.style.transition = "none";
+  vwTrackSet(0);
+  if (!dir || viewerIndex < 0) return;
+  viewerIndex += dir;
+  for (const sl of vwSlides) {
+    sl.slot -= dir;
+    if (Math.abs(sl.slot) > 1) sl.slot = dir;
+  }
+  vwSync();
+  // La de despues de la vecina, por si se sigue pasando en esa direccion
+  const f2 = currentFiles[viewerIndex + 2 * dir];
+  if (f2 && !vwSeen.has(previewUrl(f2))) { const p = new Image(); p.src = previewUrl(f2); }
+}
+vwTrack.addEventListener("transitionend", (e) => { if (e.target === vwTrack) vwSlideEnd(); });
 
 function resetViewerZoom() {
   vwStopInertia();
@@ -4858,10 +5414,26 @@ function updateViewerSelBtn() {
   document.getElementById("vw-select").classList.toggle("sel-on", !!f && selectedFiles.has(f.path));
 }
 
+// Coloca las tres laminas alrededor de viewerIndex y pinta los datos de la foto
 function showViewerPhoto() {
+  if (!currentFiles[viewerIndex]) return;
+  if (vwAnim) { vwAnim.dir = 0; vwSlideEnd(); }
+  resetViewerZoom();
+  vwSync();
+}
+
+function vwSync() {
   const f = currentFiles[viewerIndex];
   if (!f) return;
-  resetViewerZoom();
+  vwCur = vwSlides.find(sl => sl.slot === 0);
+  vwImg = vwCur.img;
+  vwHiRes = null;
+  vwPlace();
+  // La abierta primero; las vecinas quedan listas para cuando se pase
+  vwLoad(vwCur, f);
+  for (const sl of vwSlides) if (sl !== vwCur) vwLoad(sl, currentFiles[viewerIndex + sl.slot] || null);
+  vwSpin(!vwImg.classList.contains("ready"));
+
   document.getElementById("vw-name").textContent = f.name;
   document.getElementById("vw-count").textContent = (viewerIndex + 1) + " / " + currentFiles.length;
   document.getElementById("vw-ext").textContent = (f.ext || "").replace(".", "").toUpperCase();
@@ -4872,45 +5444,24 @@ function showViewerPhoto() {
   paintStars(vwStars, f.rating || 0);
   paintViewerRedo(f);
   showViewerDate(f);
-
-  const spinner = document.getElementById("vw-spinner");
-  spinner.style.display = "block";
-  vwImg.classList.remove("ready");
-
-  vwHiRes = null;
-  const load = (src, fallback) => {
-    const probe = new Image();
-    probe.onload = () => {
-      if (currentFiles[viewerIndex] !== f) return; // el usuario ya pasó a otra foto
-      vwImg.src = src;
-      spinner.style.display = "none";
-      vwImg.classList.add("ready");
-    };
-    probe.onerror = () => {
-      if (currentFiles[viewerIndex] !== f) return;
-      if (fallback) load(fallback, null);
-      else spinner.style.display = "none";
-    };
-    probe.src = src;
-  };
-  // Si el preview grande falla, degradar a la miniatura antes que no mostrar nada
-  load(previewUrl(f), thumbUrl(f));
-
-  // Precargar las vecinas para que la navegación sea instantánea
-  [viewerIndex - 1, viewerIndex + 1].forEach(n => {
-    if (n >= 0 && n < currentFiles.length) { const p = new Image(); p.src = previewUrl(currentFiles[n]); }
-  });
 }
 
-// Fecha de la foto abierta en el visor (lectura asíncrona: la imagen no espera)
-async function showViewerDate(f) {
+// Fecha de la foto abierta. La del listado (la del indice) sale al momento;
+// solo se pregunta al servidor si el indice aun no la sabe
+const vwDateT = { t: 0 };
+function showViewerDate(f) {
   const el = document.getElementById("vw-date");
+  clearTimeout(vwDateT.t);
   if (!f) { el.textContent = ""; return; }
+  if (f.date) { el.textContent = humanDate(f.date); return; }
   el.textContent = "";
-  const d = await fetchDates(f.path);
-  if (currentFiles[viewerIndex] !== f) return;   // el usuario ya pasó a otra foto
-  const shot = d.date || d.create_date || d.file_date;
-  el.textContent = shot ? humanDate(shot) : "Sin fecha";
+  // Un instante de espera: pasando fotos deprisa no se pregunta por cada una
+  vwDateT.t = setTimeout(async () => {
+    const d = await fetchDates(f.path);
+    if (currentFiles[viewerIndex] !== f) return;   // el usuario ya pasó a otra foto
+    const shot = d.date || d.create_date || d.file_date;
+    el.textContent = shot ? humanDate(shot) : "Sin fecha";
+  }, 250);
 }
 
 // Mover o copiar la foto abierta sin volver a la galeria
@@ -4944,37 +5495,44 @@ document.getElementById("vw-download").addEventListener("click", () => {
   document.body.removeChild(a);
 });
 
-// Tocar el fondo (fuera de la imagen) cierra el visor
-document.getElementById("vw-stage").addEventListener("click", (e) => {
-  // No si viene de soltar un pellizco o un arrastre
-  if (e.target === e.currentTarget && !vwZoomed && Date.now() - vwGestureAt > 350) closeViewer();
-});
-
-// ── Zoom y desplazamiento (como en el editor y en Fotos de iPhone / iPad) ────
+// ── Gestos del visor (como en Fotos de iPhone / iPad) ────────────────────────
 // La foto se transforma (translate + scale) sin volver a cargarla, asi que el
-// gesto va fluido. Pellizco: zoom alrededor de los dedos. Con zoom, uno o dos
-// dedos la mueven, con inercia y bordes elasticos. Doble toque: acercar ahi /
-// encajar. Raton: clic para acercar o encajar, arrastrar para mover,
-// ctrl+rueda o pellizco del trackpad para el zoom y rueda para moverse.
+// gesto va fluido. Sin zoom: arrastrar a los lados pasa de foto y hacia abajo
+// cierra; un toque esconde o ensena los mandos. Pellizco: zoom alrededor de
+// los dedos. Con zoom, uno o dos dedos la mueven, con inercia y bordes
+// elasticos. Doble toque: acercar ahi / encajar. Raton: clic para acercar o
+// encajar, arrastrar para mover o pasar, ctrl+rueda o pellizco del trackpad
+// para el zoom y rueda para moverse.
 // Al ampliar se cambia la vista previa (2048 px) por el original si el
 // navegador lo sabe abrir, para ver el detalle de verdad.
-const vwStage = document.getElementById("vw-stage");
 const vwView = { s: 1, tx: 0, ty: 0 };
 const VW_MAX_S = 8, VW_ZOOM_TAP = 2.5;
 const VW_FULLRES_EXTS = [".jpg", ".jpeg", ".png", ".webp", ".gif"];
 let vwInertia = null, vwHiRes = null, vwGestureAt = 0;
 
+// Donde cae la foto dentro de la lamina, sin transformar (la imagen ocupa la
+// lamina entera y la foto va encajada dentro)
+function vwRect() {
+  const W = vwStage.clientWidth, H = vwStage.clientHeight;
+  const nw = vwImg.naturalWidth, nh = vwImg.naturalHeight;
+  if (!nw || !nh) return { x0: 0, y0: 0, w: W, h: H, W: W, H: H };
+  const k = Math.min(W / nw, H / nh), w = nw * k, h = nh * k;
+  return { x0: (W - w) / 2, y0: (H - h) / 2, w: w, h: h, W: W, H: H };
+}
+
+// vwView va en coordenadas relativas a la esquina de la FOTO; la imagen se
+// transforma desde la esquina de la lamina, de ahi la correccion
 function vwApply(animated) {
-  vwImg.style.transition = animated ? "opacity .25s, transform .3s cubic-bezier(.2,.8,.2,1)" : "opacity .25s";
-  vwImg.style.transform = vwView.s === 1 && vwView.tx === 0 && vwView.ty === 0 ? ""
-    : "translate(" + vwView.tx + "px," + vwView.ty + "px) scale(" + vwView.s + ")";
-  vwZoomed = vwView.s > 1.01;
+  const r = vwRect(), s = vwView.s;
+  vwImg.style.transition = animated ? "transform .3s " + VW_EASE : "none";
+  vwImg.style.transform = s === 1 && vwView.tx === 0 && vwView.ty === 0 ? ""
+    : "translate(" + (vwView.tx - (s - 1) * r.x0) + "px," + (vwView.ty - (s - 1) * r.y0) + "px) scale(" + s + ")";
+  vwZoomed = s > 1.01;
   vwImg.classList.toggle("zoomed", vwZoomed);
 }
 // Limites: ampliada, la foto cubre la pantalla; si es mas pequena, centrada
 function vwBounds(s) {
-  const W = vwStage.clientWidth, H = vwStage.clientHeight;
-  const x0 = vwImg.offsetLeft, y0 = vwImg.offsetTop, w = vwImg.offsetWidth, h = vwImg.offsetHeight;
+  const r = vwRect(), W = r.W, H = r.H, x0 = r.x0, y0 = r.y0, w = r.w, h = r.h;
   const ax = s * w <= W ? [(W - s * w) / 2 - x0, (W - s * w) / 2 - x0] : [W - x0 - s * w, -x0];
   const ay = s * h <= H ? [(H - s * h) / 2 - y0, (H - s * h) / 2 - y0] : [H - y0 - s * h, -y0];
   return { ax, ay };
@@ -4994,7 +5552,7 @@ function vwSettle(animated) {
   if (vwZoomed) vwLoadFullRes();
 }
 // Zoom a escala s dejando quieto el punto (px, py) de la pantalla (relativo
-// a la imagen sin transformar)
+// a la foto sin transformar)
 function vwZoomAt(s, px, py, animated) {
   const qx = (px - vwView.tx) / vwView.s, qy = (py - vwView.ty) / vwView.s;
   vwView.s = s; vwView.tx = px - s * qx; vwView.ty = py - s * qy;
@@ -5023,42 +5581,62 @@ function vwLoadFullRes() {
   if (!f || vwHiRes === f.path || !VW_FULLRES_EXTS.includes((f.ext || "").toLowerCase())) return;
   vwHiRes = f.path;
   const src = bust("/api/download?inline=1&path=" + encodeURIComponent(f.path), f.path, f.mtime);
+  const img = vwImg, tk = vwCur.token, sl = vwCur;
   const probe = new Image();
   probe.onload = () => {
-    if (currentFiles[viewerIndex] !== f || vwHiRes !== f.path) return;
+    if (currentFiles[viewerIndex] !== f || vwHiRes !== f.path || sl.token !== tk) return;
     // Mismo encuadre: solo se cambia si de verdad tiene mas detalle
-    if (probe.naturalWidth > vwImg.naturalWidth) vwImg.src = src;
+    if (probe.naturalWidth > img.naturalWidth) img.src = src;
   };
   probe.src = src;
 }
 
 (function viewerGestures() {
   const pts = new Map();
-  let g = null, moved = false, lastTap = { t: 0, x: 0, y: 0 };
-  // Coordenadas relativas a la esquina de la imagen SIN transformar
+  let g = null, moved = false, lastTap = { t: 0, x: 0, y: 0 }, tapT = 0, bgTap = false;
+  // Coordenadas relativas a la esquina de la foto SIN transformar
   const rel = (e) => {
-    const r = vwStage.getBoundingClientRect();
-    return [e.clientX - r.left - vwImg.offsetLeft, e.clientY - r.top - vwImg.offsetTop];
+    const r = vwStage.getBoundingClientRect(), q = vwRect();
+    return [e.clientX - r.left - q.x0, e.clientY - r.top - q.y0];
   };
   const centroid = () => { let x = 0, y = 0; for (const p of pts.values()) { x += p[0]; y += p[1]; } return [x / pts.size, y / pts.size]; };
   const dist = () => { const [a, b] = [...pts.values()]; return Math.hypot(a[0] - b[0], a[1] - b[1]); };
   const beginPinch = () => { g = { kind: "pinch", d0: Math.max(10, dist()), c0: centroid(), s0: vwView.s, tx0: vwView.tx, ty0: vwView.ty }; };
   const beginPan = (p) => { g = { kind: "pan", p0: p, tx0: vwView.tx, ty0: vwView.ty, hist: [[performance.now(), p[0], p[1]]] }; };
   const ready = () => vwImg.classList.contains("ready");
+  // Deshace un arrastre a medias (llega un segundo dedo, o se cancela)
+  const dragUndo = (animated) => {
+    if (vwTrackX) { vwAnim = { dir: 0, t: 0 }; vwSlideEnd(); }
+    vwView.s = 1; vwView.tx = 0; vwView.ty = 0;
+    vwApply(animated);
+    vwBg.style.transition = animated ? "opacity .25s" : "";
+    vwBg.style.opacity = "";
+    viewerEl.classList.remove("drag");
+  };
+  const speed = (h) => {
+    const a = h[0], z = h[h.length - 1], dt = z[0] - a[0];
+    const fresh = dt > 0 && performance.now() - z[0] < 80;
+    return fresh ? [(z[1] - a[1]) / dt, (z[2] - a[2]) / dt] : [0, 0];
+  };
 
   vwStage.addEventListener("pointerdown", (e) => {
-    if (!ready() || e.button > 0) return;
+    if (viewerIndex < 0 || e.button > 0) return;
+    if (vwAnim) vwSlideEnd();
     vwStopInertia();
+    bgTap = false;
     const p = rel(e);
     if (e.isPrimary) { pts.clear(); g = null; }
     pts.set(e.pointerId, p);
     moved = false;
-    if (pts.size === 2) { beginPinch(); return; }
-    if (pts.size > 2) return;
-    if (vwZoomed) {
-      beginPan(p);
-      try { vwStage.setPointerCapture(e.pointerId); } catch (err) { /* sin captura */ }
+    try { vwStage.setPointerCapture(e.pointerId); } catch (err) { /* sin captura */ }
+    if (pts.size === 2) {
+      if (g && g.kind === "drag") dragUndo(false);
+      if (ready()) beginPinch(); else g = null;
+      return;
     }
+    if (pts.size > 2) return;
+    if (vwZoomed) beginPan(p);
+    else g = { kind: "drag", p0: p, axis: "", hist: [[performance.now(), p[0], p[1]]] };
   });
   vwStage.addEventListener("pointermove", (e) => {
     if (!pts.has(e.pointerId)) return;
@@ -5085,6 +5663,31 @@ function vwLoadFullRes() {
       g.hist.push([performance.now(), p[0], p[1]]);
       if (g.hist.length > 6) g.hist.shift();
       vwApply(false);
+    } else if (g.kind === "drag") {
+      const dx = p[0] - g.p0[0], dy = p[1] - g.p0[1];
+      if (!g.axis) {
+        if (Math.hypot(dx, dy) < 8) return;
+        // A los lados pasa de foto; hacia abajo cierra; hacia arriba, nada
+        g.axis = Math.abs(dx) > Math.abs(dy) ? "x" : dy > 0 ? "y" : "n";
+        if (g.axis === "y") viewerEl.classList.add("drag");
+      }
+      g.hist.push([performance.now(), p[0], p[1]]);
+      if (g.hist.length > 6) g.hist.shift();
+      if (g.axis === "x") {
+        // En la primera y la ultima no hay vecina: la tira se resiste
+        const tope = (dx > 0 && viewerIndex === 0) || (dx < 0 && viewerIndex === currentFiles.length - 1);
+        vwTrack.style.transition = "none";
+        vwTrackSet(tope ? dx * 0.3 : dx);
+      } else if (g.axis === "y") {
+        const k = Math.max(0, dy) / Math.max(1, vwStage.clientHeight);
+        const s = 1 - Math.min(0.5, k * 0.7);
+        vwView.s = s;
+        vwView.tx = g.p0[0] + dx - s * g.p0[0];
+        vwView.ty = g.p0[1] + Math.max(0, dy) - s * g.p0[1];
+        vwApply(false);
+        vwBg.style.transition = "";
+        vwBg.style.opacity = String(1 - Math.min(1, k * 1.8));
+      }
     }
   }, { passive: false });
   const up = (e) => {
@@ -5098,31 +5701,60 @@ function vwLoadFullRes() {
       return;
     }
     if (g && g.kind === "pan") {
-      const h = g.hist, a = h[0], z = h[h.length - 1], dt = z[0] - a[0];
+      const v = speed(g.hist);
       g = null;
       if (moved) {
         vwGestureAt = Date.now();
-        if (dt > 0 && performance.now() - z[0] < 80) vwStartInertia((z[1] - a[1]) / dt, (z[2] - a[2]) / dt);
+        if (v[0] || v[1]) vwStartInertia(v[0], v[1]);
         else vwSettle(true);
         return;
       }
     }
-    // Toque sin moverse sobre la foto: doble toque (o clic con raton) = acercar ahi / encajar
-    // (con el dedo capturado el destino es el escenario: se mira si cae en la foto)
-    const ir = vwImg.getBoundingClientRect();
-    const onImg = e.clientX >= ir.left && e.clientX <= ir.right && e.clientY >= ir.top && e.clientY <= ir.bottom;
-    if (moved || e.type !== "pointerup" || !onImg) return;
+    if (g && g.kind === "drag" && g.axis) {
+      const dx = p[0] - g.p0[0], dy = p[1] - g.p0[1], v = speed(g.hist), axis = g.axis;
+      g = null;
+      vwGestureAt = Date.now();
+      if (axis === "x") {
+        // Pasa con un tercio de pantalla o con un gesto rapido en esa direccion
+        let dir = 0;
+        if (e.type === "pointerup" && (Math.abs(dx) > vwStage.clientWidth * 0.3 || (Math.abs(v[0]) > 0.3 && v[0] * dx > 0))) dir = dx < 0 ? 1 : -1;
+        vwSlideTo(dir);
+      } else if (axis === "y") {
+        if (e.type === "pointerup" && (dy > 110 || (v[1] > 0.5 && dy > 24))) closeViewer();
+        else dragUndo(true);
+      }
+      return;
+    }
+    g = null;
+    if (moved || e.type !== "pointerup") return;
+    // Toque sin moverse. Fuera de la foto: cierra (lo hace el clic que sigue)
+    const r = vwRect();
+    const qx = (p[0] - vwView.tx) / vwView.s, qy = (p[1] - vwView.ty) / vwView.s;
+    const onImg = qx >= 0 && qx <= r.w && qy >= 0 && qy <= r.h;
+    if (!onImg) { bgTap = true; return; }
+    // Sobre la foto: doble toque (o clic con raton) = acercar ahi / encajar;
+    // un toque solo, esconder o ensenar los mandos
     const now = Date.now(), isMouse = e.pointerType === "mouse";
     const dbl = now - lastTap.t < 320 && Math.hypot(p[0] - lastTap.x, p[1] - lastTap.y) < 30;
+    clearTimeout(tapT);
     if (isMouse || dbl) {
       lastTap = { t: 0, x: 0, y: 0 };
       vwGestureAt = now;                 // que el clic que sigue no cierre el visor
+      if (!ready()) return;
       if (vwZoomed) { vwView.s = 1; vwSettle(true); }
       else vwZoomAt(VW_ZOOM_TAP, p[0], p[1], true);
-    } else lastTap = { t: now, x: p[0], y: p[1] };
+    } else {
+      lastTap = { t: now, x: p[0], y: p[1] };
+      tapT = setTimeout(() => { if (viewerIndex >= 0) viewerEl.classList.toggle("nochrome"); }, 300);
+    }
   };
   vwStage.addEventListener("pointerup", up);
   vwStage.addEventListener("pointercancel", up);
+  // Tocar el fondo (fuera de la foto) cierra el visor
+  vwStage.addEventListener("click", () => {
+    if (bgTap && !vwZoomed && Date.now() - vwGestureAt > 350) closeViewer();
+    bgTap = false;
+  });
 
   vwStage.addEventListener("wheel", (e) => {
     if (!ready()) return;
@@ -5141,24 +5773,8 @@ function vwLoadFullRes() {
   // Safari en iOS: que el pellizco no amplie la pagina entera
   ["gesturestart", "gesturechange", "gestureend"].forEach(t => viewerEl.addEventListener(t, (e) => e.preventDefault()));
   // Al girar el iPad o cambiar la ventana, la foto se vuelve a encajar
-  window.addEventListener("resize", () => { if (vwZoomed) resetViewerZoom(); });
+  window.addEventListener("resize", () => { if (viewerIndex >= 0) resetViewerZoom(); });
 })();
-
-// Swipe horizontal en móvil para cambiar de foto; swipe hacia abajo cierra
-let vwTouchX = null, vwTouchY = null;
-viewerEl.addEventListener("touchstart", (e) => {
-  if (e.touches.length !== 1) { vwTouchX = null; return; }
-  vwTouchX = e.touches[0].clientX;
-  vwTouchY = e.touches[0].clientY;
-}, { passive: true });
-viewerEl.addEventListener("touchend", (e) => {
-  if (vwTouchX === null || vwZoomed || Date.now() - vwGestureAt < 350) return;
-  const dx = e.changedTouches[0].clientX - vwTouchX;
-  const dy = e.changedTouches[0].clientY - vwTouchY;
-  vwTouchX = null;
-  if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) viewerNav(dx < 0 ? 1 : -1);
-  else if (dy > 70 && Math.abs(dy) > Math.abs(dx) * 1.5) closeViewer();
-}, { passive: true });
 
 // ── Mapa de fotos ────────────────────────────────────────────────────────────
 // Mapa propio, sin librerías: los mosaicos de OpenStreetMap son imágenes
@@ -5727,9 +6343,12 @@ async function maybePrepareThumbs(path, sub, missing) {
                                                     body: JSON.stringify({ path: path, recursive: !!sub }) });
     const d = await res.json();
     if (d.error || !d.running) return;
-    if (path !== currentPath) { tpSetFg(false); return; }     // ya se fue a otra carpeta
-    tpSetFg(true);
+    // Sin ventana que tape la galeria: queda la pastilla con el porcentaje
+    // (pulsandola sale el detalle). Lo que se tiene en pantalla se genera
+    // antes que nada, porque esas miniaturas se piden sueltas y el trabajo de
+    // fondo se aparta.
     tpRender(d);
+    tpSetFg(false);
   } catch (e) { /* sin red: se queda el pre-generado normal */ }
 }
 
@@ -6996,10 +7615,7 @@ function refreshEditedPhoto(editedPath, hasOrig) {
   }
   const idx = currentFiles.findIndex(f => f.path === editedPath);
   if (idx >= 0) {
-    const card = document.querySelector('.fc[data-index="' + idx + '"]');
-    const cardImg = card && card.querySelector("img");
-    if (card) card.dataset.src = thumbUrl(currentFiles[idx]);   // por si aun no se habia cargado
-    if (cardImg && card.dataset.loaded) cardImg.src = thumbUrl(currentFiles[idx]);
+    vgRefreshCard(idx);
   }
   if (viewerEl.classList.contains("on")) showViewerPhoto();
 }
@@ -7047,10 +7663,7 @@ function refreshEditedPhoto(editedPath, hasOrig) {
   }
   const idx = currentFiles.findIndex(f => f.path === editedPath);
   if (idx >= 0) {
-    const card = document.querySelector('.fc[data-index="' + idx + '"]');
-    const cardImg = card && card.querySelector("img");
-    if (card) card.dataset.src = thumbUrl(currentFiles[idx]);   // por si aun no se habia cargado
-    if (cardImg && card.dataset.loaded) cardImg.src = thumbUrl(currentFiles[idx]);
+    vgRefreshCard(idx);
   }
   if (viewerEl.classList.contains("on")) showViewerPhoto();
 }

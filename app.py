@@ -3121,9 +3121,39 @@ def _same_origin_only():
         return jsonify({"error": "origen no permitido"}), 403
     return None
 
+# La pagina es un unico HTML de ~360 KB que no cambia entre peticiones. Antes,
+# en cada visita, se volvia a montar, se le calculaba la huella y se comprimia
+# (en la CPU del NAS, decenas de ms antes de mandar el primer byte). Ahora se
+# hace una vez -y mejor comprimida- y se sirve hecha; con la huella, el
+# navegador que ya la tiene recibe un 304 sin cuerpo.
+_pagina = {"clave": None}
+_pagina_lock = threading.Lock()
+
 @app.route("/")
 def index():
-    return render_template("index.html")
+    try:
+        st = os.stat(os.path.join(app.root_path, app.template_folder, "index.html"))
+        clave = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        clave = 0
+    with _pagina_lock:
+        if _pagina["clave"] != clave:
+            body = render_template("index.html").encode("utf-8")
+            _pagina.update(clave=clave, body=body, gz=_gzip(body, 6),
+                           etag='"' + hashlib.sha1(body).hexdigest()[:24] + '"')
+        body, gz, etag = _pagina["body"], _pagina["gz"], _pagina["etag"]
+    if request.headers.get("If-None-Match") == etag:
+        resp = app.response_class(status=304)
+    elif "gzip" in request.headers.get("Accept-Encoding", ""):
+        resp = app.response_class(gz, mimetype="text/html")
+        resp.headers["Content-Encoding"] = "gzip"
+    else:
+        resp = app.response_class(body, mimetype="text/html")
+    resp.headers["ETag"] = etag
+    resp.headers["Vary"] = "Accept-Encoding"
+    # Que el navegador la guarde pero pregunte siempre (un 304 son bytes)
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 # ── Logotipo e instalacion como app ──────────────────────────────────────────
 # Los navegadores piden /favicon.ico y iOS /apple-touch-icon.png en la raiz
